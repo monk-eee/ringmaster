@@ -22,14 +22,29 @@ Podman is the primary supported container runtime for local development
 podman machine init   # first time only
 podman machine start  # if not already running
 podman compose up -d
-podman compose logs -f backend
+podman compose logs -f backend frontend
 podman compose down   # stop; add -v to also drop the local Postgres volume
 ```
 
-This brings up Postgres and the Rust backend
-([ADR-0005](docs/adr.d/0005-adopt-rust-event-sourced-postgres-commitment-graph.md))
-locally; it is dev tooling only, not a deployment artifact. Copy
-`.env.example` to `.env` to override the default dev credentials.
+This brings up Postgres, the Rust backend
+([ADR-0005](docs/adr.d/0005-adopt-rust-event-sourced-postgres-commitment-graph.md),
+serving its HTTP API on `:8080`) and the React/Vite front end
+([ADR-0014](docs/adr.d/0014-react-vite-single-page-app.md), at
+`http://localhost:3000`) locally; it is dev tooling only, not a deployment
+artifact. Copy `.env.example` to `.env` to override the default dev
+credentials.
+
+### Front-end tests
+
+The front end's Playwright suite assumes Postgres and the backend are
+already running (`podman compose up -d`):
+
+```bash
+cd frontend
+npm install
+npx playwright install --with-deps chromium   # first time only
+BACKEND_URL=http://localhost:8080 npx playwright test
+```
 
 ## Contributing
 
