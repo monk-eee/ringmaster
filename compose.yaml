@@ -1,0 +1,52 @@
+# ADR-0006: local development stack. Podman (`podman compose`) is the
+# primary supported runtime; local dev only, not a deployment artifact.
+services:
+  postgres:
+    # ADR-0007: pgvector is a required extension; this image ships it
+    # pre-built on top of postgres:16 (https://github.com/pgvector/pgvector).
+    image: docker.io/pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ringmaster}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ringmaster-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-ringmaster}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ringmaster}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ringmaster}:${POSTGRES_PASSWORD:-ringmaster-dev}@postgres:5432/${POSTGRES_DB:-ringmaster}
+      # ADR-0011: optional model adapter. host.containers.internal is Podman's
+      # host-access DNS name; defaults to a local Ollama server.
+      RINGMASTER_LLM_URL: ${RINGMASTER_LLM_URL:-http://host.containers.internal:11434/v1}
+      RINGMASTER_MODEL: ${RINGMASTER_MODEL:-glm-4.7-flash:latest}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ADR-0012: minimal server-rendered Node front end for the Obligations page.
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8080
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres-data:

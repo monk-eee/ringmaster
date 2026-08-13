@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "mindleak": {
+      "command": "${workspaceFolder}/.mindleak/bin/v0.1.5/mindleak-mcp",
+      "env": {
+        "MINDLEAK_AGENT": "copilot",
+        "MINDLEAK_WORKSPACE": "${workspaceFolder}"
+      }
+    },
+    "lodestar": {
+      "command": "${workspaceFolder}/.mindleak/bin/v0.1.5/lodestar-mcp",
+      "env": {
+        "LODESTAR_AGENT": "copilot",
+        "MINDLEAK_WORKSPACE": "${workspaceFolder}"
+      }
+    }
+  }
+}

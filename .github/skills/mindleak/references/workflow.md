@@ -1,0 +1,137 @@
+# Working Loop
+
+Use this loop after both planes pass setup verification.
+
+## 1. Open One Identity
+
+Mint one 128-bit lowercase hexadecimal token and call `open_session` on the
+Memory and Intent planes. Reuse it throughout the session. When Git facts are
+available, declare branch, head SHA, expected base, and dirty state on both.
+
+## 2. Establish Scope Before Editing
+
+Collect concrete workspace-relative paths and stable symbol ids. Then run:
+
+```text
+lodestar.task_query(view="overlap", paths=[...], symbols=[...], session_id=...)
+mindleak.check_overlap(paths=[...], symbols=[...], session_id=...)
+lodestar.advise(node_ids=["artifact:<path>", "symbol:<id>", ...])
+```
+
+Interpret the results carefully:
+
+- Lodestar reports intersections with active declared task scopes.
+- MindLeak reports decay-active footprints, structural impact, prior failures,
+  related intent, and ids it has never observed.
+- `unknown` is not an all-clear. A quiet graph under-reports rather than guesses.
+- On overlap, coordinate, serialize same-file work, narrow scope, or stop. Do
+  not edit first and negotiate after the conflict.
+- `advise`'s `needs_human` currently conflates two different situations in one
+  disposition: no goals/constitution have ever been adopted for this
+  repository (an infrastructure gap — safe to proceed with ordinary work, see
+  step 3), versus this specific artifact's governance being genuinely
+  ambiguous (a real stop condition). Check `lodestar_stats.active_goals`
+  first: `0` means the former; a nonzero count with `needs_human` still
+  returned means the latter and should stop you. A future Lodestar release
+  may split this into a structured reason field
+  ([monk-eee/MindLeak#447](https://github.com/monk-eee/MindLeak/issues/447)).
+
+## 3. Join the Intent Workflow When One Exists
+
+If the user names a task, or the request clearly belongs to an existing task,
+query it before creating anything new. Claim it with the current session and
+the same path/symbol scope. If there is no task, ordinary repository work may
+continue without manufacturing one.
+
+**No tool in the current MCP surface creates a Lodestar goal.** `task_create`
+requires an existing `goal_id` and returns `not found` for any id that has
+never been seeded; nothing auto-creates one. A fresh repository with
+`lodestar_stats.active_goals == 0` has therefore never been able to reach a
+Lodestar task at all — this is a repo-wide infrastructure gap, not a signal
+that this particular request lacks coverage. Query once
+(`task_query(view="board")` or `lodestar_stats`) to confirm zero goals
+repo-wide, then proceed with ordinary work governed by the repository's own
+decision-record system instead of stalling on Lodestar. Tracked upstream:
+[monk-eee/MindLeak#447](https://github.com/monk-eee/MindLeak/issues/447);
+revisit this note once a goal-creation/import tool ships.
+
+Renew a held claim:
+
+- after a build or test step;
+- between files in a multi-file change;
+- before a long-running command;
+- whenever the next step could outlast the lease.
+
+If a claim lapsed, use the server's explicit same-owner reclaim/recovery path;
+never conceal the gap by changing identity.
+
+## 4. Gather Evidence Proportionate to Risk
+
+Prefer deterministic reads:
+
+- `evidence_for` for facts and provenance about an artifact or symbol;
+- `get_impact_radius` or graph traversal for likely dependents;
+- task scope, governing clauses, and conformance history for intent;
+- `working_set` for current session context.
+
+Use semantic `recall` only when meaning-based discovery adds value. It may
+abstain and must not replace direct inspection, exact search, or impact checks.
+
+## 5. Change and Validate
+
+Follow the repository's own instructions and test policy. Keep the edit within
+the declared scope, renew any claim at step boundaries, and retain concrete
+validation output for completion evidence.
+
+## 6. Write Back Deliberately
+
+For headless clients, explicitly ingest changed files after successful writes.
+Record executions only when their outcome teaches a reusable fact, and never
+include credentials or unfiltered sensitive output. Ingest the resulting commit
+when one is created.
+
+Use `record_architectural_decision` only for an actual design choice with a
+useful decision and rationale. Routine implementation details do not become
+architecture merely because the tool exists.
+
+Treat client memory as staging, not a second durable silo:
+
+- When writing a reusable repository fact under `/memories/repo/`, also call
+  Lodestar `record_knowledge` immediately. Pass the registered `session_id`, an
+  atomic statement, a stable `source_ref` including the heading when needed,
+  and evidence containing the relevant artifact/symbol `nodes` or `goal`.
+- Before completing or handing off, review notes written under
+  `/memories/session/` and promote only reusable repository lessons the same
+  way. Temporary plans, stale measurements, secrets, and raw command output stay
+  scratch.
+- Do not copy global `/memories/*.md` preferences into a repository ledger.
+- A sourced write is complete only when the reply says `surfaces: true`. On an
+  edit, reuse the same `source_ref`; Lodestar supersedes its prior lesson. On a
+  deletion, call the existing attributed `retire_knowledge` with that
+  `source_ref`; it detaches only the deleted note and retires the lesson after
+  its final source disappears.
+
+Report how many memory lessons were promoted and how many remained scratch. A
+final answer that mentions writing repo/session memory but never records or
+explicitly rejects its durable candidates has not finished the write-back step.
+
+Promote expiring proven signals only through the cross-plane candidate and
+promotion tools; do not manually turn one session's guess into durable knowledge.
+
+## 7. Complete or Hand Off
+
+For claimed work:
+
+1. Assemble the changed artifacts, validations, and relevant evidence window.
+2. Run the exposed conformance check for the task and current session.
+3. Transition to complete with the evidence/check payload required by the
+   running server schema.
+4. If the verdict requires review, a waiver, or a human decision, report that
+   state honestly instead of declaring completion.
+
+For unfinished work, pause or release through Lodestar and leave a durable
+reason. For same-file successors, complete the first task before the next owner
+claims it; symbol scopes are not text locks.
+
+Finish by reporting what changed, validation results, remaining gaps, task
+state, and any follow-up addressed to another agent or a human.
