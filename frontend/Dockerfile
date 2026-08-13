@@ -5,7 +5,8 @@ WORKDIR /app
 # (observed empirically; unrelated to package size or --omit=dev).
 COPY frontend/package.json ./
 COPY frontend/node_modules ./node_modules
-COPY frontend/server.mjs ./
-ENV PORT=3000
+COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json ./
+COPY frontend/src ./src
+COPY frontend/public ./public
 EXPOSE 3000
-CMD ["node", "server.mjs"]
+CMD ["npx", "vite"]

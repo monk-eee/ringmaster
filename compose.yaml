@@ -35,14 +35,13 @@ services:
       postgres:
         condition: service_healthy
 
-  # ADR-0012: minimal server-rendered Node front end for the Obligations page.
+  # ADR-0014: React/Vite SPA (supersedes ADR-0012's server-rendered front end).
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
     environment:
       BACKEND_URL: http://backend:8080
-      PORT: "3000"
     ports:
       - "3000:3000"
     depends_on:

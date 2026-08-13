@@ -27,14 +27,14 @@ id = "obligations-view-exists"
 invariant = "The SPA fetches and renders the Obligations collection."
 type = "present"
 pattern = "/api/obligations"
-paths = ["frontend/src/**"]
+paths = ["frontend/src/api.ts"]
 
 [[check]]
 id = "candidates-view-exists"
 invariant = "The SPA fetches and renders the Candidates collection."
 type = "present"
 pattern = "/api/candidates"
-paths = ["frontend/src/**"]
+paths = ["frontend/src/api.ts"]
 
 [[check]]
 id = "vite-proxies-api"

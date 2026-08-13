@@ -5,12 +5,13 @@
   --border: #e2e5ea;
   --text: #1b1f24;
   --muted: #6b7280;
-  --brand: #4338ca;
-  --brand-dark: #312e81;
+  --header-bg-start: #161b2e;
+  --header-bg-end: #262c47;
+  --header-text: #f3ede0;
   --open-bg: #dbeafe;
   --open-fg: #1d4ed8;
-  --at-risk-bg: #fee2e2;
-  --at-risk-fg: #b91c1c;
+  --at-risk-bg: #fde3d8;
+  --at-risk-fg: #c2410c;
   --closed-bg: #e5e7eb;
   --closed-fg: #374151;
 }
@@ -27,28 +28,103 @@ body {
 }
 
 header.app-bar {
-  background: linear-gradient(135deg, var(--brand), var(--brand-dark));
-  color: #fff;
-  padding: 1.25rem 2rem;
+  background: linear-gradient(135deg, var(--header-bg-start), var(--header-bg-end));
+  color: var(--header-text);
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
 }
 
-header.app-bar .wordmark {
-  font-weight: 700;
-  font-size: 1.1rem;
-  letter-spacing: 0.02em;
-  opacity: 0.9;
+header.app-bar img.logo {
+  height: 64px;
+  width: auto;
+  display: block;
+  background: #f3ede0;
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+
+header.app-bar .page-heading {
+  border-left: 1px solid rgba(243, 237, 224, 0.25);
+  padding-left: 1.25rem;
+}
+
+header.app-bar .eyebrow {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.65;
 }
 
 header.app-bar h1 {
   margin: 0.15rem 0 0;
-  font-size: 1.75rem;
+  font-size: 1.5rem;
 }
+
 
 main {
   max-width: 960px;
   margin: 2rem auto;
   padding: 0 1.5rem;
 }
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tab {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.tab-active {
+  background: var(--header-bg-start);
+  color: var(--header-text);
+  border-color: var(--header-bg-start);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.toolbar select,
+.toolbar button {
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.toolbar button {
+  cursor: pointer;
+}
+
+.toolbar button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 
 p.subtitle {
   color: var(--muted);
@@ -128,6 +204,7 @@ td.updated-cell {
   background: var(--open-bg);
   color: var(--open-fg);
 }
+
 
 .badge-at-risk {
   background: var(--at-risk-bg);

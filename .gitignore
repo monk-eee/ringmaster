@@ -6,10 +6,11 @@
 # Rust build artifacts (backend/, ADR-0005/ADR-0007)
 /target/
 
-# Node front end (ADR-0012)
+# Node front end (ADR-0012/ADR-0014)
 frontend/node_modules/
 frontend/test-results/
 frontend/playwright-report/
+frontend/dist/
 
 # macOS
 .DS_Store
