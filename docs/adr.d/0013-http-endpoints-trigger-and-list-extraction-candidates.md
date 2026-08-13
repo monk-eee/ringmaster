@@ -1,9 +1,9 @@
 # ADR-0013: HTTP endpoints trigger and list model-based extraction candidates
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("Accept as drafted"), 2026-08-14
 - **Depends on:** [ADR-0011](0011-extraction-pipeline-candidate-schema-and-model-adapter.md), [ADR-0012](0012-minimal-http-api-and-node-web-front-end.md)
 - **Tags:** architecture, api, extraction
 
