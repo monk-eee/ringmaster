@@ -1,6 +1,11 @@
 # Local secrets (ADR-0016). Never commit a real .env; .env.example is the template.
 .env
 
+# Local machine registry override (e.g. a corporate npm proxy); never committed,
+# since it's a personal-environment quirk, not a project requirement.
+.npmrc
+frontend/.npmrc
+
 # MindLeak local state
 .mindleak/
 .lodestar/*
