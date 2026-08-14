@@ -1,9 +1,9 @@
 # ADR-0032: Wire up edge temporal validity — supersede-on-write and relationship history in the Graph Explorer
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("ok build"), 2026-08-14
 - **Depends on:** [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md), [ADR-0025](0025-node-edge-write-api-and-traversal.md), [ADR-0026](0026-graph-explorer-frontend.md)
 - **Amends:** [ADR-0025](0025-node-edge-write-api-and-traversal.md)'s "Out of scope: editing or deleting edges" — narrowly, for one automatic, opt-in, system-driven mutation (closing a superseded edge's `valid_to`), not general edge editing
 - **Tags:** architecture, api, data-model, frontend, graph
