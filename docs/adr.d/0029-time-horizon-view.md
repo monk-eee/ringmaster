@@ -1,9 +1,9 @@
 # ADR-0029: Time Horizon view — Obligations bucketed by due-date window
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Explicitly accepted by monk-eee on 2026-08-14
 - **Depends on:** [ADR-0020](0020-obligation-due-date-fields.md), [ADR-0022](0022-daily-brief-endpoint.md), [ADR-0023](0023-evidence-backed-daily-brief-reasons.md)
 - **Tags:** architecture, api, frontend, data-model
 
