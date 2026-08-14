@@ -1,9 +1,9 @@
 # ADR-0019: Semantic search over embedded source fragments
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Explicitly accepted by monk-eee on 2026-08-14
 - **Depends on:** [ADR-0012](0012-minimal-http-api-and-node-web-front-end.md), [ADR-0013](0013-http-endpoints-trigger-and-list-extraction-candidates.md), [ADR-0018](0018-generate-and-store-source-fragment-embeddings.md)
 - **Tags:** architecture, api, embeddings, semantic-retrieval
 
