@@ -1,6 +1,8 @@
-# Spec: close the Lodestar goal-bootstrap gap
+# Spec: ship Lodestar bootstrap and import repository ADRs
 
 > Filed upstream: [monk-eee/MindLeak#447](https://github.com/monk-eee/MindLeak/issues/447).
+> Follow-up verified against MindLeak `main` at
+> `d5ec3db62cbdb9248f2f32d65cdedadcb9bf1e26` on 2026-08-14.
 
 > Written from a consuming repository (internally called "ringmaster") that
 > installs the MindLeak/Lodestar MCP servers as tooling. It has no access to
@@ -12,8 +14,9 @@
 - **Target:** the MindLeak / Lodestar MCP servers themselves, not any one
   consuming repository's own source, tests, configuration, infrastructure,
   or pipelines.
-- **Status:** Proposed (external). No decider has accepted this; it records
-  a problem observed while using the servers and a candidate fix.
+- **Status:** Partially resolved upstream. Manual first-goal bootstrap and
+  idempotent decomposition exist on `main`; release packaging and repository
+  ADR import remain unresolved.
 - **Numbering note:** ADR numbers cited below (e.g. "ADR-0015", "ADR-0029")
   are Lodestar's own internal decision records, quoted verbatim from its own
   MCP tool descriptions. A consuming repository may have a separate,
@@ -22,15 +25,46 @@
 
 ## Problem
 
-A brand-new, "unborn" repository (no commits, no local Lodestar state
-directory) that already has its own mature, machine-checkable decision-record
-system (in this case: a `docs/adr.d/` directory of accepted ADRs plus a
-dependency-free Node script that derives which ones are currently proven)
-cannot make any use of Lodestar's task/claim/conformance workflow, because
-Lodestar has no goals and exposes no tool that creates one. The installed
-agent skill instructs agents to coordinate and claim work through Lodestar as
-a mandatory default loop, so every agent that follows it hits the same dead
-end on first use in a fresh repository.
+A repository can now create its first goal manually on MindLeak `main` through
+`constitution_define(action="goal")`, inspect it through
+`constitution_query(action="active")`, and decompose an objective through
+`task_create` without a title. Decomposition falls back to one deterministic
+task when the model is unavailable and reuses exact-title live work when run
+again.
+
+That fix is not usable from the consuming repository for two reasons:
+
+1. The installed binaries and upstream `main` both report version `0.1.5`, but
+   the installed `v0.1.5` tool surface predates `constitution_define` and
+   `constitution_query`. There is no release boundary by which an installer or
+   operator can distinguish the fixed build from the stale one.
+2. Lodestar still does not import a repository's existing decision records.
+   This repository has accepted ADRs under `docs/adr.d/`, but the Intent Plane
+   remains at zero goals until every record is manually re-entered. The ADRs
+   are therefore not "loading", and there is no goal id for `task_create` to
+   decompose.
+
+The second problem is not solved by making Lodestar scan arbitrary Markdown.
+The consuming repository already owns status parsing and acceptance semantics.
+Lodestar needs a structured, provenance-bearing import boundary.
+
+## Current source state
+
+The original bootstrap diagnosis below remains useful as a reproduction for
+the installed binary, but it is no longer an accurate description of upstream
+`main`:
+
+- `crates/lodestar-mcp/src/tools/mod.rs` includes `constitution_define` and
+  `constitution_query` in `DEFAULT_PROFILE_TOOLS` and tests the complete path
+  from an empty store to a won claim.
+- `crates/lodestar-mcp/src/tools/constitution.rs` dispatches
+  `constitution_define(action="goal")` to `define_goal`.
+- `crates/lodestar-core/src/facade/executive.rs::decompose_goal` is model
+  optional and idempotent over exact-title live tasks.
+- `changelog.d/fixed-fresh-repository-goal-bootstrap.md` and
+  `changelog.d/fixed-idempotent-goal-decomposition.md` describe those fixes.
+- The workspace package version is still `0.1.5`, which is also the version
+  installed in this consuming repository.
 
 ## Reproduction (this session, 2026-08-13)
 
@@ -66,14 +100,19 @@ per-change judgment call.
 
 ## Root cause
 
-Lodestar's Intent Plane models a **goal** as a required prerequisite for a
-**task**, and exposes rich tooling once a goal exists (`task_create`,
-`task_claim`, `advise`, `check_conformance`, `export_conformance_manifest`,
-etc.), but exposes no create/import/seed primitive for the goal object
-itself anywhere in the agent-facing MCP surface. Whether that is deliberate
-(goals are meant to come from a human-facing UI or CLI outside MCP) is never
-documented in the skill materials, so the omission is indistinguishable from
-a bug at the point an agent actually hits it.
+The original root cause was that goal authoring existed but was omitted from
+the default MCP profile. Upstream `main` fixes that omission.
+
+The remaining root causes are now narrower:
+
+- release identity does not change when the executable contract changes, so a
+  fixed and stale `0.1.5` are operationally indistinguishable;
+- goal creation accepts only one manually authored goal and carries no stable
+  external identity, source reference, or source digest, so it cannot support
+  an idempotent import from an existing governance system;
+- no MCP operation accepts structured external decisions, validates their
+  accepted state, and reports created, unchanged, conflicted, and skipped
+  records.
 
 Two secondary issues compound the same root cause:
 
@@ -91,9 +130,13 @@ Two secondary issues compound the same root cause:
 
 ## Goals of the fix
 
-- A fresh repository with its own machine-readable decision records can
-  reach a claimed Lodestar task with no direct database access and no human
-  in the loop, when that is genuinely wanted.
+- Publish the already-implemented bootstrap/decomposition behavior under a new,
+  distinguishable release and install it successfully in a consuming repo.
+- A repository with machine-readable decision records can idempotently import
+  accepted records without direct database access or lossy Markdown parsing in
+  Lodestar.
+- An imported implementation objective can be decomposed and claimed through
+  the default MCP profile.
 - An agent can tell "nothing adopted yet" apart from "this needs a human
   decision" without parsing free text.
 - Setup and troubleshooting docs stop assuming goals already exist.
@@ -109,39 +152,62 @@ Two secondary issues compound the same root cause:
 
 ## Proposed design
 
-1. **`goal_create` tool (minimal fix).** Arguments: `statement` (plain-language
-   objective), optional `source_ref` (mirrors `record_knowledge`'s stable
-   `/memories/repo/...#heading` convention), optional `scope` (advisory
-   paths/symbols). Returns a `goal_id`. Closes the gap directly with the
-   smallest possible surface.
-2. **`import_goals` tool (repository-shaped fix).** Accepts a list of
-   `{external_id, statement, status}` entries — or a glob the server reads
-   itself — and idempotently creates or updates one goal per entry, keyed by
-   `external_id` so re-running it is a no-op when nothing changed. It must
-   only ingest entries whose `status` is an accepted/terminal-approved state
-   (mirroring how this consuming repository's own evidence checker only
-   treats `Status: Accepted` records as governing), so a still-proposed
-   record never silently becomes a binding goal. A repository like this one
-   could then seed Lodestar directly from its own accepted decision records.
-3. **Structured `advise` reason.** Split `needs_human` into a machine-checked
-   field distinguishing `no_constitution_adopted` (zero goals repo-wide —
-   safe to proceed with ordinary, ungoverned work per the skill's own
-   fallback) from `ambiguous` (goals exist; this node's governance is
-   genuinely unclear — a real stop condition). Keep the existing disposition
-   for backward compatibility; add the reason as an additional field rather
-   than replacing it.
-4. **`goal_query` read tool.** Symmetric with `task_query(view="board")`, so
-   an agent can positively confirm what goals exist (or that none do)
-   instead of inferring it from a count and several empty results.
-5. **Docs.** Add a step to the setup/verification guide's "Verify End to
-   End" checklist: confirm at least one goal exists, or explicitly
-   import/seed goals, before relying on task coordination. Add a row to the
-   troubleshooting reference: symptom `task_create` → `not found:
-   <goal_id>`; cause: no goal exists with that id and none have ever been
-   seeded for this repository; fix: run the goal-creation/import tool
-   first. Clarify the working-loop guidance so "no task exists" explicitly
-   covers "goals were never seeded for this repository" as a
-   proceed-with-ordinary-work case, not a stall.
+1. **Cut a real release.** Bump the workspace version to at least `0.1.6`,
+  publish macOS arm64 binaries, and make `open_session` or `storage_status`
+  expose both semantic version and build commit. The installer must refuse to
+  call two different binaries the same installed version.
+2. **Add structured import to the existing constitution vocabulary.** Extend
+  `constitution_define` with `action="import"`; do not add another top-level
+  tool merely to bypass the collapsed ADR-0059 vocabulary. The caller passes
+  records, not a filesystem glob:
+
+  ```json
+  {
+    "action": "import",
+    "source_system": "ringmaster-adr",
+    "records": [{
+     "external_id": "ADR-0022",
+     "kind": "objective",
+     "title": "Daily Brief endpoint",
+     "statement": "Expose obligations ranked by urgency.",
+     "status": "accepted",
+     "source_ref": "docs/adr.d/0022-daily-brief-endpoint.md",
+     "source_digest": "sha256:..."
+    }]
+  }
+  ```
+
+3. **Persist external identity and provenance.** Add nullable
+  `source_system`, `external_id`, `source_ref`, and `source_digest` fields to
+  goals, with a unique constraint on `(source_system, external_id)` when both
+  are present. Manually authored goals remain valid with all four fields null.
+4. **Make import deterministic and idempotent.** For each record:
+  - `accepted` plus unseen external identity creates one active goal;
+  - the same external identity and digest returns `unchanged` with its goal id;
+  - `proposed`, `rejected`, or unknown status returns `skipped` and creates
+    nothing;
+  - the same external identity with a different digest returns `conflict` and
+    does not rewrite or supersede active intent;
+  - absence from a later batch never deletes or retires a goal.
+5. **Return a bounded import report.** The response contains counts and one row
+  per supplied record with `external_id`, `outcome`, `goal_id` when known, and
+  an actionable reason. One malformed record rejects the whole transaction;
+  semantic conflicts are reported without partially rewriting existing goals.
+6. **Keep kind explicit.** Lodestar must not infer whether an ADR is an
+  objective, constraint, or invariant from prose. Only objectives can be
+  decomposed; importing a normative record and then asking to decompose it
+  must retain the current actionable refusal.
+7. **Keep the model optional.** A missing or misconfigured model must continue
+  to produce the deterministic single-task fallback with
+  `model_call.source="fallback"`. Model health failure is diagnostic, not a
+  blocker for decomposition.
+8. **Use the existing reads.** `constitution_query(action="active")` is the
+  positive list/read surface. `advise.reason="no_constitution_adopted"` already
+  provides the structured absent-state distinction on `main`; retain both.
+9. **Update setup and troubleshooting docs.** Verification must assert the
+  running build version/commit, list active goals, import when the repository
+  owns external governance, decompose one objective, and repeat both import
+  and decomposition to prove no duplicate goal or task appears.
 
 ## Alternatives considered
 
@@ -161,13 +227,23 @@ Two secondary issues compound the same root cause:
 
 ## Acceptance criteria
 
-- A fresh, goal-less repository with its own accepted decision records can
-  go from `open_session` to a won `task_claim` with no direct SQLite access
-  and no human decision, using only documented MCP tools.
+- A published version newer than `0.1.5` advertises `constitution_define`,
+  `constitution_query`, `task_create`, and `task_claim` in the default profile.
+- `storage_status` or `open_session` identifies that release and its build
+  commit; the consuming repository no longer runs an ambiguous `0.1.5`.
+- A fresh repository imports an accepted objective and goes from
+  `open_session` to a won `task_claim` using only documented MCP tools.
+- Repeating the same import creates no second goal; repeating decomposition
+  creates no second live task and reports `reused: true`.
+- Proposed ADRs do not become active goals.
+- A changed digest for an already-imported ADR is reported as a conflict and
+  leaves the original goal untouched.
+- A 404, unreachable, or malformed model response still yields one fallback
+  task and identifies the fallback reason.
 - `advise` responses expose a structured reason distinguishing "nothing
   adopted" from "ambiguous."
-- A read tool lists/confirms goal existence without inferring it from
-  aggregate stats plus empty task queries.
+- `constitution_query(action="active")` lists the imported goal with its
+  external identity and provenance.
 - The setup and troubleshooting reference docs each name this gap and its
   fix.
 
