@@ -91,7 +91,7 @@ export default function App() {
   return (
     <>
       <header className="app-bar">
-        <img className="logo" src="/ringmaster_logo.png" alt="Ringmaster" />
+        <img className="logo" src="/ringmaster_logo.png?v=2" alt="Ringmaster" />
         <div className="page-heading">
           <div className="eyebrow">Ringmaster</div>
           <h1>{TAB_TITLES[tab]}</h1>
@@ -194,7 +194,7 @@ export default function App() {
             {tab === "obligations" ? (
               <ObligationsTable obligations={visibleObligations} />
             ) : (
-              <CandidatesTable candidates={candidates} />
+              <CandidatesTable candidates={candidates} onChanged={load} />
             )}
           </>
         )}

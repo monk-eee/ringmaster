@@ -26,7 +26,7 @@ export default function ObligationsTable({ obligations }: Props) {
           {obligations.map((o) => (
             <tr key={o.obligation_id}>
               <td className="id-cell">
-                <code>{o.obligation_id}</code>
+                <code title={o.obligation_id}>{o.obligation_id.slice(0, 8)}…</code>
               </td>
               <td>
                 <StatusBadge value={o.status} />
