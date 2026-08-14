@@ -50,10 +50,9 @@ flowchart LR
   (`present`/`absent` regex over files, `parity` = every accepted ADR has
   evidence, `manual` = human-asserted, decays to `Stale` after a threshold).
   Never executes shell code from evidence data.
-- All 34 ADRs are **Accepted**. Evidence currently reports 32 `Proven` and
-  two intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code
-  decision; `ADR-0034`, one deliberately-`manual` transactional-rollback
-  check with no schema-level constraint to trigger a real failure) — zero
+- All 35 ADRs are **Accepted**. Evidence currently reports 34 `Proven` and
+  one intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code
+  decision with no sync/export implementation yet to check against) — zero
   `Broken`. Re-run the checker for the current count.
 
 ---
@@ -240,7 +239,13 @@ from the browser's perspective, no CORS needed).
   tab ([ADR-0029](adr.d/0029-time-horizon-view.md)) renders the same
   Obligation data as a different lens — bucketed by due-date window instead
   of ranked by urgency — with a colored summary ribbon and per-bucket accent
-  borders. The **Graph** tab
+  borders, plus a client-side **Buckets/Timeline** view toggle
+  ([ADR-0035](adr.d/0035-time-horizon-timeline-view.md)) that re-renders the
+  same fetched data as five zoomable bands: same-due-date Obligations stack
+  into one marker with a count, a marker expands inline to the Daily
+  Brief's own evidence-backed row, and discrete pan-by-band-focus/two-state
+  zoom/a "Now" reset/a legend cover the affordances of the reference
+  timeline component without a new backend call or dependency. The **Graph** tab
   ([ADR-0026](adr.d/0026-graph-explorer-frontend.md)) creates/lists/filters
   nodes by type, drills into a node's attributes and lifecycle state, adds
   relationships (optionally superseding a prior current one of the same
@@ -254,7 +259,8 @@ from the browser's perspective, no CORS needed).
   ([ADR-0028](adr.d/0028-person-relationship-view.md)).
 - **`components/DailyBrief.tsx`**, **`ObligationsTable.tsx`**,
   **`CandidatesTable.tsx`**, **`SearchResults.tsx`**, **`StatusBadge.tsx`**,
-  **`GraphExplorer.tsx`**, **`TimeHorizon.tsx`** — presentational.
+  **`GraphExplorer.tsx`**, **`TimeHorizon.tsx`**, **`TimeHorizonTimeline.tsx`**
+  — presentational.
   `CandidatesTable.tsx` renders working Accept/Reject buttons for candidates
   still in the `candidate` state
   ([ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)), plus a
@@ -365,10 +371,11 @@ chosen yet), branch protection rules.
 | 0032 | Temporal edge validity: supersede-on-write and relationship history | Accepted |
 | 0033 | Progressive graph traversal trail over one-hop neighborhoods | Accepted |
 | 0034 | Expose atomic meeting-transcript ingestion over HTTP | Accepted |
+| 0035 | Time Horizon timeline view: zoomable Buckets/Timeline toggle over the existing bucketed data | Accepted |
 
 See [`docs/adr.d/README.md`](adr.d/README.md) for the live index — this
-table is a snapshot and will drift. All 34 are Accepted; 32 Proven, two
-intentionally Asserted (`ADR-0004`, `ADR-0034`) as of this snapshot.
+table is a snapshot and will drift. All 35 are Accepted; 34 Proven, one
+intentionally Asserted (`ADR-0004`) as of this snapshot.
 
 ## 10. Known gaps / deferred work (named explicitly by their own ADRs)
 
@@ -412,13 +419,16 @@ intentionally Asserted (`ADR-0004`, `ADR-0034`) as of this snapshot.
   parsing format itself is unchanged.
 - **No dedup/idempotency** anywhere yet — repeated ingestion or extraction
   calls create duplicate rows by design (deferred, not a bug).
+- **Time Horizon timeline** ([ADR-0035](adr.d/0035-time-horizon-timeline-view.md))
+  shipped the discrete version of the reference component monk-eee shared:
+  five fixed bands, two-state zoom, pan-by-band-focus. A true continuous/
+  arbitrary-zoom date axis, severity color (needs the Risk Engine), and
+  congruence-based banding (needs the Congruence Engine) remain explicitly
+  deferred by that same ADR.
 - **Meeting Review** (validating extracted candidates beside the source
-  transcript, correcting mistakes inline) and a genuine interactive **Time
-  Horizon timeline** (zoom/pan, banded periods, typed markers) are recorded
-  as working product-design intent
-  ([MEETING-REVIEW-DESIGN.md](MEETING-REVIEW-DESIGN.md),
-  [TIME-HORIZON-TIMELINE-DESIGN.md](TIME-HORIZON-TIMELINE-DESIGN.md)) —
-  neither is an ADR and neither governs implementation yet.
+  transcript, correcting mistakes inline) is recorded as working
+  product-design intent ([MEETING-REVIEW-DESIGN.md](MEETING-REVIEW-DESIGN.md))
+  — not an ADR yet, and does not govern implementation.
 - **MindLeak/Ringmaster boundary** for federation depth, and the full
   multi-user authorization model, remain explicitly open per
   [VISION.md](VISION.md#open-questions-for-future-adrs).
