@@ -46,3 +46,4 @@ accepted and implemented.
 | [ADR-0026: Graph explorer frontend — data entry, drill-down, and relationship visualization](0026-graph-explorer-frontend.md) | Accepted | [EV-0026](../evidence.d/0026-graph-explorer-frontend.md) |
 | [ADR-0027: Promote an accepted candidate into an Obligation](0027-promote-accepted-candidate-to-obligation.md) | Accepted | [EV-0027](../evidence.d/0027-promote-accepted-candidate-to-obligation.md) |
 | [ADR-0028: Person relationship view — resolve linked Obligations into a per-person page](0028-person-relationship-view.md) | Accepted | [EV-0028](../evidence.d/0028-person-relationship-view.md) |
+| [ADR-0029: Time Horizon view — Obligations bucketed by due-date window](0029-time-horizon-view.md) | Proposed | [EV-0029](../evidence.d/0029-time-horizon-view.md) |
