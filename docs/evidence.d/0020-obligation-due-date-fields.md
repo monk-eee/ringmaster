@@ -11,22 +11,29 @@ adr = "0020-obligation-due-date-fields"
 [[check]]
 id = "due-date-columns-exist"
 invariant = "obligation_projection carries nullable hard_due_at/soft_due_at columns."
-type = "manual"
+type = "present"
+pattern = 'ADD COLUMN hard_due_at'
+paths = ["backend/migrations/0009_obligation_due_dates.sql"]
 
 [[check]]
 id = "rebuild-preserves-due-dates"
 invariant = "rebuild_projection carries a previously-recorded due date forward across a later event that doesn't name it."
-type = "manual"
+type = "present"
+pattern = 'fn payload_timestamp'
+paths = ["backend/src/obligation.rs"]
 
 [[check]]
 id = "obligations-route-includes-due-dates"
 invariant = "GET /api/obligations includes hard_due_at and soft_due_at for each row."
-type = "manual"
+type = "present"
+pattern = '"hard_due_at"'
+paths = ["backend/src/api.rs"]
 ```
 
 ## Notes
 
-All three checks are `manual` and unverified (`ASSERTED`) because ADR-0020
-is **Proposed**, not yet accepted or implemented. Once accepted, replace
-each with a `present` pattern check against the implementing migration and
-module, mirroring EV-0015's shape.
+All three checks are automated against the migration, projection-rebuild
+logic, and API module that implement them. `cargo test` cases exercise:
+projection rebuild carrying a `hard_due_at` forward across a
+`status_changed` event that names no due date, and `GET /api/obligations`
+returning the field as an RFC 3339 string.

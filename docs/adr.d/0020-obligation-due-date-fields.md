@@ -1,9 +1,9 @@
 # ADR-0020: Add due-date fields to Obligation, the schema prerequisite for Epic E7
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accept and continue"), 2026-08-14
 - **Depends on:** [ADR-0005](0005-adopt-rust-event-sourced-postgres-commitment-graph.md), [ADR-0007](0007-generalize-obligation-and-require-pgvector.md), [ADR-0015](0015-expose-source-fragment-traceability-on-candidates.md)
 - **Tags:** architecture, data-model, obligation, attention-horizon
 

@@ -33,8 +33,16 @@ async fn health() -> &'static str {
 /// Reads the current `obligation_projection` rows (ADR-0005/ADR-0012). Never
 /// writes; the projection remains the sole source this route reflects.
 async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
-    let rows: Vec<(uuid::Uuid, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT obligation_id, status, updated_at FROM obligation_projection ORDER BY updated_at DESC",
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        uuid::Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> = sqlx::query_as(
+        "SELECT obligation_id, status, updated_at, hard_due_at, soft_due_at \
+         FROM obligation_projection ORDER BY updated_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -42,11 +50,13 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
 
     let body = rows
         .into_iter()
-        .map(|(obligation_id, status, updated_at)| {
+        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at)| {
             json!({
                 "obligation_id": obligation_id,
                 "status": status,
                 "updated_at": updated_at.to_rfc3339(),
+                "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
+                "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
             })
         })
         .collect::<Vec<_>>();
@@ -229,6 +239,39 @@ mod tests {
         let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
         assert!(parsed.is_array(), "response body must be a JSON array");
         assert!(!parsed.as_array().unwrap().is_empty(), "must include the just-appended obligation");
+    }
+
+    /// ADR-0020: GET /api/obligations must surface hard_due_at/soft_due_at.
+    #[tokio::test]
+    async fn obligations_route_includes_due_date_fields() {
+        let pool = test_pool().await;
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": "2026-09-01T00:00:00Z"}),
+        )
+        .await
+        .expect("append created event with a due date");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/obligations").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["obligation_id"] == obligation_id.to_string())
+            .expect("the just-created obligation must be present");
+        assert_eq!(row["hard_due_at"], "2026-09-01T00:00:00+00:00");
+        assert!(row["soft_due_at"].is_null(), "an unset soft_due_at must serialize as null, not be omitted");
     }
 
     #[tokio::test]

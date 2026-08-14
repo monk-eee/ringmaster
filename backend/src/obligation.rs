@@ -62,6 +62,19 @@ fn payload_status(payload: &Json) -> Option<ObligationStatus> {
     payload.get("status").and_then(|value| value.as_str()).and_then(ObligationStatus::parse)
 }
 
+/// Reads an optional due-date field from an event payload (ADR-0020).
+/// `None` means the payload doesn't name this field at all -- callers must
+/// preserve whatever was previously recorded. `Some(None)` means the field
+/// is present but not a parseable timestamp -- callers clear it explicitly.
+fn payload_timestamp(payload: &Json, key: &str) -> Option<Option<chrono::DateTime<chrono::Utc>>> {
+    payload.get(key).map(|value| {
+        value
+            .as_str()
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    })
+}
+
 /// Rejected before any row is written, so an invalid payload never reaches
 /// the append-only event log.
 #[derive(Debug)]
@@ -95,10 +108,12 @@ pub struct ObligationEvent {
     pub payload: Json,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+#[derive(Debug, Clone, PartialEq, FromRow)]
 pub struct ObligationProjection {
     pub obligation_id: Uuid,
     pub status: String,
+    pub hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Appends one immutable event (ADR-0005/ADR-0007). The database rejects any
@@ -146,17 +161,41 @@ pub async fn rebuild_projection(pool: &PgPool) -> Result<u64, sqlx::Error> {
     .fetch_all(pool)
     .await?;
 
-    let mut latest_status: std::collections::HashMap<Uuid, ObligationStatus> =
+    struct ObligationState {
+        status: ObligationStatus,
+        hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+        soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    let mut latest_status: std::collections::HashMap<Uuid, ObligationState> =
         std::collections::HashMap::new();
     for event in &events {
         match ObligationEventType::parse(&event.event_type) {
             Some(ObligationEventType::Created) | Some(ObligationEventType::StatusChanged) => {
                 if let Some(status) = payload_status(&event.payload) {
-                    latest_status.insert(event.obligation_id, status);
+                    let entry = latest_status.entry(event.obligation_id).or_insert(ObligationState {
+                        status,
+                        hard_due_at: None,
+                        soft_due_at: None,
+                    });
+                    entry.status = status;
+                    if let Some(hard_due_at) = payload_timestamp(&event.payload, "hard_due_at") {
+                        entry.hard_due_at = hard_due_at;
+                    }
+                    if let Some(soft_due_at) = payload_timestamp(&event.payload, "soft_due_at") {
+                        entry.soft_due_at = soft_due_at;
+                    }
                 }
             }
             Some(ObligationEventType::Closed) => {
-                latest_status.insert(event.obligation_id, ObligationStatus::Closed);
+                if let Some(entry) = latest_status.get_mut(&event.obligation_id) {
+                    entry.status = ObligationStatus::Closed;
+                } else {
+                    latest_status.insert(
+                        event.obligation_id,
+                        ObligationState { status: ObligationStatus::Closed, hard_due_at: None, soft_due_at: None },
+                    );
+                }
             }
             None => {}
         }
@@ -165,12 +204,17 @@ pub async fn rebuild_projection(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("TRUNCATE obligation_projection").execute(&mut *tx).await?;
     let mut written = 0u64;
-    for (obligation_id, status) in &latest_status {
-        sqlx::query("INSERT INTO obligation_projection (obligation_id, status) VALUES ($1, $2)")
-            .bind(obligation_id)
-            .bind(status.as_str())
-            .execute(&mut *tx)
-            .await?;
+    for (obligation_id, state) in &latest_status {
+        sqlx::query(
+            "INSERT INTO obligation_projection (obligation_id, status, hard_due_at, soft_due_at) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(obligation_id)
+        .bind(state.status.as_str())
+        .bind(state.hard_due_at)
+        .bind(state.soft_due_at)
+        .execute(&mut *tx)
+        .await?;
         written += 1;
     }
     tx.commit().await?;
@@ -204,7 +248,7 @@ mod tests {
         rebuild_projection(&pool).await.expect("rebuild after created");
 
         let after_created: ObligationProjection = sqlx::query_as(
-            "SELECT obligation_id, status FROM obligation_projection WHERE obligation_id = $1",
+            "SELECT obligation_id, status, hard_due_at, soft_due_at FROM obligation_projection WHERE obligation_id = $1",
         )
         .bind(obligation_id)
         .fetch_one(&pool)
@@ -218,7 +262,7 @@ mod tests {
         rebuild_projection(&pool).await.expect("rebuild after status change");
 
         let after_status_change: ObligationProjection = sqlx::query_as(
-            "SELECT obligation_id, status FROM obligation_projection WHERE obligation_id = $1",
+            "SELECT obligation_id, status, hard_due_at, soft_due_at FROM obligation_projection WHERE obligation_id = $1",
         )
         .bind(obligation_id)
         .fetch_one(&pool)
@@ -301,12 +345,46 @@ mod tests {
         rebuild_projection(&pool).await.expect("rebuild after closed");
 
         let projection: ObligationProjection = sqlx::query_as(
-            "SELECT obligation_id, status FROM obligation_projection WHERE obligation_id = $1",
+            "SELECT obligation_id, status, hard_due_at, soft_due_at FROM obligation_projection WHERE obligation_id = $1",
         )
         .bind(obligation_id)
         .fetch_one(&pool)
         .await
         .expect("projection row after closed");
         assert_eq!(projection.status, "closed");
+    }
+
+    /// ADR-0020: a status_changed event that doesn't name hard_due_at must
+    /// not silently erase a previously-recorded one.
+    #[tokio::test]
+    async fn rebuild_preserves_a_due_date_across_an_event_that_does_not_name_it() {
+        let pool = test_pool().await;
+        let obligation_id = Uuid::new_v4();
+
+        append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": "2026-09-01T00:00:00Z"}),
+        )
+        .await
+        .expect("append created event with a due date");
+        append_event(&pool, obligation_id, ObligationEventType::StatusChanged, json!({"status": "at_risk"}))
+            .await
+            .expect("append status_changed event naming no due date");
+        rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let projection: ObligationProjection = sqlx::query_as(
+            "SELECT obligation_id, status, hard_due_at, soft_due_at FROM obligation_projection WHERE obligation_id = $1",
+        )
+        .bind(obligation_id)
+        .fetch_one(&pool)
+        .await
+        .expect("projection row");
+        assert_eq!(projection.status, "at_risk");
+        assert!(
+            projection.hard_due_at.is_some(),
+            "a status_changed event that doesn't name hard_due_at must preserve the previously-recorded value"
+        );
     }
 }
