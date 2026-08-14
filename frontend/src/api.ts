@@ -35,6 +35,12 @@ export type DailyBriefItem = {
   updated_at: string;
   reason: string;
   source_fragment_id: string | null;
+  risk_signals: RiskSignal[];
+};
+
+export type RiskSignal = {
+  signal: string;
+  explanation: string;
 };
 
 export type TimeHorizonItem = {
@@ -44,6 +50,7 @@ export type TimeHorizonItem = {
   soft_due_at: string | null;
   source_fragment_id: string | null;
   reason: string;
+  risk_signals: RiskSignal[];
 };
 
 export type TimeHorizon = {

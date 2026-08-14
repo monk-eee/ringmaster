@@ -24,7 +24,7 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
   if (candidates.length === 0) {
     return (
       <div className="card">
-        <p className="empty-state">No candidates yet.</p>
+        <p className="empty-state">Nothing is waiting for review.</p>
       </div>
     );
   }

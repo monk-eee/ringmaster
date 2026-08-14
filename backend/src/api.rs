@@ -131,11 +131,13 @@ fn daily_brief_reason(
 const STALE_THRESHOLD_DAYS: i64 = 14;
 const DATE_COMPRESSION_WINDOW_DAYS: i64 = 7;
 
-/// Risk Engine v1 (ADR-0039): the two of PRODUCT-SPEC.md §7.1's nine signals
-/// derivable today with zero schema change and zero fabricated data. Each
-/// signal is independent and additive -- no combined severity score is
-/// computed here, since weighting them together needs a model this ADR does
-/// not decide.
+/// Risk Engine v1 (governing ADR still owed -- this landed inside the
+/// ADR-0036 commit referencing a since-reassigned "ADR-0039"; that number
+/// now belongs to the navigation re-steer instead): the two of
+/// PRODUCT-SPEC.md §7.1's nine signals derivable today with zero schema
+/// change and zero fabricated data. Each signal is independent and
+/// additive -- no combined severity score is computed here, since
+/// weighting them together needs a model this ADR does not decide.
 fn risk_signals(
     hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
     soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -171,7 +173,8 @@ fn risk_signals(
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
 /// ORDER BY, not a scoring model. Joins read-only against `source_fragments`
-/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0039).
+/// for evidence (ADR-0023). Also attaches `risk_signals` (see risk_signals()
+/// doc comment -- governing ADR still owed).
 async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(

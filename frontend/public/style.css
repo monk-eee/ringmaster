@@ -1046,3 +1046,200 @@ td.evidence-cell .no-evidence {
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
+
+/* ADR-0039: primary/secondary tab grouping -- demoted, not deleted. */
+.tabs-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.4rem 0.5rem;
+  background: var(--border);
+}
+
+.tabs-secondary-label {
+  align-self: center;
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-soft);
+  padding-right: 0.15rem;
+}
+
+.tab-secondary {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted-soft);
+}
+
+.tab-secondary.tab-active,
+.tab-secondary.tab-active:hover {
+  color: var(--muted);
+}
+
+.tab-secondary.tab-active::after {
+  background: var(--muted-soft);
+}
+
+/* Today page */
+.today-greeting {
+  font-size: 1.05rem;
+  font-weight: 550;
+  color: var(--text);
+  margin: 0 0 1.1rem;
+}
+
+.today-section-heading {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--muted);
+  margin: 1.75rem 0 0.75rem;
+}
+
+.daily-brief-view-more {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.75rem 1.25rem;
+  cursor: pointer;
+}
+
+.daily-brief-view-more:hover {
+  background: rgba(47, 59, 140, 0.06);
+}
+
+.risk-signals {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.risk-signals li {
+  font-size: 0.78rem;
+  color: var(--at-risk-fg);
+}
+
+/* Coming-soon strip */
+.coming-soon-strip {
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+}
+
+.coming-soon-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-soft);
+}
+
+.coming-soon-windows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.coming-soon-window {
+  flex: 1;
+  min-width: 220px;
+}
+
+.coming-soon-window-header {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.coming-soon-window ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.coming-soon-link {
+  margin-top: 1rem;
+  border: none;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* People tab */
+.people-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.85rem;
+}
+
+.people-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.people-card:hover {
+  border-color: var(--focus-ring);
+}
+
+.people-card-name {
+  font-weight: 650;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.people-card-role {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.people-back {
+  border: none;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 0 1rem;
+}
+
+.people-detail h3 {
+  margin: 0 0 0.5rem;
+  padding: 1.1rem 1.25rem 0;
+}
+
+.people-detail .attributes-list {
+  padding: 0 1.25rem;
+}
+
+.people-detail .relationship-obligations {
+  padding: 0 1.25rem 1.1rem;
+}

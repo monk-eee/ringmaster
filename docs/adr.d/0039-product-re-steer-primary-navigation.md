@@ -1,9 +1,9 @@
 # ADR-0039: Product re-steer — Today/Timeline/People/Inbox as primary navigation; entity-named surfaces demoted to secondary/developer
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Explicit direct instruction ("help me resteer it back to my original idea"), pasting the full re-steer brief this ADR implements, 2026-08-14
 - **Depends on:** [ADR-0014](0014-react-vite-single-page-app.md), [ADR-0021](0021-ratify-search-tab-surfaced-without-its-own-adr.md), [ADR-0022](0022-daily-brief-endpoint.md), [ADR-0023](0023-evidence-backed-daily-brief-reasons.md), [ADR-0025](0025-node-edge-write-api-and-traversal.md), [ADR-0026](0026-graph-explorer-frontend.md), [ADR-0028](0028-person-relationship-view.md), [ADR-0029](0029-time-horizon-view.md), [ADR-0031](0031-suggested-focus-blocks.md), [ADR-0035](0035-time-horizon-timeline-view.md)
 - **Amends:** [ADR-0014](0014-react-vite-single-page-app.md)'s flat, equally-weighted tab bar; [ADR-0021](0021-ratify-search-tab-surfaced-without-its-own-adr.md)'s and [ADR-0026](0026-graph-explorer-frontend.md)'s Search/Graph tab prominence (demoted, not removed); [ADR-0022](0022-daily-brief-endpoint.md)'s Daily Brief tab (absorbed into Today, not replaced — the route and reasoning are unchanged). Does not amend any backend route, schema, or the read-only/never-fabricate posture every one of those ADRs already established — this record governs navigation and page composition only.
 - **Tags:** architecture, frontend, ux, information-architecture

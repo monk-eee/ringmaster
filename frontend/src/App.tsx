@@ -20,21 +20,33 @@ import DailyBrief from "./components/DailyBrief";
 import FocusBlocks from "./components/FocusBlocks";
 import GraphExplorer from "./components/GraphExplorer";
 import TimeHorizon from "./components/TimeHorizon";
+import People from "./components/People";
+import ComingSoonStrip from "./components/ComingSoonStrip";
 
-type Tab = "daily-brief" | "obligations" | "candidates" | "search" | "graph" | "time-horizon";
+// ADR-0039: four primary destinations answer a manager's actual questions
+// (what needs attention, what's coming, who do I owe, what's awaiting a
+// decision) instead of naming backend entities. Obligations/Search/Graph
+// remain fully functional, unchanged developer/diagnostic surfaces --
+// demoted in the tab bar, not deleted.
+type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
-  "daily-brief": "Daily Brief",
+  today: "Today",
+  timeline: "Timeline",
+  people: "People",
+  inbox: "Inbox",
   obligations: "Obligations",
-  candidates: "Candidates",
   search: "Search",
   graph: "Graph",
-  "time-horizon": "Time Horizon",
 };
 
+const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox"];
+const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph"];
+const TODAY_ITEM_CAP = 10;
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>("daily-brief");
+  const [tab, setTab] = useState<Tab>("today");
   const [obligations, setObligations] = useState<Obligation[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [dailyBrief, setDailyBrief] = useState<DailyBriefItem[]>([]);
@@ -114,59 +126,37 @@ export default function App() {
       </header>
       <main>
         <nav className="tabs" role="tablist" aria-label="Views">
-          <button
-            role="tab"
-            aria-selected={tab === "daily-brief"}
-            className={tab === "daily-brief" ? "tab tab-active" : "tab"}
-            onClick={() => setTab("daily-brief")}
-          >
-            Daily Brief
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "obligations"}
-            className={tab === "obligations" ? "tab tab-active" : "tab"}
-            onClick={() => setTab("obligations")}
-          >
-            Obligations
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "candidates"}
-            className={tab === "candidates" ? "tab tab-active" : "tab"}
-            onClick={() => setTab("candidates")}
-          >
-            Candidates
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "search"}
-            className={tab === "search" ? "tab tab-active" : "tab"}
-            onClick={() => setTab("search")}
-          >
-            Search
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "graph"}
-            className={tab === "graph" ? "tab tab-active" : "tab"}
-            onClick={() => setTab("graph")}
-          >
-            Graph
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === "time-horizon"}
-            className={tab === "time-horizon" ? "tab tab-active" : "tab"}
-            onClick={() => setTab("time-horizon")}
-          >
-            Time Horizon
-          </button>
+          {PRIMARY_TABS.map((primaryTab) => (
+            <button
+              key={primaryTab}
+              role="tab"
+              aria-selected={tab === primaryTab}
+              className={tab === primaryTab ? "tab tab-active" : "tab"}
+              onClick={() => setTab(primaryTab)}
+            >
+              {TAB_TITLES[primaryTab]}
+            </button>
+          ))}
+          <span className="tabs-divider" aria-hidden="true" />
+          <span className="tabs-secondary-label">Developer</span>
+          {SECONDARY_TABS.map((secondaryTab) => (
+            <button
+              key={secondaryTab}
+              role="tab"
+              aria-selected={tab === secondaryTab}
+              className={tab === secondaryTab ? "tab tab-secondary tab-active" : "tab tab-secondary"}
+              onClick={() => setTab(secondaryTab)}
+            >
+              {TAB_TITLES[secondaryTab]}
+            </button>
+          ))}
         </nav>
 
         {tab === "graph" ? (
           <GraphExplorer />
-        ) : tab === "time-horizon" ? (
+        ) : tab === "people" ? (
+          <People />
+        ) : tab === "timeline" ? (
           <>
             <div className="toolbar">
               <button onClick={load} disabled={loading}>
@@ -192,7 +182,7 @@ export default function App() {
             {searchError && <p className="error">{searchError}</p>}
             <SearchResults results={searchResults} hasSearched={hasSearched} />
           </>
-        ) : tab === "daily-brief" ? (
+        ) : tab === "today" ? (
           <>
             <div className="toolbar">
               <button onClick={load} disabled={loading}>
@@ -200,8 +190,19 @@ export default function App() {
               </button>
             </div>
             {error && <p className="error">Could not reach backend: {error}</p>}
-            <FocusBlocks blocks={focusBlocks} />
-            <DailyBrief items={dailyBrief} />
+            <p className="today-greeting">
+              {dailyBrief.length === 0
+                ? "Nothing needs your attention right now."
+                : `${dailyBrief.length} thing${dailyBrief.length === 1 ? "" : "s"} need${dailyBrief.length === 1 ? "s" : ""} your attention today.`}
+            </p>
+            <DailyBrief items={dailyBrief.slice(0, TODAY_ITEM_CAP)} totalCount={dailyBrief.length} onViewMore={() => setTab("timeline")} />
+            {focusBlocks.length > 0 && (
+              <>
+                <h2 className="today-section-heading">Do these together</h2>
+                <FocusBlocks blocks={focusBlocks} />
+              </>
+            )}
+            <ComingSoonStrip horizon={timeHorizon} onOpenTimeline={() => setTab("timeline")} />
           </>
         ) : (
           <>

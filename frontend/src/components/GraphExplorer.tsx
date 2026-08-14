@@ -50,8 +50,11 @@ function parseAttributes(text: string): Record<string, unknown> | undefined {
 }
 
 /// Reuses the Daily Brief's own list/row/reason presentation (ADR-0028) so a
-/// person's linked Obligations look identical to how the Daily Brief shows them.
-function renderRelationshipGroup(title: string, entries: RelationshipObligation[]) {
+/// person's linked Obligations look identical to how the Daily Brief shows
+/// them. Exported for the People tab (ADR-0039), which renders this same
+/// relationship data as its own first-class page instead of requiring a
+/// detour through the Graph tab.
+export function renderRelationshipGroup(title: string, entries: RelationshipObligation[]) {
   if (entries.length === 0) return null;
   return (
     <>

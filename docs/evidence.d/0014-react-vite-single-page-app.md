@@ -45,9 +45,9 @@ paths = ["frontend/vite.config.ts"]
 
 [[check]]
 id = "playwright-spec-tests-tabs"
-invariant = "A Playwright spec exercises switching between the Obligations and Candidates tabs."
+invariant = "A Playwright spec exercises switching between the Obligations and Inbox (formerly Candidates, renamed by ADR-0039) tabs."
 type = "present"
-pattern = "Candidates"
+pattern = "Inbox"
 paths = ["frontend/tests/**"]
 ```
 

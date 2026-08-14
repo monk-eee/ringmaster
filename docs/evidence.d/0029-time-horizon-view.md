@@ -31,9 +31,9 @@ paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "time-horizon-tab-exists"
-invariant = "A Time Horizon tab renders the bucketed Obligations in the frontend SPA."
+invariant = "A tab renders the bucketed Obligations in the frontend SPA (the Timeline tab, renamed from Time Horizon by ADR-0039; same component and route)."
 type = "present"
-pattern = 'time-horizon'
+pattern = '"timeline"'
 paths = ["frontend/src/App.tsx"]
 ```
 

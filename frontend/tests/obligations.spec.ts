@@ -3,16 +3,18 @@ import { test, expect } from "@playwright/test";
 // ADR-0014: asserts real client-side rendering and interaction (tab
 // switching, filtering), never specific row counts or content — the shared
 // development Postgres volume accumulates data across sessions and agents.
-// ADR-0022: Daily Brief is the default landing tab -- "start with
-// Attention, not Work" (VISION.md).
-test("daily brief tab renders a ranked list by default", async ({ page }) => {
+// ADR-0022/ADR-0039: Today (formerly Daily Brief) is the default landing
+// tab -- "start with Attention, not Work" (VISION.md).
+test("today tab renders a ranked list by default", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("tab", { name: "Daily Brief" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("h1")).toHaveText("Daily Brief");
+  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("h1")).toHaveText("Today");
   await expect(page.locator("p.error")).toHaveCount(0);
 });
 
+// ADR-0039: Obligations/Search/Graph are demoted to a secondary/developer
+// group but remain fully reachable and functionally unchanged.
 test("obligations tab renders a table backed by the backend API", async ({ page }) => {
   await page.goto("/");
 
@@ -35,13 +37,13 @@ test("obligations tab renders a table backed by the backend API", async ({ page 
   }
 });
 
-test("switching to the Candidates tab renders a different, real client-side view", async ({ page }) => {
+test("switching to the Inbox tab renders a different, real client-side view", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByRole("tab", { name: "Candidates" }).click();
+  await page.getByRole("tab", { name: "Inbox" }).click();
 
-  await expect(page.getByRole("tab", { name: "Candidates" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("h1")).toHaveText("Candidates");
+  await expect(page.getByRole("tab", { name: "Inbox" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("h1")).toHaveText("Inbox");
 
   const headerCells = page.locator("table thead th");
   const headerCount = await headerCells.count();
@@ -182,8 +184,8 @@ test("graph trail: traversing two edges and returning to the root (ADR-0033)", a
 // counts or specific obligations.
 test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (ADR-0035)", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("tab", { name: "Time Horizon" }).click();
-  await expect(page.getByRole("tab", { name: "Time Horizon" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Timeline" }).click();
+  await expect(page.getByRole("tab", { name: "Timeline" })).toHaveAttribute("aria-selected", "true");
 
   // The GET /api/time-horizon fetch is kicked off once on initial mount
   // (App.tsx's load() awaits five endpoints together via Promise.all), not
@@ -238,4 +240,39 @@ test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (AD
   await page.getByRole("button", { name: "Buckets" }).click();
   await expect(page.locator(".time-horizon-timeline")).toHaveCount(0);
   await expect(page.locator(".time-horizon-sections")).toBeVisible();
+});
+
+// ADR-0039: proves the primary/secondary tab regrouping is real (Today,
+// Timeline, People, Inbox as primary; Obligations, Search, Graph still
+// present, just visually demoted) -- not that the old tabs were deleted.
+test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Graph remain as secondary tabs", async ({ page }) => {
+  await page.goto("/");
+
+  const tabs = page.getByRole("tab");
+  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Obligations", "Search", "Graph"]);
+
+  const secondaryTabs = page.locator(".tab-secondary");
+  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph"]);
+});
+
+// ADR-0039: People is a first-class primary tab over already-existing data
+// (GET /api/nodes?node_type=person, GET /api/nodes/:id) -- not a new route.
+test("people tab lists person nodes and opens each into its relationship data", async ({ page, request, baseURL }) => {
+  const unique = Date.now();
+  const response = await request.post(`${baseURL}/api/nodes`, {
+    data: { node_type: "person", canonical_text: `People Tab Test ${unique}` },
+  });
+  expect(response.ok()).toBe(true);
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "People" }).click();
+  await expect(page.getByRole("tab", { name: "People" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("h1")).toHaveText("People");
+
+  await page.getByRole("button", { name: new RegExp(`People Tab Test ${unique}`) }).click();
+  await expect(page.locator(".people-detail h3")).toContainText(`People Tab Test ${unique}`);
+  await expect(page.locator(".relationship-obligations")).toBeVisible();
+
+  await page.getByRole("button", { name: "All people" }).click();
+  await expect(page.locator(".people-list")).toBeVisible();
 });

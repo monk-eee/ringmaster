@@ -10,47 +10,61 @@ adr = "0039-product-re-steer-primary-navigation"
 
 [[check]]
 id = "primary-nav-order-and-default"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once Today/Timeline/People/Inbox render as the primary tab group, in that order, with Today the default landing tab."
+invariant = "Today/Timeline/People/Inbox render as the primary tab group, in that order, with Today the default landing tab."
+type = "present"
+pattern = 'const PRIMARY_TABS: Tab\[\] = \["today", "timeline", "people", "inbox"\]'
+paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "secondary-nav-group-exists"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once Obligations/Graph/Search render as a visually distinct secondary/developer group, still present and unchanged in behavior."
+invariant = "Obligations/Graph/Search render as a visually distinct secondary/developer group, not deleted."
+type = "present"
+pattern = 'const SECONDARY_TABS: Tab\[\] = \["obligations", "search", "graph"\]'
+paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "today-page-renders-required-sections"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the Today page renders, in order: a greeting/summary, the capped ranked list, a labeled Do These Together section, and a compact coming-soon strip."
+invariant = "The Today page renders a greeting, the capped ranked list, a labeled \"Do these together\" section, and a compact coming-soon strip, in that order."
+type = "present"
+pattern = 'today-greeting[\s\S]*DailyBrief items=\{dailyBrief\.slice\(0, TODAY_ITEM_CAP\)\}[\s\S]*Do these together[\s\S]*ComingSoonStrip'
+paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "people-tab-lists-and-opens-relationship-data"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the People tab lists person nodes and opens each into its existing relationship data via GET /api/nodes/:id, with no new backend route."
+invariant = "The People tab lists person nodes and opens each into its existing relationship data, with no new backend route."
+type = "present"
+pattern = 'fetchNodes\("person"\)[\s\S]*fetchNodeDetail'
+paths = ["frontend/src/components/People.tsx"]
 
 [[check]]
 id = "inbox-is-relabeled-candidates"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the Inbox tab is confirmed to be the relabeled Candidates route/actions, unchanged in behavior."
+invariant = "The Inbox tab is the relabeled Candidates route/actions, unchanged in behavior."
+type = "present"
+pattern = 'inbox: "Inbox"'
+paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "no-new-backend-or-dependency"
 invariant = "No new backend route, migration, or frontend dependency was added by this ADR."
 type = "manual"
-rationale = "A negative claim (no new route/migration/dependency) is not reliably provable by a positive regex match; verify by direct review of the implementation diff (no new backend/migrations/*.sql, no new .route() registration, no new frontend/package.json dependency) once implemented, matching EV-0021's and EV-0033's own precedent for the same kind of claim."
+rationale = "A negative claim (no new route/migration/dependency) is not reliably provable by a positive regex match; verified by direct review of the implementation diff (no new backend/migrations/*.sql, no new .route() registration in backend/src/api.rs, no new frontend/package.json dependency) once implemented, matching EV-0021's and EV-0033's own precedent for the same kind of claim."
+last_verified = "2026-08-14"
 ```
 
 ## Notes
 
-Pre-implementation: the first five checks are deliberately `manual`/
-unproven, per this repo's own convention (evidence stays honest about
-intent vs. proof until the ADR is accepted and implemented). The sixth
-stays a reasoned `manual` check even after implementation, for the same
-reason EV-0021/EV-0033 keep an equivalent claim manual. Do not implement
-before [ADR-0039](../adr.d/0039-product-re-steer-primary-navigation.md)'s
-Status flips to Accepted.
+Implemented: the primary/secondary tab regrouping, the Today page
+composition (greeting, capped ranked list with a "N more in Timeline"
+escape hatch, "Do these together" heading over the existing Suggested
+Focus Blocks card, and a compact coming-soon strip over
+`GET /api/time-horizon`'s own Next 7/30 Days data), the new People tab
+(`GET /api/nodes?node_type=person` list, `GET /api/nodes/:id` detail
+reusing the same relationship-group rendering the Graph Explorer already
+had), and the Inbox relabel of Candidates. Verified with
+`npx tsc --noEmit`, `npm run build`, and Playwright coverage exercising
+the new tab labels, the primary/secondary grouping, and the People list/
+detail flow. `no-new-backend-or-dependency` stays a reasoned `manual`
+check for the same reason EV-0021/EV-0033 keep an equivalent claim
+manual; confirmed by diff review that `backend/` changes in this slice
+are comment-only (correcting a stale ADR-number reference) and
+`frontend/package.json` is untouched.
