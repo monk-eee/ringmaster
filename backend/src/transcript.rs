@@ -3,8 +3,6 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::graph::create_node;
-
 #[derive(Debug, Clone)]
 pub struct MeetingMetadata {
     pub title: String,
@@ -56,7 +54,9 @@ pub struct IngestedTranscript {
 /// creates a Meeting node carrying an immutable raw-transcript hash, then
 /// chunks the text into per-speaker-turn, immutable source fragments
 /// (ADR-0010). Does not deduplicate meetings/fragments, extract candidates,
-/// or generate embeddings; see ADR-0010's scope.
+/// or generate embeddings; see ADR-0010's scope. Atomic (ADR-0034): the
+/// Meeting node and every fragment are written in one transaction, so a
+/// storage failure partway through can never leave partial meeting memory.
 pub async fn ingest_transcript(
     pool: &PgPool,
     metadata: &MeetingMetadata,
@@ -68,7 +68,17 @@ pub async fn ingest_transcript(
         "participants": metadata.participants,
         "raw_transcript_hash": sha256_hex(raw_text),
     });
-    let meeting_id = create_node(pool, "meeting", &metadata.title, attributes).await?;
+
+    let mut tx = pool.begin().await?;
+
+    let (meeting_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO nodes (node_type, canonical_text, attributes) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind("meeting")
+    .bind(&metadata.title)
+    .bind(&attributes)
+    .fetch_one(&mut *tx)
+    .await?;
 
     let mut fragment_ids = Vec::new();
     for turn in parse_transcript(raw_text) {
@@ -81,10 +91,12 @@ pub async fn ingest_transcript(
         .bind(&turn.text)
         .bind(&turn.speaker)
         .bind(&hash)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
         fragment_ids.push(fragment_id);
     }
+
+    tx.commit().await?;
 
     Ok(IngestedTranscript { meeting_id, fragment_ids })
 }

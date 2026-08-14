@@ -20,7 +20,8 @@ use uuid::Uuid;
 /// (ADR-0022), plus the accept/reject candidate routes (ADR-0024), plus the
 /// node/edge write API and traversal routes (ADR-0025), plus the promote
 /// route (ADR-0027), plus the Time Horizon route (ADR-0029), plus the
-/// Suggested Focus Blocks route (ADR-0031).
+/// Suggested Focus Blocks route (ADR-0031), plus the atomic meeting-ingestion
+/// route (ADR-0034).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -28,6 +29,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/daily-brief", get(daily_brief))
         .route("/api/time-horizon", get(time_horizon))
         .route("/api/focus-blocks", get(focus_blocks))
+        .route("/api/meetings/ingest", post(ingest_meeting))
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
@@ -322,6 +324,52 @@ async fn focus_blocks(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
     result.sort_by_key(|block| std::cmp::Reverse(block["obligations"].as_array().map(|list| list.len()).unwrap_or(0)));
 
     Ok(Json(json!(result)))
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestMeetingRequest {
+    title: String,
+    date: Option<String>,
+    organiser: Option<String>,
+    #[serde(default)]
+    participants: Vec<String>,
+    transcript: String,
+}
+
+/// Ingests one meeting transcript atomically (ADR-0034): validates a
+/// non-blank title/transcript before any write, then delegates to the
+/// existing transcript module, which now wraps the Meeting node and every
+/// fragment in one transaction -- a storage failure partway through can
+/// never leave partial meeting memory. Never invokes a model, extraction,
+/// or embedding; evidence capture stays available even when none is
+/// configured (ADR-0011/ADR-0013's posture).
+async fn ingest_meeting(State(pool): State<PgPool>, Json(body): Json<IngestMeetingRequest>) -> Result<Response, (axum::http::StatusCode, String)> {
+    if body.title.trim().is_empty() {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "title must not be blank".to_string()));
+    }
+    if body.transcript.trim().is_empty() {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "transcript must not be blank".to_string()));
+    }
+
+    let metadata = crate::transcript::MeetingMetadata {
+        title: body.title,
+        date: body.date,
+        organiser: body.organiser,
+        participants: body.participants,
+    };
+
+    let ingested = crate::transcript::ingest_transcript(&pool, &metadata, &body.transcript)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(json!({
+            "meeting_id": ingested.meeting_id,
+            "fragment_ids": ingested.fragment_ids,
+        })),
+    )
+        .into_response())
 }
 
 fn candidate_json(row: &CandidateProjection) -> JsonValue {
@@ -1937,5 +1985,135 @@ mod tests {
         let obligations = block["obligations"].as_array().expect("obligations is an array");
         assert_eq!(obligations.len(), 2, "the closed obligation must not be counted");
         assert!(obligations.iter().all(|o| o["obligation_id"] != closed_id.to_string()), "the closed obligation must never appear in a block");
+    }
+
+    /// ADR-0034: a successful request creates the Meeting node and every
+    /// fragment in transcript turn order, and returns them in that order.
+    #[tokio::test]
+    async fn ingest_meeting_route_creates_a_meeting_and_ordered_fragments() {
+        let pool = test_pool().await;
+        let request_body = json!({
+            "title": "Weekly 1:1",
+            "date": "2026-08-14",
+            "organiser": "Lyndon",
+            "participants": ["Lyndon", "Roopa Venkat"],
+            "transcript": "Roopa: Please bring me a transition plan.\nLyndon: I will have it by Friday.",
+        });
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/meetings/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let meeting_id = parsed["meeting_id"].as_str().expect("meeting_id present").to_string();
+        let fragment_ids = parsed["fragment_ids"].as_array().expect("fragment_ids is an array");
+        assert_eq!(fragment_ids.len(), 2, "one fragment per transcript turn");
+
+        let node = graph::get_node(&pool, uuid::Uuid::parse_str(&meeting_id).unwrap()).await.expect("meeting node exists");
+        assert_eq!(node.node_type, "meeting");
+        assert_eq!(node.canonical_text, "Weekly 1:1");
+
+        let first_fragment_id = uuid::Uuid::parse_str(fragment_ids[0].as_str().unwrap()).unwrap();
+        let first_fragment = graph::get_source_fragment(&pool, first_fragment_id).await.expect("first fragment exists");
+        assert_eq!(first_fragment.text, "Please bring me a transition plan.");
+
+        let second_fragment_id = uuid::Uuid::parse_str(fragment_ids[1].as_str().unwrap()).unwrap();
+        let second_fragment = graph::get_source_fragment(&pool, second_fragment_id).await.expect("second fragment exists");
+        assert_eq!(second_fragment.text, "I will have it by Friday.");
+    }
+
+    #[tokio::test]
+    async fn ingest_meeting_route_rejects_a_blank_title_with_no_writes() {
+        let pool = test_pool().await;
+        let marker = format!("blank-title-marker-{}", uuid::Uuid::new_v4());
+        let request_body = json!({"title": "   ", "transcript": format!("Roopa: {marker}")});
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/meetings/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM source_fragments WHERE text = $1")
+            .bind(&marker)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a blank title must perform zero writes, including zero fragments");
+    }
+
+    #[tokio::test]
+    async fn ingest_meeting_route_rejects_a_blank_transcript_with_no_writes() {
+        let pool = test_pool().await;
+        let marker = format!("Blank Transcript Marker {}", uuid::Uuid::new_v4());
+        let request_body = json!({"title": marker, "transcript": "   "});
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/meetings/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM nodes WHERE node_type = 'meeting' AND canonical_text = $1")
+            .bind(&marker)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a blank transcript must perform zero writes, including zero Meeting nodes");
+    }
+
+    /// ADR-0034: ingestion never invokes extraction, even implicitly --
+    /// the new fragments never gain a candidate unless something separately
+    /// calls the existing explicit extraction route.
+    #[tokio::test]
+    async fn ingest_meeting_route_never_creates_a_candidate_implicitly() {
+        let pool = test_pool().await;
+        let marker = format!("no-implicit-extraction-marker-{}", uuid::Uuid::new_v4());
+        let request_body = json!({"title": "No Implicit Extraction Test", "transcript": format!("Roopa: {marker}")});
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/meetings/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM candidate_projection cp \
+             JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+             WHERE sf.text = $1",
+        )
+        .bind(&marker)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "ingestion must never create a candidate on its own");
     }
 }
