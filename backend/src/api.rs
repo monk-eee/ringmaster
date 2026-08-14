@@ -19,12 +19,13 @@ use uuid::Uuid;
 /// plus the semantic search route (ADR-0019), plus the Daily Brief route
 /// (ADR-0022), plus the accept/reject candidate routes (ADR-0024), plus the
 /// node/edge write API and traversal routes (ADR-0025), plus the promote
-/// route (ADR-0027).
+/// route (ADR-0027), plus the Time Horizon route (ADR-0029).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/obligations", get(list_obligations))
         .route("/api/daily-brief", get(daily_brief))
+        .route("/api/time-horizon", get(time_horizon))
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
@@ -165,6 +166,83 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
         .collect::<Vec<_>>();
 
     Ok(Json(json!(body)))
+}
+
+const TIME_HORIZON_BUCKETS: [&str; 5] = ["overdue", "next_7_days", "next_30_days", "next_90_days", "beyond"];
+
+/// Buckets one Obligation by its effective due date (ADR-0029): hard_due_at
+/// if present, else soft_due_at, else none. An at_risk Obligation with no
+/// date at all lands in "overdue" (the one exception to pure date
+/// bucketing); every other combination buckets purely by date.
+fn time_horizon_bucket(status: &str, hard_due_at: Option<chrono::DateTime<chrono::Utc>>, soft_due_at: Option<chrono::DateTime<chrono::Utc>>) -> &'static str {
+    let effective_due_at = hard_due_at.or(soft_due_at);
+    let Some(due) = effective_due_at else {
+        return if status == "at_risk" { "overdue" } else { "beyond" };
+    };
+    let days = (due - chrono::Utc::now()).num_days();
+    if days < 0 {
+        "overdue"
+    } else if days <= 7 {
+        "next_7_days"
+    } else if days <= 30 {
+        "next_30_days"
+    } else if days <= 90 {
+        "next_90_days"
+    } else {
+        "beyond"
+    }
+}
+
+/// Groups non-closed Obligations by due-date window (ADR-0029): Overdue,
+/// Next 7/30/90 days, Beyond/no date. Read-only; reuses the exact same
+/// evidence join and `daily_brief_reason` the Daily Brief already uses --
+/// this is a different lens (when it's due) on the same data, not a new
+/// scoring model. Soonest-due-first within each bucket; an empty bucket is
+/// simply omitted from the response.
+async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        uuid::Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<uuid::Uuid>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
+                op.source_fragment_id, sf.text \
+         FROM obligation_projection op \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE op.status <> 'closed' \
+         ORDER BY COALESCE(op.hard_due_at, op.soft_due_at) ASC NULLS LAST, op.updated_at DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let mut buckets: std::collections::HashMap<&'static str, Vec<JsonValue>> = std::collections::HashMap::new();
+    for (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text) in rows {
+        let bucket = time_horizon_bucket(&status, hard_due_at, soft_due_at);
+        let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
+        buckets.entry(bucket).or_default().push(json!({
+            "obligation_id": obligation_id,
+            "status": status,
+            "updated_at": updated_at.to_rfc3339(),
+            "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
+            "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+            "source_fragment_id": source_fragment_id,
+            "reason": reason,
+        }));
+    }
+
+    let body: JsonValue = TIME_HORIZON_BUCKETS
+        .into_iter()
+        .filter_map(|bucket| buckets.remove(bucket).map(|items| (bucket.to_string(), json!(items))))
+        .collect::<serde_json::Map<String, JsonValue>>()
+        .into();
+
+    Ok(Json(body))
 }
 
 fn candidate_json(row: &CandidateProjection) -> JsonValue {
@@ -1528,5 +1606,72 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
         assert_eq!(created["edge_type"], "collaborates_with");
+    }
+
+    /// ADR-0029: buckets by effective due date, at-risk-with-no-date is the
+    /// one exception (lands in overdue), and closed Obligations never appear.
+    #[tokio::test]
+    async fn time_horizon_buckets_by_due_date_with_the_at_risk_no_date_exception() {
+        let pool = test_pool().await;
+
+        let overdue_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            overdue_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": (chrono::Utc::now() - chrono::Duration::days(3)).to_rfc3339()}),
+        )
+        .await
+        .expect("append overdue obligation");
+
+        let next_7_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            next_7_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339()}),
+        )
+        .await
+        .expect("append next-7-days obligation");
+
+        let at_risk_no_date_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, at_risk_no_date_id, crate::obligation::ObligationEventType::Created, json!({"status": "at_risk"}))
+            .await
+            .expect("append at-risk obligation with no date");
+
+        let closed_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, closed_id, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append obligation to close");
+        crate::obligation::append_event(&pool, closed_id, crate::obligation::ObligationEventType::Closed, json!({}))
+            .await
+            .expect("close it");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/time-horizon").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let overdue = parsed["overdue"].as_array().expect("overdue bucket present");
+        assert!(overdue.iter().any(|row| row["obligation_id"] == overdue_id.to_string()), "a past-due obligation must land in overdue");
+        assert!(
+            overdue.iter().any(|row| row["obligation_id"] == at_risk_no_date_id.to_string()),
+            "an at_risk obligation with no date must land in overdue, not beyond"
+        );
+
+        let next_7 = parsed["next_7_days"].as_array().expect("next_7_days bucket present");
+        assert!(next_7.iter().any(|row| row["obligation_id"] == next_7_id.to_string()));
+
+        for bucket in ["overdue", "next_7_days", "next_30_days", "next_90_days", "beyond"] {
+            if let Some(items) = parsed.get(bucket).and_then(|value| value.as_array()) {
+                assert!(items.iter().all(|row| row["obligation_id"] != closed_id.to_string()), "a closed obligation must never appear in any bucket");
+            }
+        }
     }
 }

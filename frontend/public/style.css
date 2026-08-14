@@ -439,6 +439,12 @@ td.evidence-cell .no-evidence {
   line-height: 1.45;
 }
 
+.time-horizon-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 .actions-cell {
   display: flex;
   gap: 0.4rem;

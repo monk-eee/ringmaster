@@ -3,19 +3,22 @@ import {
   fetchCandidates,
   fetchDailyBrief,
   fetchObligations,
+  fetchTimeHorizon,
   searchSourceFragments,
   type Candidate,
   type DailyBriefItem,
   type Obligation,
   type SearchResult,
+  type TimeHorizon as TimeHorizonData,
 } from "./api";
 import ObligationsTable from "./components/ObligationsTable";
 import CandidatesTable from "./components/CandidatesTable";
 import SearchResults from "./components/SearchResults";
 import DailyBrief from "./components/DailyBrief";
 import GraphExplorer from "./components/GraphExplorer";
+import TimeHorizon from "./components/TimeHorizon";
 
-type Tab = "daily-brief" | "obligations" | "candidates" | "search" | "graph";
+type Tab = "daily-brief" | "obligations" | "candidates" | "search" | "graph" | "time-horizon";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
@@ -24,6 +27,7 @@ const TAB_TITLES: Record<Tab, string> = {
   candidates: "Candidates",
   search: "Search",
   graph: "Graph",
+  "time-horizon": "Time Horizon",
 };
 
 export default function App() {
@@ -31,6 +35,7 @@ export default function App() {
   const [obligations, setObligations] = useState<Obligation[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [dailyBrief, setDailyBrief] = useState<DailyBriefItem[]>([]);
+  const [timeHorizon, setTimeHorizon] = useState<TimeHorizonData>({});
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [loading, setLoading] = useState(true);
@@ -46,14 +51,16 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [nextObligations, nextCandidates, nextDailyBrief] = await Promise.all([
+      const [nextObligations, nextCandidates, nextDailyBrief, nextTimeHorizon] = await Promise.all([
         fetchObligations(),
         fetchCandidates(),
         fetchDailyBrief(),
+        fetchTimeHorizon(),
       ]);
       setObligations(nextObligations);
       setCandidates(nextCandidates);
       setDailyBrief(nextDailyBrief);
+      setTimeHorizon(nextTimeHorizon);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -141,10 +148,28 @@ export default function App() {
           >
             Graph
           </button>
+          <button
+            role="tab"
+            aria-selected={tab === "time-horizon"}
+            className={tab === "time-horizon" ? "tab tab-active" : "tab"}
+            onClick={() => setTab("time-horizon")}
+          >
+            Time Horizon
+          </button>
         </nav>
 
         {tab === "graph" ? (
           <GraphExplorer />
+        ) : tab === "time-horizon" ? (
+          <>
+            <div className="toolbar">
+              <button onClick={load} disabled={loading}>
+                {loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+            {error && <p className="error">Could not reach backend: {error}</p>}
+            <TimeHorizon horizon={timeHorizon} />
+          </>
         ) : tab === "search" ? (
           <>
             <form className="toolbar" onSubmit={runSearch}>

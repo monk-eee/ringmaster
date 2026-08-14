@@ -10,32 +10,39 @@ adr = "0029-time-horizon-view"
 
 [[check]]
 id = "time-horizon-route-buckets-by-due-date"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once GET /api/time-horizon groups non-closed Obligations into Overdue/7/30/90/Beyond buckets."
+invariant = "GET /api/time-horizon groups non-closed Obligations into Overdue/7/30/90/Beyond buckets."
+type = "present"
+pattern = 'fn time_horizon_bucket\('
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "at-risk-no-date-lands-in-overdue"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once an at_risk Obligation with no due date is bucketed under Overdue, matching the Daily Brief's own precedent."
+invariant = "An at_risk Obligation with no due date is bucketed under Overdue, matching the Daily Brief's own precedent."
+type = "present"
+pattern = 'status == "at_risk" \{ "overdue" \}'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "closed-excluded-from-time-horizon"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once a closed Obligation is confirmed absent from every bucket."
+invariant = "A closed Obligation is confirmed absent from every bucket."
+type = "present"
+pattern = "op.status <> 'closed'"
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "time-horizon-tab-exists"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once a Time Horizon tab renders the bucketed Obligations in the frontend SPA."
+invariant = "A Time Horizon tab renders the bucketed Obligations in the frontend SPA."
+type = "present"
+pattern = 'time-horizon'
+paths = ["frontend/src/App.tsx"]
 ```
 
 ## Notes
 
-Pre-implementation: all four checks are deliberately `manual`/unproven,
-per this repo's own convention (evidence stays honest about intent vs.
-proof until the ADR is accepted and implemented). Do not implement before
-[ADR-0029](../adr.d/0029-time-horizon-view.md)'s Status flips to Accepted.
+All four checks are automated and verified directly against the
+implementing route and frontend files. `cargo test` covers:
+`time_horizon_buckets_by_due_date_with_the_at_risk_no_date_exception` —
+a past-due Obligation lands in `overdue`, an `at_risk` Obligation with no
+date also lands in `overdue` (not `beyond`), a near-term Obligation lands
+in `next_7_days`, and a closed Obligation never appears in any bucket.
+56/56 backend tests pass; `tsc --noEmit` and `vite build` both pass.

@@ -32,6 +32,23 @@ export type DailyBriefItem = {
   reason: string;
 };
 
+export type TimeHorizonItem = {
+  obligation_id: string;
+  status: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  source_fragment_id: string | null;
+  reason: string;
+};
+
+export type TimeHorizon = {
+  overdue?: TimeHorizonItem[];
+  next_7_days?: TimeHorizonItem[];
+  next_30_days?: TimeHorizonItem[];
+  next_90_days?: TimeHorizonItem[];
+  beyond?: TimeHorizonItem[];
+};
+
 export type GraphNode = {
   id: string;
   node_type: string;
@@ -121,6 +138,10 @@ export function searchSourceFragments(query: string): Promise<SearchResult[]> {
 
 export function fetchDailyBrief(): Promise<DailyBriefItem[]> {
   return getJson<DailyBriefItem[]>("/api/daily-brief");
+}
+
+export function fetchTimeHorizon(): Promise<TimeHorizon> {
+  return getJson<TimeHorizon>("/api/time-horizon");
 }
 
 export function acceptCandidate(candidateId: string): Promise<Candidate> {
