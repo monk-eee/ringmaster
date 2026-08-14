@@ -35,4 +35,5 @@ accepted and implemented.
 | [ADR-0015: Expose source-fragment traceability on candidates](0015-expose-source-fragment-traceability-on-candidates.md) | Accepted | [EV-0015](../evidence.d/0015-expose-source-fragment-traceability-on-candidates.md) |
 | [ADR-0016: Publish the ringmaster repository publicly on GitHub](0016-publish-repository-publicly-on-github.md) | Accepted | [EV-0016](../evidence.d/0016-publish-repository-publicly-on-github.md) |
 | [ADR-0017: Add a GitHub Actions CI pipeline for backend, frontend, and governance](0017-add-github-actions-ci-pipeline.md) | Accepted | [EV-0017](../evidence.d/0017-add-github-actions-ci-pipeline.md) |
-| [ADR-0018: Generate and store embeddings for source fragments](0018-generate-and-store-source-fragment-embeddings.md) | Proposed | [EV-0018](../evidence.d/0018-generate-and-store-source-fragment-embeddings.md) |
+| [ADR-0018: Generate and store embeddings for source fragments](0018-generate-and-store-source-fragment-embeddings.md) | Accepted | [EV-0018](../evidence.d/0018-generate-and-store-source-fragment-embeddings.md) |
+| [ADR-0019: Semantic search over embedded source fragments](0019-semantic-search-over-source-fragments.md) | Proposed | [EV-0019](../evidence.d/0019-semantic-search-over-source-fragments.md) |
