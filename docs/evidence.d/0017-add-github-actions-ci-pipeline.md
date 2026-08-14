@@ -33,10 +33,15 @@ paths = [".github/workflows/*.yml"]
 id = "pipeline-observed-green"
 invariant = "The pipeline has been observed to run successfully on GitHub."
 type = "manual"
+last_verified = "2026-08-14"
 ```
 
 ## Notes
 
-`pipeline-observed-green` starts unverified (no `last_verified`, so it
-reports `ASSERTED`) until a workflow run is actually watched to completion on
-GitHub and this file is updated with the date that was observed.
+`pipeline-observed-green` was verified 2026-08-14: run 31758406186 ("Fix CI:
+regenerate frontend lockfile") completed with conclusion `success` across
+all three jobs (`gh run list --repo monk-eee/ringmaster`). The two prior
+runs on this same workflow failed for real, since-fixed reasons (missing
+`@types/react`/`@types/node`, then an out-of-sync `package-lock.json`) —
+exactly the "expected, correct signal" ADR-0017's own Consequences section
+names, not a defect in the checker.
