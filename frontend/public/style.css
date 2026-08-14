@@ -325,6 +325,28 @@ td.id-cell code {
   border-radius: 6px;
 }
 
+.obligation-title-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.obligation-title-cell .no-evidence {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.obligation-title-cell .id-marker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: var(--surface-alt);
+  padding: 0.15rem 0.4rem;
+  border-radius: 6px;
+  margin-left: auto;
+}
+
 td.updated-cell {
   color: var(--muted);
   white-space: nowrap;

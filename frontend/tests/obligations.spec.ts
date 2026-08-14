@@ -66,7 +66,9 @@ test("filtering obligations by status only shows matching rows", async ({ page }
   const badges = page.locator("table tbody .badge");
   const badgeCount = await badges.count();
   for (let index = 0; index < badgeCount; index += 1) {
-    await expect(badges.nth(index)).toHaveText(concreteStatus!);
+    // Badge text carries a leading status icon (ADR-0030), so match the status
+    // name within the text rather than asserting an exact string.
+    await expect(badges.nth(index)).toContainText(concreteStatus!);
   }
 });
 
