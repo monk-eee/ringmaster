@@ -818,3 +818,78 @@ td.evidence-cell .no-evidence {
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
+
+/* ADR-0033: progressive graph traversal trail */
+.graph-trail {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.graph-trail-back {
+  flex: none;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  cursor: pointer;
+}
+
+.graph-trail-back:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.graph-trail-path {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  list-style: none;
+  margin: 0;
+  padding: 0.2rem 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.graph-trail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.graph-trail-chevron {
+  color: var(--muted-soft);
+}
+
+.graph-trail-verb {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.graph-trail-verb-untrusted {
+  color: var(--at-risk-fg);
+  text-decoration: underline dotted;
+}
+
+.graph-trail-step {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+}
+
+.graph-trail-step:disabled {
+  cursor: default;
+  border-color: var(--accent);
+  background: var(--open-bg);
+  color: var(--accent-strong);
+}
+
+.why-here {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}

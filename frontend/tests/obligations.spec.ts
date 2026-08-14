@@ -91,3 +91,86 @@ test("search tab submits a query and renders a final state", async ({ page }) =>
   const hasResultRows = (await page.locator("table tbody tr").count()) > 0;
   expect(hasError || hasEmptyState || hasResultRows).toBe(true);
 });
+
+// ADR-0033: proves the client-side traversal trail can grow across two real
+// edges and return to the root, entirely on top of the existing one-hop
+// GET /api/nodes/:id primitive (no multi-hop backend route involved). Node
+// type/text are kept short (<14 chars) and stamped with Date.now() so they
+// (a) survive the radial view's label truncation and (b) stay unique against
+// the shared development database and any concurrent agent session.
+test("graph trail: traversing two edges and returning to the root (ADR-0033)", async ({ page }) => {
+  const stamp = Date.now() % 100000;
+  const nodeType = `trailtest${stamp}`;
+  const nodeA = `Rt${stamp}`;
+  const nodeB = `Md${stamp}`;
+  const nodeC = `Lf${stamp}`;
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Graph" }).click();
+  await expect(page.getByRole("tab", { name: "Graph" })).toHaveAttribute("aria-selected", "true");
+
+  async function createNode(text: string) {
+    await page.getByPlaceholder("Node type (e.g. person, risk)").fill(nodeType);
+    await page.getByPlaceholder("Canonical text (e.g. a name)").fill(text);
+    await page.getByRole("button", { name: "Create node" }).click();
+    await expect(page.locator(".node-detail h3")).toContainText(text);
+  }
+
+  async function selectNode(text: string) {
+    await page.locator(".node-list-button", { hasText: text }).click();
+    await expect(page.locator(".node-detail h3")).toContainText(text);
+  }
+
+  async function link(fromText: string, toText: string, verb: string) {
+    await selectNode(fromText);
+    await page.locator(".node-detail select").selectOption({ label: `${nodeType}: ${toText}` });
+    await page.getByPlaceholder("Relationship (e.g. made, owns)").fill(verb);
+    await page.getByRole("button", { name: "Add relationship" }).click();
+    // The form resets its fields on success (so the submit button goes back to
+    // disabled by design, not because the request is stuck) -- the real proof
+    // of success is the new neighbor appearing in the radial view.
+    await expect(page.locator("svg.relationship-view g", { hasText: toText })).toBeVisible();
+  }
+
+  // Three fresh nodes, linked A -> B -> C, so the trail has two real edges to cross.
+  await createNode(nodeA);
+  await createNode(nodeB);
+  await createNode(nodeC);
+  await link(nodeA, nodeB, "leads_to");
+  await link(nodeB, nodeC, "leads_to");
+
+  // Start a fresh trail at the root: selecting from the node list always
+  // begins a new trail (ADR-0033), so this is exactly one item.
+  await selectNode(nodeA);
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(1);
+  await expect(page.locator(".graph-trail-back")).toBeDisabled();
+
+  // Hop 1: click B's neighbor circle from A's radial view.
+  await page.locator("svg.relationship-view g", { hasText: nodeB }).locator("circle.relationship-node-clickable").click();
+  await expect(page.locator(".node-detail h3")).toContainText(nodeB);
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(2);
+  await expect(page.locator(".why-here")).toContainText(nodeA);
+  await expect(page.locator(".why-here")).toContainText("leads_to");
+
+  // Hop 2: from B, click specifically C's circle (B also neighbors A, so scope by C's label).
+  await page.locator("svg.relationship-view g", { hasText: nodeC }).locator("circle.relationship-node-clickable").click();
+  await expect(page.locator(".node-detail h3")).toContainText(nodeC);
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(3);
+
+  // The breadcrumb is a readable path: every node and the traversed verb appear in order.
+  const trailText = await page.locator(".graph-trail-path").innerText();
+  expect(trailText).toContain(nodeA);
+  expect(trailText).toContain(nodeB);
+  expect(trailText).toContain(nodeC);
+  expect(trailText).toContain("leads_to");
+
+  // Returning to the root via the dedicated Back control, one edge at a time.
+  await page.locator(".graph-trail-back").click();
+  await expect(page.locator(".node-detail h3")).toContainText(nodeB);
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(2);
+
+  await page.locator(".graph-trail-back").click();
+  await expect(page.locator(".node-detail h3")).toContainText(nodeA);
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(1);
+  await expect(page.locator(".graph-trail-back")).toBeDisabled();
+});

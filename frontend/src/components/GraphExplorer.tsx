@@ -75,11 +75,37 @@ function isNodeNeighbor(neighbor: NodeNeighbor["neighbor"]): neighbor is { id: s
   return neighbor !== null && !("type" in neighbor);
 }
 
+// ADR-0033: renders the trust state ADR-0032 already carries per edge --
+// historical (superseded) and/or confidence-bearing (suggested) -- as text,
+// never by colour alone.
+function trustSuffix(validTo: string | null, confidence: number | null): string {
+  const parts: string[] = [];
+  if (validTo !== null) parts.push(`historical, until ${new Date(validTo).toLocaleDateString()}`);
+  if (confidence !== null) parts.push(`suggested, ${Math.round(confidence * 100)}% confidence`);
+  return parts.length > 0 ? ` (${parts.join("; ")})` : "";
+}
+
+// ADR-0033: one step in the current exploration. viaEdgeType/direction are
+// null only for the root (the first node selected from the list).
+// viaValidTo/viaConfidence carry the traversed edge's own trust treatment
+// (ADR-0032) into the trail, so a historical or suggested link never reads
+// as an equally-certain, current fact.
+type TrailStep = {
+  nodeId: string;
+  nodeType: string;
+  canonicalText: string;
+  viaEdgeType: string | null;
+  direction: "outgoing" | "incoming" | null;
+  viaValidTo: string | null;
+  viaConfidence: number | null;
+};
+
 export default function GraphExplorer() {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [nodeTypeFilter, setNodeTypeFilter] = useState("all");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detail, setDetail] = useState<NodeDetail | null>(null);
+  const [trail, setTrail] = useState<TrailStep[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [newNodeType, setNewNodeType] = useState("");
@@ -103,7 +129,7 @@ export default function GraphExplorer() {
     }
   }
 
-  async function loadDetail(id: string) {
+  async function fetchDetail(id: string) {
     setSelectedNodeId(id);
     setEnrichAttributesText("");
     try {
@@ -112,6 +138,63 @@ export default function GraphExplorer() {
       setError((cause as Error).message);
       setDetail(null);
     }
+  }
+
+  // Re-fetches the current focus without touching the trail (used after an
+  // enrich/link on the already-focused node -- not a traversal step).
+  async function refreshDetail() {
+    if (!selectedNodeId) return;
+    try {
+      setDetail(await fetchNodeDetail(selectedNodeId));
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  }
+
+  // Starting from the node list (or just-created node) begins a new trail.
+  async function selectRootNode(node: { id: string; node_type: string; canonical_text: string }) {
+    setTrail([{ nodeId: node.id, nodeType: node.node_type, canonicalText: node.canonical_text, viaEdgeType: null, direction: null, viaValidTo: null, viaConfidence: null }]);
+    await fetchDetail(node.id);
+  }
+
+  // Clicking a neighbor in the radial view appends one increment to the
+  // trail (ADR-0033), or jumps back to it if it's already an earlier step,
+  // rather than growing an endlessly repeating cycle.
+  async function visitNeighbor(neighbor: NodeNeighbor) {
+    if (!isNodeNeighbor(neighbor.neighbor)) return;
+    const target = neighbor.neighbor;
+    let nextFocusId = target.id;
+    setTrail((current) => {
+      const existingIndex = current.findIndex((step) => step.nodeId === target.id);
+      if (existingIndex !== -1) return current.slice(0, existingIndex + 1);
+      const direction: "outgoing" | "incoming" = neighbor.from_id === selectedNodeId ? "outgoing" : "incoming";
+      return [
+        ...current,
+        {
+          nodeId: target.id,
+          nodeType: target.node_type,
+          canonicalText: target.canonical_text,
+          viaEdgeType: neighbor.edge_type,
+          direction,
+          viaValidTo: neighbor.valid_to,
+          viaConfidence: neighbor.confidence,
+        },
+      ];
+    });
+    await fetchDetail(nextFocusId);
+  }
+
+  // Selecting an earlier trail step truncates later steps and restores it as
+  // the current focus (also backs the dedicated Back control by one step).
+  async function jumpToTrailStep(index: number) {
+    const step = trail[index];
+    if (!step) return;
+    setTrail((current) => current.slice(0, index + 1));
+    await fetchDetail(step.nodeId);
+  }
+
+  function goBack() {
+    if (trail.length > 1) jumpToTrailStep(trail.length - 2);
   }
 
   useEffect(() => {
@@ -138,7 +221,7 @@ export default function GraphExplorer() {
       setNewCanonicalText("");
       setNewAttributesText("");
       await loadNodes();
-      await loadDetail(node.id);
+      await selectRootNode(node);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -163,7 +246,7 @@ export default function GraphExplorer() {
       await updateNode(selectedNodeId, { attributes });
       setEnrichAttributesText("");
       await loadNodes();
-      await loadDetail(selectedNodeId);
+      await refreshDetail();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -181,7 +264,7 @@ export default function GraphExplorer() {
       setEdgeTargetId("");
       setEdgeType("");
       setSupersede(false);
-      await loadDetail(selectedNodeId);
+      await refreshDetail();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -264,7 +347,7 @@ export default function GraphExplorer() {
             <ul className="node-list-items">
               {visibleNodes.map((node) => (
                 <li key={node.id}>
-                  <button className={node.id === selectedNodeId ? "node-list-button node-list-button-active" : "node-list-button"} onClick={() => loadDetail(node.id)}>
+                  <button className={node.id === selectedNodeId ? "node-list-button node-list-button-active" : "node-list-button"} onClick={() => selectRootNode(node)}>
                     <span className="node-type-tag" style={{ background: nodeTypeColors(node.node_type).bg, color: nodeTypeColors(node.node_type).fg }}>
                       <span aria-hidden="true">{typeIcon(node.node_type)}</span> {node.node_type}
                     </span>{" "}
@@ -286,6 +369,45 @@ export default function GraphExplorer() {
             <p className="empty-state">Select a node to drill in.</p>
           ) : (
             <>
+              <nav className="graph-trail" aria-label="Traversal trail">
+                <button type="button" className="graph-trail-back" onClick={goBack} disabled={trail.length <= 1}>
+                  ← Back
+                </button>
+                <ol className="graph-trail-path">
+                  {trail.map((step, index) => (
+                    <li key={`${step.nodeId}-${index}`} className="graph-trail-item">
+                      {index > 0 && (
+                        <>
+                          <span className="graph-trail-chevron" aria-hidden="true">
+                            ›
+                          </span>
+                          <span className={step.viaValidTo !== null || step.viaConfidence !== null ? "graph-trail-verb graph-trail-verb-untrusted" : "graph-trail-verb"}>
+                            {step.viaEdgeType}
+                            {trustSuffix(step.viaValidTo, step.viaConfidence)}
+                          </span>
+                          <span className="graph-trail-chevron" aria-hidden="true">
+                            ›
+                          </span>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className={index === trail.length - 1 ? "graph-trail-step graph-trail-step-current" : "graph-trail-step"}
+                        onClick={() => jumpToTrailStep(index)}
+                        disabled={index === trail.length - 1}
+                      >
+                        {typeIcon(step.nodeType)} {step.canonicalText}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+              {trail.length > 1 && (
+                <p className="why-here">
+                  Why here: connected to {trail[trail.length - 2].canonicalText} via "{trail[trail.length - 1].viaEdgeType}"
+                  {trustSuffix(trail[trail.length - 1].viaValidTo, trail[trail.length - 1].viaConfidence)}.
+                </p>
+              )}
               <h3>
                 <span className="node-type-tag" style={{ background: nodeTypeColors(detail.node_type).bg, color: nodeTypeColors(detail.node_type).fg }}>
                   <span aria-hidden="true">{typeIcon(detail.node_type)}</span> {detail.node_type}
@@ -357,7 +479,9 @@ export default function GraphExplorer() {
                         r={18}
                         className={isNodeNeighbor(neighbor.neighbor) ? "relationship-node relationship-node-clickable" : "relationship-node"}
                         style={{ fill: neighborColor.bg, stroke: neighborColor.fg }}
-                        onClick={isNodeNeighbor(neighbor.neighbor) ? () => loadDetail(neighbor.neighbor!.id) : undefined}
+                        onClick={isNodeNeighbor(neighbor.neighbor) ? () => visitNeighbor(neighbor) : undefined}
+                        role={isNodeNeighbor(neighbor.neighbor) ? "button" : undefined}
+                        aria-label={isNodeNeighbor(neighbor.neighbor) ? `Visit ${neighbor.neighbor.canonical_text}` : undefined}
                       />
                       <text x={x} y={y + 32} textAnchor="middle" className="relationship-node-label">
                         {labelIcon} {label.length > 14 ? `${label.slice(0, 14)}…` : label}
