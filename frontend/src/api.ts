@@ -40,6 +40,15 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function postJson<T>(path: string): Promise<T> {
+  const response = await fetch(path, { method: "POST" });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(body || `${path} responded ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
 export function fetchObligations(): Promise<Obligation[]> {
   return getJson<Obligation[]>("/api/obligations");
 }
@@ -54,4 +63,12 @@ export function searchSourceFragments(query: string): Promise<SearchResult[]> {
 
 export function fetchDailyBrief(): Promise<DailyBriefItem[]> {
   return getJson<DailyBriefItem[]>("/api/daily-brief");
+}
+
+export function acceptCandidate(candidateId: string): Promise<Candidate> {
+  return postJson<Candidate>(`/api/candidates/${encodeURIComponent(candidateId)}/accept`);
+}
+
+export function rejectCandidate(candidateId: string): Promise<Candidate> {
+  return postJson<Candidate>(`/api/candidates/${encodeURIComponent(candidateId)}/reject`);
 }

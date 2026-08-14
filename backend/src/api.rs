@@ -16,15 +16,21 @@ use uuid::Uuid;
 /// Builds the HTTP API: `/health` and the read-only `/api/obligations`
 /// (ADR-0012), plus `/api/candidates` and the extraction trigger (ADR-0013),
 /// plus the semantic search route (ADR-0019), plus the Daily Brief route
-/// (ADR-0022).
+/// (ADR-0022), plus the accept/reject candidate routes (ADR-0024), plus the
+/// node/edge write API and traversal routes (ADR-0025).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/obligations", get(list_obligations))
         .route("/api/daily-brief", get(daily_brief))
         .route("/api/candidates", get(list_candidates))
+        .route("/api/candidates/:id/accept", post(accept_candidate))
+        .route("/api/candidates/:id/reject", post(reject_candidate))
         .route("/api/source-fragments/:id/extract", post(extract_source_fragment))
         .route("/api/search", get(search))
+        .route("/api/nodes", get(list_nodes_route).post(create_node_route))
+        .route("/api/nodes/:id", get(get_node_detail).patch(update_node_route))
+        .route("/api/edges", post(create_edge_route))
         .with_state(pool)
 }
 
@@ -215,6 +221,76 @@ async fn list_candidates(State(pool): State<PgPool>) -> Result<Json<JsonValue>, 
     Ok(Json(json!(rows.iter().map(candidate_with_source_json).collect::<Vec<_>>())))
 }
 
+/// Shared body for accept/reject (ADR-0024): both are a plain state
+/// transition with no field changes, differing only in the event type.
+/// `409` when the candidate isn't currently in the `candidate` state stops
+/// a stale UI from double-transitioning something already resolved.
+async fn transition_candidate_route(
+    pool: &PgPool,
+    id: Uuid,
+    event_type: &'static str,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let current: CandidateWithSource = sqlx::query_as(
+        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                cp.source_fragment_id, sf.text AS source_text, sf.speaker \
+         FROM candidate_projection cp \
+         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+         WHERE cp.candidate_id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "candidate not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+
+    if current.validation_state != "candidate" {
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            format!("candidate is already \"{}\", not \"candidate\"", current.validation_state),
+        ));
+    }
+
+    extraction::transition_candidate(pool, id, event_type, json!({}))
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    extraction::rebuild_candidate_projection(pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let updated: CandidateWithSource = sqlx::query_as(
+        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                cp.source_fragment_id, sf.text AS source_text, sf.speaker \
+         FROM candidate_projection cp \
+         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+         WHERE cp.candidate_id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok(Json(candidate_with_source_json(&updated)))
+}
+
+/// Accepts a candidate still in the `candidate` state (ADR-0024). Plain
+/// accept, no field changes; use a future correction control for edits.
+async fn accept_candidate(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    transition_candidate_route(&pool, id, "accepted").await
+}
+
+/// Rejects a candidate still in the `candidate` state (ADR-0024).
+async fn reject_candidate(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    transition_candidate_route(&pool, id, "rejected").await
+}
+
 /// Triggers extraction for one named source fragment (ADR-0013): explicit
 /// and synchronous, never automatic on ingestion. Translates the model
 /// adapter's typed errors into HTTP statuses instead of panicking.
@@ -280,6 +356,137 @@ async fn search(
     })?;
 
     Ok(Json(json!(results)))
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeQuery {
+    node_type: Option<String>,
+}
+
+/// Lists nodes, optionally filtered by `?node_type=` (ADR-0025). Read-only.
+async fn list_nodes_route(State(pool): State<PgPool>, Query(params): Query<NodeQuery>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let nodes = graph::list_nodes(&pool, params.node_type.as_deref())
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(json!(nodes)))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateNodeRequest {
+    node_type: String,
+    canonical_text: String,
+    attributes: Option<JsonValue>,
+}
+
+/// Creates one node (ADR-0025), the graph substrate's first write route.
+async fn create_node_route(State(pool): State<PgPool>, Json(body): Json<CreateNodeRequest>) -> Result<Response, (axum::http::StatusCode, String)> {
+    let id = graph::create_node(&pool, &body.node_type, &body.canonical_text, body.attributes.unwrap_or_else(|| json!({})))
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let node = graph::get_node(&pool, id).await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok((axum::http::StatusCode::CREATED, Json(json!(node))).into_response())
+}
+
+#[derive(Debug, FromRow)]
+struct NeighborRow {
+    id: Uuid,
+    from_id: Uuid,
+    to_id: Uuid,
+    edge_type: String,
+    confidence: Option<f32>,
+    neighbor_id: Option<Uuid>,
+    neighbor_node_type: Option<String>,
+    neighbor_canonical_text: Option<String>,
+}
+
+/// Reads one node plus its one-hop neighborhood of edges (ADR-0025): every
+/// edge touching this node, paired with a summary of the node on the other
+/// end when that end is itself a `nodes` row (an edge into an Obligation id
+/// comes back with a null neighbor summary, never a failed join).
+async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let node = graph::get_node(&pool, id).await.map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "node not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+
+    let neighbors: Vec<NeighborRow> = sqlx::query_as(
+        "SELECT e.id, e.from_id, e.to_id, e.edge_type, e.confidence, \
+                n.id AS neighbor_id, n.node_type AS neighbor_node_type, n.canonical_text AS neighbor_canonical_text \
+         FROM edges e \
+         LEFT JOIN nodes n ON n.id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
+         WHERE e.from_id = $1 OR e.to_id = $1",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let neighbors_json: Vec<JsonValue> = neighbors
+        .into_iter()
+        .map(|row| {
+            json!({
+                "edge_id": row.id,
+                "from_id": row.from_id,
+                "to_id": row.to_id,
+                "edge_type": row.edge_type,
+                "confidence": row.confidence,
+                "neighbor": row.neighbor_id.map(|neighbor_id| json!({
+                    "id": neighbor_id,
+                    "node_type": row.neighbor_node_type,
+                    "canonical_text": row.neighbor_canonical_text,
+                })),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "id": node.id,
+        "node_type": node.node_type,
+        "canonical_text": node.canonical_text,
+        "attributes": node.attributes,
+        "lifecycle_state": node.lifecycle_state,
+        "neighbors": neighbors_json,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateNodeRequest {
+    canonical_text: Option<String>,
+    lifecycle_state: Option<String>,
+    attributes: Option<JsonValue>,
+}
+
+/// Enriches an existing node (ADR-0025): a shallow merge of `attributes`,
+/// never a wholesale replace. `404` for an unknown id.
+async fn update_node_route(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateNodeRequest>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let node = graph::update_node(&pool, id, body.canonical_text.as_deref(), body.lifecycle_state.as_deref(), body.attributes.as_ref())
+        .await
+        .map_err(|error| match error {
+            sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "node not found".to_string()),
+            other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+    Ok(Json(json!(node)))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateEdgeRequest {
+    from_id: Uuid,
+    to_id: Uuid,
+    edge_type: String,
+    confidence: Option<f32>,
+}
+
+/// Creates one edge between any two entity ids (ADR-0025/ADR-0009).
+async fn create_edge_route(State(pool): State<PgPool>, Json(body): Json<CreateEdgeRequest>) -> Result<Response, (axum::http::StatusCode, String)> {
+    let id = graph::create_edge(&pool, body.from_id, body.to_id, &body.edge_type, body.confidence)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let edge = graph::get_edge(&pool, id).await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok((axum::http::StatusCode::CREATED, Json(json!(edge))).into_response())
 }
 
 #[cfg(test)]
@@ -688,6 +895,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accept_route_transitions_a_candidate_still_in_the_candidate_state() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/accept"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.get("validation_state").and_then(|v| v.as_str()), Some("accepted"));
+    }
+
+    #[tokio::test]
+    async fn reject_route_transitions_a_candidate_still_in_the_candidate_state() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/reject"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.get("validation_state").and_then(|v| v.as_str()), Some("rejected"));
+    }
+
+    #[tokio::test]
+    async fn accept_route_returns_409_for_an_already_transitioned_candidate() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/accept"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn accept_route_returns_404_for_an_unknown_candidate() {
+        let pool = test_pool().await;
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{}/accept", uuid::Uuid::new_v4()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn search_route_returns_400_when_query_is_missing() {
         let pool = test_pool().await;
         let response = app(pool)
@@ -742,5 +1042,124 @@ mod tests {
             parsed.as_array().unwrap().iter().any(|row| row.get("source_fragment_id").and_then(|v| v.as_str()) == Some(fragment_id.to_string().as_str())),
             "the just-embedded fragment must appear among the ranked results"
         );
+    }
+
+    /// ADR-0025: create, list (filtered), enrich, and detail-with-neighbors
+    /// round-trip through the HTTP routes, not just graph.rs directly.
+    #[tokio::test]
+    async fn node_create_list_enrich_and_detail_round_trip() {
+        let pool = test_pool().await;
+
+        let create_response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nodes")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"node_type": "person", "canonical_text": "Node Route Test Person", "attributes": {"role": "manager"}}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_response.status(), axum::http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(create_response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let node_id = created["id"].as_str().expect("created node has an id").to_string();
+
+        let list_response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/nodes?node_type=person").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(list_response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(list_response.into_body(), usize::MAX).await.unwrap();
+        let listed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert!(listed.as_array().unwrap().iter().any(|row| row["id"] == node_id), "the just-created node must be listed");
+
+        let patch_response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/nodes/{node_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"attributes": {"team": "platform"}}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patch_response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(patch_response.into_body(), usize::MAX).await.unwrap();
+        let patched: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(patched["attributes"]["role"], "manager", "enrichment must not clobber a previously-recorded attribute");
+        assert_eq!(patched["attributes"]["team"], "platform", "the newly-enriched attribute must be present");
+
+        let detail_response = app(pool.clone())
+            .oneshot(Request::builder().uri(format!("/api/nodes/{node_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(detail_response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(detail_response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert!(detail["neighbors"].is_array(), "detail response must include a neighbors array");
+    }
+
+    #[tokio::test]
+    async fn node_detail_route_returns_404_for_unknown_node() {
+        let pool = test_pool().await;
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{}", uuid::Uuid::new_v4())).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// ADR-0025: an edge's neighbor summary must be present when the other
+    /// end is a real node, and null (not a failed join) when it is not.
+    #[tokio::test]
+    async fn node_detail_includes_neighbor_summary_and_handles_a_non_node_edge_target() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Neighbor Test Person", json!({})).await.expect("create person");
+        let risk_id = graph::create_node(&pool, "risk", "Neighbor Test Risk", json!({})).await.expect("create risk");
+        graph::create_edge(&pool, person_id, risk_id, "flagged", None).await.expect("create edge to a real node");
+        let obligation_id = uuid::Uuid::new_v4(); // stands in for a real Obligation id, not a nodes row (ADR-0009).
+        graph::create_edge(&pool, person_id, obligation_id, "made", None).await.expect("create edge to a non-node id");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let neighbors = detail["neighbors"].as_array().unwrap();
+
+        let to_risk = neighbors.iter().find(|edge| edge["to_id"] == risk_id.to_string()).expect("edge to the risk node present");
+        assert_eq!(to_risk["neighbor"]["id"], risk_id.to_string());
+        assert_eq!(to_risk["neighbor"]["canonical_text"], "Neighbor Test Risk");
+
+        let to_obligation = neighbors.iter().find(|edge| edge["to_id"] == obligation_id.to_string()).expect("edge to the non-node id present");
+        assert!(to_obligation["neighbor"].is_null(), "an edge whose other end is not a nodes row must report a null neighbor, not fail");
+    }
+
+    #[tokio::test]
+    async fn edge_create_route_round_trips() {
+        let pool = test_pool().await;
+        let from_id = graph::create_node(&pool, "person", "Edge Route Test From", json!({})).await.expect("create from-node");
+        let to_id = graph::create_node(&pool, "person", "Edge Route Test To", json!({})).await.expect("create to-node");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/edges")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"from_id": from_id, "to_id": to_id, "edge_type": "collaborates_with"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(created["edge_type"], "collaborates_with");
     }
 }

@@ -3,7 +3,7 @@ use serde_json::Value as Json;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
 pub struct Node {
     pub id: Uuid,
     pub node_type: String,
@@ -12,7 +12,7 @@ pub struct Node {
     pub lifecycle_state: String,
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
 pub struct Edge {
     pub id: Uuid,
     pub from_id: Uuid,
@@ -54,6 +54,55 @@ pub async fn get_node(pool: &PgPool, id: Uuid) -> Result<Node, sqlx::Error> {
         .bind(id)
         .fetch_one(pool)
         .await
+}
+
+/// Lists nodes, optionally filtered by `node_type` (ADR-0025). Read-only.
+pub async fn list_nodes(pool: &PgPool, node_type: Option<&str>) -> Result<Vec<Node>, sqlx::Error> {
+    match node_type {
+        Some(node_type) => {
+            sqlx::query_as(
+                "SELECT id, node_type, canonical_text, attributes, lifecycle_state FROM nodes \
+                 WHERE node_type = $1 ORDER BY updated_at DESC",
+            )
+            .bind(node_type)
+            .fetch_all(pool)
+            .await
+        }
+        None => {
+            sqlx::query_as("SELECT id, node_type, canonical_text, attributes, lifecycle_state FROM nodes ORDER BY updated_at DESC")
+                .fetch_all(pool)
+                .await
+        }
+    }
+}
+
+/// Enriches an existing node (ADR-0025). Any of `canonical_text`,
+/// `lifecycle_state`, `attributes` may be omitted (`None`) to leave that
+/// field untouched. `attributes`, when given, is shallow-merged into the
+/// existing JSONB object via Postgres `||` -- enriching one attribute never
+/// clobbers others already recorded.
+pub async fn update_node(
+    pool: &PgPool,
+    id: Uuid,
+    canonical_text: Option<&str>,
+    lifecycle_state: Option<&str>,
+    attributes: Option<&Json>,
+) -> Result<Node, sqlx::Error> {
+    sqlx::query_as(
+        "UPDATE nodes SET \
+            canonical_text = COALESCE($2, canonical_text), \
+            lifecycle_state = COALESCE($3, lifecycle_state), \
+            attributes = attributes || COALESCE($4, '{}'::jsonb), \
+            updated_at = now() \
+         WHERE id = $1 \
+         RETURNING id, node_type, canonical_text, attributes, lifecycle_state",
+    )
+    .bind(id)
+    .bind(canonical_text)
+    .bind(lifecycle_state)
+    .bind(attributes)
+    .fetch_one(pool)
+    .await
 }
 
 /// Creates one edge between any two entity ids (ADR-0009). `from_id`/`to_id`
@@ -218,6 +267,35 @@ mod tests {
         assert_eq!(node.node_type, "person");
         assert_eq!(node.canonical_text, "Roopa");
         assert_eq!(node.lifecycle_state, "active");
+    }
+
+    /// ADR-0025: enriching one attribute must not erase another already
+    /// recorded, and omitted fields must stay untouched.
+    #[tokio::test]
+    async fn update_node_merges_attributes_without_clobbering_existing_ones() {
+        let pool = test_pool().await;
+        let id = create_node(&pool, "person", "Roopa", json!({"role": "manager"}))
+            .await
+            .expect("create node");
+
+        let node = update_node(&pool, id, None, None, Some(&json!({"team": "platform"})))
+            .await
+            .expect("enrich node with a new attribute");
+
+        assert_eq!(node.canonical_text, "Roopa", "unspecified canonical_text must be unchanged");
+        assert_eq!(node.attributes["role"], "manager", "a previously-recorded attribute must survive enrichment");
+        assert_eq!(node.attributes["team"], "platform", "the newly-enriched attribute must be present");
+    }
+
+    #[tokio::test]
+    async fn list_nodes_filters_by_node_type() {
+        let pool = test_pool().await;
+        let person_id = create_node(&pool, "person", "Filter Test Person", json!({})).await.expect("create person");
+        create_node(&pool, "risk", "Filter Test Risk", json!({})).await.expect("create risk");
+
+        let people = list_nodes(&pool, Some("person")).await.expect("list people");
+        assert!(people.iter().any(|node| node.id == person_id));
+        assert!(people.iter().all(|node| node.node_type == "person"), "filter must exclude other node types");
     }
 
     #[tokio::test]

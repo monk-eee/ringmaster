@@ -1,8 +1,25 @@
-import type { Candidate } from "../api";
+import { useState } from "react";
+import { acceptCandidate, rejectCandidate, type Candidate } from "../api";
 
-type Props = { candidates: Candidate[] };
+type Props = { candidates: Candidate[]; onChanged: () => void };
 
-export default function CandidatesTable({ candidates }: Props) {
+export default function CandidatesTable({ candidates, onChanged }: Props) {
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function handle(action: (id: string) => Promise<Candidate>, candidateId: string) {
+    setPendingId(candidateId);
+    setActionError(null);
+    try {
+      await action(candidateId);
+      onChanged();
+    } catch (cause) {
+      setActionError((cause as Error).message);
+    } finally {
+      setPendingId(null);
+    }
+  }
+
   if (candidates.length === 0) {
     return (
       <div className="card">
@@ -13,6 +30,7 @@ export default function CandidatesTable({ candidates }: Props) {
 
   return (
     <div className="card">
+      {actionError && <p className="error">{actionError}</p>}
       <table>
         <thead>
           <tr>
@@ -21,6 +39,7 @@ export default function CandidatesTable({ candidates }: Props) {
             <th>Validation state</th>
             <th>Confidence</th>
             <th>Evidence</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -34,6 +53,28 @@ export default function CandidatesTable({ candidates }: Props) {
                 {c.source_text ? (
                   <>
                     <span className="speaker">{c.speaker ?? "unknown"}:</span> "{c.source_text}"
+                  </>
+                ) : (
+                  <span className="no-evidence">—</span>
+                )}
+              </td>
+              <td className="actions-cell">
+                {c.validation_state === "candidate" ? (
+                  <>
+                    <button
+                      className="accept-button"
+                      disabled={pendingId === c.candidate_id}
+                      onClick={() => handle(acceptCandidate, c.candidate_id)}
+                    >
+                      {pendingId === c.candidate_id ? "…" : "Accept"}
+                    </button>
+                    <button
+                      className="reject-button"
+                      disabled={pendingId === c.candidate_id}
+                      onClick={() => handle(rejectCandidate, c.candidate_id)}
+                    >
+                      {pendingId === c.candidate_id ? "…" : "Reject"}
+                    </button>
                   </>
                 ) : (
                   <span className="no-evidence">—</span>

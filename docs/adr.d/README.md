@@ -41,3 +41,6 @@ accepted and implemented.
 | [ADR-0021: Ratify surfacing semantic search in the frontend SPA (retroactive)](0021-ratify-search-tab-surfaced-without-its-own-adr.md) | Accepted | [EV-0021](../evidence.d/0021-ratify-search-tab-surfaced-without-its-own-adr.md) |
 | [ADR-0022: A read-only Daily Brief endpoint — Obligations ranked by urgency](0022-daily-brief-endpoint.md) | Accepted | [EV-0022](../evidence.d/0022-daily-brief-endpoint.md) |
 | [ADR-0023: Evidence-backed Daily Brief reasons — source-fragment traceability on Obligation](0023-evidence-backed-daily-brief-reasons.md) | Accepted | [EV-0023](../evidence.d/0023-evidence-backed-daily-brief-reasons.md) |
+| [ADR-0024: Accept/reject buttons for candidates — Epic E5's first interactive slice](0024-candidate-accept-reject-buttons.md) | Accepted | [EV-0024](../evidence.d/0024-candidate-accept-reject-buttons.md) |
+| [ADR-0025: Node/edge write API and neighborhood traversal](0025-node-edge-write-api-and-traversal.md) | Accepted | [EV-0025](../evidence.d/0025-node-edge-write-api-and-traversal.md) |
+| [ADR-0026: Graph explorer frontend — data entry, drill-down, and relationship visualization](0026-graph-explorer-frontend.md) | Accepted | [EV-0026](../evidence.d/0026-graph-explorer-frontend.md) |
