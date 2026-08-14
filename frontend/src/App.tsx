@@ -1,22 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchCandidates, fetchObligations, searchSourceFragments, type Candidate, type Obligation, type SearchResult } from "./api";
+import {
+  fetchCandidates,
+  fetchDailyBrief,
+  fetchObligations,
+  searchSourceFragments,
+  type Candidate,
+  type DailyBriefItem,
+  type Obligation,
+  type SearchResult,
+} from "./api";
 import ObligationsTable from "./components/ObligationsTable";
 import CandidatesTable from "./components/CandidatesTable";
 import SearchResults from "./components/SearchResults";
+import DailyBrief from "./components/DailyBrief";
 
-type Tab = "obligations" | "candidates" | "search";
+type Tab = "daily-brief" | "obligations" | "candidates" | "search";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
+  "daily-brief": "Daily Brief",
   obligations: "Obligations",
   candidates: "Candidates",
   search: "Search",
 };
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("obligations");
+  const [tab, setTab] = useState<Tab>("daily-brief");
   const [obligations, setObligations] = useState<Obligation[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [dailyBrief, setDailyBrief] = useState<DailyBriefItem[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [loading, setLoading] = useState(true);
@@ -32,9 +44,14 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [nextObligations, nextCandidates] = await Promise.all([fetchObligations(), fetchCandidates()]);
+      const [nextObligations, nextCandidates, nextDailyBrief] = await Promise.all([
+        fetchObligations(),
+        fetchCandidates(),
+        fetchDailyBrief(),
+      ]);
       setObligations(nextObligations);
       setCandidates(nextCandidates);
+      setDailyBrief(nextDailyBrief);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -84,6 +101,14 @@ export default function App() {
         <nav className="tabs" role="tablist" aria-label="Views">
           <button
             role="tab"
+            aria-selected={tab === "daily-brief"}
+            className={tab === "daily-brief" ? "tab tab-active" : "tab"}
+            onClick={() => setTab("daily-brief")}
+          >
+            Daily Brief
+          </button>
+          <button
+            role="tab"
             aria-selected={tab === "obligations"}
             className={tab === "obligations" ? "tab tab-active" : "tab"}
             onClick={() => setTab("obligations")}
@@ -123,6 +148,16 @@ export default function App() {
             </form>
             {searchError && <p className="error">{searchError}</p>}
             <SearchResults results={searchResults} hasSearched={hasSearched} />
+          </>
+        ) : tab === "daily-brief" ? (
+          <>
+            <div className="toolbar">
+              <button onClick={load} disabled={loading}>
+                {loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+            {error && <p className="error">Could not reach backend: {error}</p>}
+            <DailyBrief items={dailyBrief} />
           </>
         ) : (
           <>

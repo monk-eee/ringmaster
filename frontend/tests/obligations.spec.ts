@@ -3,9 +3,20 @@ import { test, expect } from "@playwright/test";
 // ADR-0014: asserts real client-side rendering and interaction (tab
 // switching, filtering), never specific row counts or content — the shared
 // development Postgres volume accumulates data across sessions and agents.
+// ADR-0022: Daily Brief is the default landing tab -- "start with
+// Attention, not Work" (VISION.md).
+test("daily brief tab renders a ranked list by default", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("tab", { name: "Daily Brief" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("h1")).toHaveText("Daily Brief");
+  await expect(page.locator("p.error")).toHaveCount(0);
+});
+
 test("obligations tab renders a table backed by the backend API", async ({ page }) => {
   await page.goto("/");
 
+  await page.getByRole("tab", { name: "Obligations" }).click();
   await expect(page.getByRole("tab", { name: "Obligations" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("h1")).toHaveText("Obligations");
   await expect(page.locator("p.error")).toHaveCount(0);
@@ -41,6 +52,7 @@ test("switching to the Candidates tab renders a different, real client-side view
 
 test("filtering obligations by status only shows matching rows", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("tab", { name: "Obligations" }).click();
 
   // Wait for the async fetch to populate the table before reading filter options.
   await expect(page.locator("table tbody tr").first()).toBeVisible();

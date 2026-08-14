@@ -22,6 +22,15 @@ export type SearchResult = {
   similarity: number;
 };
 
+export type DailyBriefItem = {
+  obligation_id: string;
+  status: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  updated_at: string;
+  reason: string;
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
   if (!response.ok) {
@@ -41,4 +50,8 @@ export function fetchCandidates(): Promise<Candidate[]> {
 
 export function searchSourceFragments(query: string): Promise<SearchResult[]> {
   return getJson<SearchResult[]>(`/api/search?q=${encodeURIComponent(query)}`);
+}
+
+export function fetchDailyBrief(): Promise<DailyBriefItem[]> {
+  return getJson<DailyBriefItem[]>("/api/daily-brief");
 }
