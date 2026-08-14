@@ -174,3 +174,63 @@ test("graph trail: traversing two edges and returning to the root (ADR-0033)", a
   await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(1);
   await expect(page.locator(".graph-trail-back")).toBeDisabled();
 });
+
+// ADR-0035: proves the Buckets/Timeline toggle and the timeline's Now/zoom/
+// pan/legend controls work as real client-side interactions on top of the
+// existing GET /api/time-horizon response -- tolerant of whatever the
+// shared development database currently contains, never asserting exact
+// counts or specific obligations.
+test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (ADR-0035)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Time Horizon" }).click();
+  await expect(page.getByRole("tab", { name: "Time Horizon" })).toHaveAttribute("aria-selected", "true");
+
+  // The GET /api/time-horizon fetch is kicked off once on initial mount, not
+  // on tab click, so wait for it to settle before deciding whether real data
+  // exists -- otherwise this races ahead of the fetch and wrongly treats
+  // "not loaded yet" as "empty".
+  await expect
+    .poll(async () => (await page.locator(".time-horizon-view-toggle, p.empty-state").count()) > 0, { timeout: 10000 })
+    .toBe(true);
+  const hasViewToggle = (await page.locator(".time-horizon-view-toggle").count()) > 0;
+  test.skip(!hasViewToggle, "no obligations due within the horizon yet, so the view toggle doesn't render");
+
+  await page.getByRole("button", { name: "Timeline" }).click();
+  await expect(page.locator(".time-horizon-timeline")).toBeVisible();
+
+  const totalBands = await page.locator(".time-horizon-band").count();
+  expect(totalBands).toBeGreaterThan(0);
+
+  // Zoom in focuses exactly one band; zoom out restores every band.
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.locator(".time-horizon-band")).toHaveCount(1);
+  await page.getByRole("button", { name: "Zoom out" }).click();
+  await expect(page.locator(".time-horizon-band")).toHaveCount(totalBands);
+
+  // Pan moves which band is focused, without changing how many bands render.
+  const panNext = page.getByRole("button", { name: "Focus later window" });
+  if (await panNext.isEnabled()) {
+    await panNext.click();
+    await expect(page.locator(".time-horizon-band")).toHaveCount(totalBands);
+  }
+
+  // Now deterministically resets focus back to the Overdue band.
+  await page.getByRole("button", { name: "Now" }).click();
+  await expect(page.locator(".time-horizon-band-focused")).toHaveClass(/accent-overdue/);
+
+  // The legend toggle reveals the same accent chips the Buckets ribbon already uses.
+  await page.getByRole("button", { name: "Show legend" }).click();
+  await expect(page.locator(".time-horizon-legend .time-horizon-chip").first()).toBeVisible();
+
+  // Expanding a marker, if one exists, reveals its evidence-backed reason inline.
+  const marker = page.locator(".time-horizon-marker").first();
+  if (await marker.count()) {
+    await marker.click();
+    await expect(page.locator(".time-horizon-marker-detail .daily-brief-reason").first()).toBeVisible();
+  }
+
+  // Switching back to Buckets is the "close" affordance -- the original list view returns.
+  await page.getByRole("button", { name: "Buckets" }).click();
+  await expect(page.locator(".time-horizon-timeline")).toHaveCount(0);
+  await expect(page.locator(".time-horizon-sections")).toBeVisible();
+});

@@ -360,6 +360,15 @@ entity table, not a kanban board:
 
 Notice what's absent: no tasks, no epics, no stories. Problems.
 
+*(monk-eee, 2026-08-14 — shared a concrete reference component: a zoomable
+horizontal timeline with colored period bands, typed event markers, a "Now"
+jump, stacked-count badges, and an evidence popover.)* That reference is
+mapped onto Ringmaster's own Obligation and evidence data in
+[Time Horizon Timeline Design](TIME-HORIZON-TIMELINE-DESIGN.md) — a
+possible richer evolution of the bucketed list
+[ADR-0029](adr.d/0029-time-horizon-view.md) already ships, not a
+replacement decided here.
+
 ### Relationship pages as external memory
 
 A dedicated page per person (Roopa, David, John, ...) showing: commitments

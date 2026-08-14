@@ -52,3 +52,4 @@ accepted and implemented.
 | [ADR-0032: Wire up edge temporal validity — supersede-on-write and relationship history in the Graph Explorer](0032-temporal-edge-validity-supersede-on-write.md) | Accepted | [EV-0032](../evidence.d/0032-temporal-edge-validity-supersede-on-write.md) |
 | [ADR-0033: Progressive graph traversal trail over one-hop neighborhoods](0033-progressive-graph-traversal-trail.md) | Accepted | [EV-0033](../evidence.d/0033-progressive-graph-traversal-trail.md) |
 | [ADR-0034: Expose atomic meeting-transcript ingestion over HTTP](0034-http-meeting-transcript-ingestion.md) | Accepted | [EV-0034](../evidence.d/0034-http-meeting-transcript-ingestion.md) |
+| [ADR-0035: Time Horizon timeline view — an alternative, zoomable presentation of the existing bucketed data](0035-time-horizon-timeline-view.md) | Accepted | [EV-0035](../evidence.d/0035-time-horizon-timeline-view.md) |

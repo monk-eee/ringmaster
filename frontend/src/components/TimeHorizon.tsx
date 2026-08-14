@@ -1,9 +1,13 @@
+import { useState } from "react";
 import type { TimeHorizon, TimeHorizonItem } from "../api";
 import StatusBadge from "./StatusBadge";
+import TimeHorizonTimeline from "./TimeHorizonTimeline";
 
 type Props = { horizon: TimeHorizon };
 
-const BUCKETS: { key: keyof TimeHorizon; label: string; accent: string }[] = [
+// Exported so TimeHorizonTimeline (ADR-0035) reuses the same bucket
+// boundaries and accent classes instead of a second, parallel scheme.
+export const BUCKETS: { key: keyof TimeHorizon; label: string; accent: string }[] = [
   { key: "overdue", label: "Overdue", accent: "overdue" },
   { key: "next_7_days", label: "Next 7 Days", accent: "next-7" },
   { key: "next_30_days", label: "Next 30 Days", accent: "next-30" },
@@ -35,6 +39,7 @@ function BucketSection({ label, accent, items }: { label: string; accent: string
 }
 
 export default function TimeHorizon({ horizon }: Props) {
+  const [view, setView] = useState<"buckets" | "timeline">("buckets");
   const sections = BUCKETS.map(({ key, label, accent }) => ({ label, accent, items: horizon[key] ?? [] })).filter(
     (section) => section.items.length > 0,
   );
@@ -49,18 +54,40 @@ export default function TimeHorizon({ horizon }: Props) {
 
   return (
     <div className="time-horizon">
-      <div className="time-horizon-ribbon">
-        {sections.map((section) => (
-          <span key={section.label} className={`time-horizon-chip accent-${section.accent}`}>
-            {section.label} <strong>{section.items.length}</strong>
-          </span>
-        ))}
+      <div className="time-horizon-view-toggle" role="group" aria-label="Time Horizon view">
+        <button
+          type="button"
+          className={view === "buckets" ? "time-horizon-view-button time-horizon-view-button-active" : "time-horizon-view-button"}
+          onClick={() => setView("buckets")}
+        >
+          Buckets
+        </button>
+        <button
+          type="button"
+          className={view === "timeline" ? "time-horizon-view-button time-horizon-view-button-active" : "time-horizon-view-button"}
+          onClick={() => setView("timeline")}
+        >
+          Timeline
+        </button>
       </div>
-      <div className="time-horizon-sections">
-        {sections.map((section) => (
-          <BucketSection key={section.label} label={section.label} accent={section.accent} items={section.items} />
-        ))}
-      </div>
+      {view === "timeline" ? (
+        <TimeHorizonTimeline horizon={horizon} />
+      ) : (
+        <>
+          <div className="time-horizon-ribbon">
+            {sections.map((section) => (
+              <span key={section.label} className={`time-horizon-chip accent-${section.accent}`}>
+                {section.label} <strong>{section.items.length}</strong>
+              </span>
+            ))}
+          </div>
+          <div className="time-horizon-sections">
+            {sections.map((section) => (
+              <BucketSection key={section.label} label={section.label} accent={section.accent} items={section.items} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
