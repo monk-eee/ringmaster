@@ -2,6 +2,8 @@
 
 ![Ringmaster](assets/ringmaster_logo.png)
 
+Canonical repository: [github.com/monk-eee/ringmaster](https://github.com/monk-eee/ringmaster) ([ADR-0016](docs/adr.d/0016-publish-repository-publicly-on-github.md)).
+
 Ringmaster is a management operating system: it maintains a living model of
 commitments, people, work, outcomes, risks, and time so managers spend less
 effort reconstructing reality and more effort making decisions. See

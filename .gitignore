@@ -1,3 +1,6 @@
+# Local secrets (ADR-0016). Never commit a real .env; .env.example is the template.
+.env
+
 # MindLeak local state
 .mindleak/
 .lodestar/*
