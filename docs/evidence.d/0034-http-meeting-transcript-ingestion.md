@@ -27,6 +27,7 @@ id = "meeting-ingest-is-atomic"
 invariant = "A failed fragment write rolls back the Meeting and every source-fragment write in the request."
 type = "manual"
 rationale = "Neither nodes nor source_fragments carries a unique/foreign-key constraint an application-level request could violate to force a genuine mid-transaction storage failure without a schema change, which is explicitly out of scope for this ADR. Verified by code inspection instead: ingest_transcript wraps the Meeting-node insert and every fragment insert in one pool.begin()/tx.commit() block, with no early return between them other than a storage error itself. The happy-path test (meeting-ingest-route-creates-ordered-fragments) proves the commit side of that same transaction succeeds correctly."
+last_verified = "2026-08-14"
 
 [[check]]
 id = "meeting-ingest-reuses-transcript-module"
