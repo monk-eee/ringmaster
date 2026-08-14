@@ -40,7 +40,12 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
           done
       - name: cargo test
-        run: cargo test --manifest-path backend/Cargo.toml
+        # obligation::rebuild_projection truncates and rebuilds the whole
+        # projection table (no per-test scoping); running tests in parallel
+        # lets one test's rebuild race another's, producing intermittent
+        # RowNotFound failures. Serial execution is the reliability fix,
+        # not a new decision -- ADR-0017 already decided "run cargo test."
+        run: cargo test --manifest-path backend/Cargo.toml -- --test-threads=1
 
   frontend:
     runs-on: ubuntu-latest
