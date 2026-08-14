@@ -154,6 +154,44 @@ pub async fn embed_source_fragment(
     Ok(id)
 }
 
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
+pub struct SearchResult {
+    pub source_fragment_id: Uuid,
+    pub text: String,
+    pub speaker: Option<String>,
+    pub similarity: f64,
+}
+
+/// Semantic search over embedded source fragments (ADR-0019): embeds the
+/// query with the same adapter ADR-0018 uses to embed fragments, then ranks
+/// stored `entity_type = 'source_fragment'` embeddings by pgvector cosine
+/// distance. Read-only. No keyword fusion, metadata filters, or graph
+/// expansion -- each deferred, per this ADR's scope.
+pub async fn search_source_fragments(
+    pool: &PgPool,
+    config: &EmbeddingConfig,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<SearchResult>, EmbeddingError> {
+    let vector = embedding_adapter::embed(config, query).await.map_err(EmbeddingError::Adapter)?;
+    let literal = format!("[{}]", vector.iter().map(|value| value.to_string()).collect::<Vec<_>>().join(","));
+
+    sqlx::query_as(
+        "SELECT e.entity_id AS source_fragment_id, sf.text, sf.speaker, \
+                1 - (e.embedding <=> $1::vector) AS similarity \
+         FROM embeddings e \
+         JOIN source_fragments sf ON sf.id = e.entity_id \
+         WHERE e.entity_type = 'source_fragment' \
+         ORDER BY e.embedding <=> $1::vector \
+         LIMIT $2",
+    )
+    .bind(&literal)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(EmbeddingError::Database)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +274,32 @@ mod tests {
             .await
             .expect("read stored embedding back");
         assert_eq!(dimension, 768);
+    }
+
+    /// Exercises a real, live round-trip when RINGMASTER_EMBEDDING_URL is
+    /// configured (ADR-0019); otherwise reports and passes trivially, same
+    /// posture as this module's own embed-source-fragment live test.
+    #[tokio::test]
+    async fn search_source_fragments_round_trips_against_a_live_endpoint_when_configured() {
+        let Some(config) = EmbeddingConfig::from_env() else {
+            eprintln!("skipped: RINGMASTER_EMBEDDING_URL is not set, no live embedding model configured");
+            return;
+        };
+        let pool = test_pool().await;
+        let meeting_id = Uuid::new_v4();
+        let fragment_id = create_source_fragment(&pool, meeting_id, "We have a two-week transition plan.", "search-test-hash")
+            .await
+            .expect("create source fragment");
+        embed_source_fragment(&pool, &config, fragment_id).await.expect("embed source fragment");
+
+        let results = search_source_fragments(&pool, &config, "transition plan", 5)
+            .await
+            .expect("live search call failed");
+
+        assert!(!results.is_empty(), "search must return at least one ranked result");
+        assert!(
+            results.iter().any(|result| result.source_fragment_id == fragment_id),
+            "the just-embedded fragment must appear among the ranked results"
+        );
     }
 }
