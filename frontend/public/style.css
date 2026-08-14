@@ -190,6 +190,49 @@ main {
   cursor: default;
 }
 
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 220px;
+}
+
+.field-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+textarea.field-textarea {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: #eef1fc;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.4;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+textarea.field-textarea:hover {
+  border-color: var(--focus-ring);
+}
+
+textarea.field-textarea:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px rgba(109, 123, 255, 0.18);
+  background: var(--surface);
+}
+
+textarea.field-textarea::placeholder {
+  color: var(--muted-soft);
+}
+
 p.subtitle {
   color: var(--muted);
   margin: 0 0 1.25rem;

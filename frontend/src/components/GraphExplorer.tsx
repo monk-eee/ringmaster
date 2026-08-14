@@ -143,7 +143,16 @@ export default function GraphExplorer() {
             <option value="service" />
           </datalist>
           <input placeholder="Canonical text (e.g. a name)" value={newCanonicalText} onChange={(event) => setNewCanonicalText(event.target.value)} required />
-          <input placeholder='Attributes JSON (optional, e.g. {"role":"manager"})' value={newAttributesText} onChange={(event) => setNewAttributesText(event.target.value)} />
+          <div className="field">
+            <span className="field-label">Attributes (JSON, optional)</span>
+            <textarea
+              className="field-textarea"
+              placeholder='{"role": "manager"}'
+              value={newAttributesText}
+              onChange={(event) => setNewAttributesText(event.target.value)}
+              rows={3}
+            />
+          </div>
           <button type="submit" disabled={creating || !newNodeType.trim() || !newCanonicalText.trim()}>
             {creating ? "Creating…" : "Create node"}
           </button>
@@ -228,7 +237,16 @@ export default function GraphExplorer() {
               </svg>
 
               <form className="toolbar" onSubmit={handleEnrich}>
-                <input placeholder='Enrich attributes JSON (e.g. {"team":"platform"})' value={enrichAttributesText} onChange={(event) => setEnrichAttributesText(event.target.value)} />
+                <div className="field">
+                  <span className="field-label">Enrich attributes (JSON)</span>
+                  <textarea
+                    className="field-textarea"
+                    placeholder='{"team": "platform"}'
+                    value={enrichAttributesText}
+                    onChange={(event) => setEnrichAttributesText(event.target.value)}
+                    rows={3}
+                  />
+                </div>
                 <button type="submit" disabled={enriching || !enrichAttributesText.trim()}>
                   {enriching ? "Enriching…" : "Enrich"}
                 </button>
