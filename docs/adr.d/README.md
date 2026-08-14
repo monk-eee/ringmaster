@@ -56,3 +56,4 @@ accepted and implemented.
 | [ADR-0036: Meeting detail read — one meeting with its ordered transcript fragments](0036-meeting-detail-read.md) | Accepted | [EV-0036](../evidence.d/0036-meeting-detail-read.md) |
 | [ADR-0037: Meeting-scoped candidate listing and extraction progress](0037-meeting-scoped-candidate-listing.md) | Accepted | [EV-0037](../evidence.d/0037-meeting-scoped-candidate-listing.md) |
 | [ADR-0038: Wire up audit_events for candidate validation actions](0038-wire-up-audit-events-for-candidate-validation.md) | Proposed | [EV-0038](../evidence.d/0038-wire-up-audit-events-for-candidate-validation.md) |
+| [ADR-0039: Product re-steer — Today/Timeline/People/Inbox as primary navigation](0039-product-re-steer-primary-navigation.md) | Proposed | [EV-0039](../evidence.d/0039-product-re-steer-primary-navigation.md) |
