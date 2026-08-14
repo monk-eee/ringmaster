@@ -35,7 +35,7 @@ test("switching to the Candidates tab renders a different, real client-side view
   const headerCells = page.locator("table thead th");
   const headerCount = await headerCells.count();
   if (headerCount > 0) {
-    await expect(headerCells).toHaveText(["Type", "Statement", "Validation state", "Confidence"]);
+    await expect(headerCells).toHaveText(["Type", "Statement", "Validation state", "Confidence", "Evidence"]);
   }
 });
 

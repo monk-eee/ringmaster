@@ -191,6 +191,23 @@ td.updated-cell {
   white-space: nowrap;
 }
 
+td.evidence-cell {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  max-width: 280px;
+}
+
+td.evidence-cell .speaker {
+  color: var(--text);
+  font-weight: 600;
+  font-style: normal;
+}
+
+td.evidence-cell .no-evidence {
+  font-style: normal;
+}
+
 .badge {
   display: inline-block;
   padding: 0.2rem 0.65rem;

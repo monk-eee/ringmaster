@@ -124,6 +124,7 @@ struct CandidateState {
     statement: String,
     validation_state: String,
     confidence: Option<f32>,
+    source_fragment_id: Option<Uuid>,
 }
 
 /// Provisional extraction prompt (ADR-0011): not a final, product-quality
@@ -213,9 +214,14 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
                 let candidate_type = event.payload.get("candidate_type").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let statement = event.payload.get("statement").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let confidence = event.payload.get("confidence").and_then(|v| v.as_f64()).map(|v| v as f32);
+                let source_fragment_id = event
+                    .payload
+                    .get("source_fragment_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok());
                 states.insert(
                     event.candidate_id,
-                    CandidateState { candidate_type, statement, validation_state: "candidate".to_string(), confidence },
+                    CandidateState { candidate_type, statement, validation_state: "candidate".to_string(), confidence, source_fragment_id },
                 );
             }
             transition @ ("accepted" | "corrected" | "rejected" | "superseded" | "observed_complete" | "closed") => {
@@ -238,14 +244,15 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
     let mut written = 0u64;
     for (candidate_id, state) in &states {
         sqlx::query(
-            "INSERT INTO candidate_projection (candidate_id, candidate_type, statement, validation_state, confidence) \
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO candidate_projection (candidate_id, candidate_type, statement, validation_state, confidence, source_fragment_id) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(candidate_id)
         .bind(&state.candidate_type)
         .bind(&state.statement)
         .bind(&state.validation_state)
         .bind(state.confidence)
+        .bind(state.source_fragment_id)
         .execute(&mut *tx)
         .await?;
         written += 1;
@@ -371,5 +378,24 @@ mod tests {
         assert_eq!(events.len(), 2, "the original extracted event must still exist alongside the correction");
         assert_eq!(events[0].event_type, "extracted");
         assert_eq!(events[0].payload.get("candidate_type").and_then(|v| v.as_str()), Some("request"));
+    }
+
+    #[tokio::test]
+    async fn rebuild_populates_source_fragment_id_from_the_extracted_event() {
+        let pool = test_pool().await;
+        let candidate_id = Uuid::new_v4();
+        let source_fragment_id = Uuid::new_v4();
+        extract_candidate(&pool, candidate_id, "risk", "stated risk", source_fragment_id, Some(0.7), Some("test-model"))
+            .await
+            .expect("extract candidate");
+        rebuild_candidate_projection(&pool).await.expect("rebuild after extraction");
+
+        let (stored,): (Option<Uuid>,) =
+            sqlx::query_as("SELECT source_fragment_id FROM candidate_projection WHERE candidate_id = $1")
+                .bind(candidate_id)
+                .fetch_one(&pool)
+                .await
+                .expect("projection row after extraction");
+        assert_eq!(stored, Some(source_fragment_id));
     }
 }

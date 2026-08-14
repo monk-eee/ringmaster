@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value as JsonValue};
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 /// Builds the HTTP API: `/health` and the read-only `/api/obligations`
@@ -60,16 +60,51 @@ fn candidate_json(row: &CandidateProjection) -> JsonValue {
     })
 }
 
-/// Reads the current `candidate_projection` rows (ADR-0013). Never writes.
+/// Read model for `GET /api/candidates` only (ADR-0015): the same five
+/// fields ADR-0013 already returns, plus source-fragment evidence joined
+/// in at read time. `candidate_json`/`CandidateProjection` above are
+/// unchanged and still back the extract route's response as-is.
+#[derive(Debug, Clone, FromRow)]
+struct CandidateWithSource {
+    candidate_id: Uuid,
+    candidate_type: String,
+    statement: String,
+    validation_state: String,
+    confidence: Option<f32>,
+    source_fragment_id: Option<Uuid>,
+    source_text: Option<String>,
+    speaker: Option<String>,
+}
+
+fn candidate_with_source_json(row: &CandidateWithSource) -> JsonValue {
+    json!({
+        "candidate_id": row.candidate_id,
+        "candidate_type": row.candidate_type,
+        "statement": row.statement,
+        "validation_state": row.validation_state,
+        "confidence": row.confidence,
+        "source_fragment_id": row.source_fragment_id,
+        "source_text": row.source_text,
+        "speaker": row.speaker,
+    })
+}
+
+/// Reads the current `candidate_projection` rows, joined read-only against
+/// the immutable `source_fragments` table for evidence (ADR-0013/ADR-0015).
+/// Never writes.
 async fn list_candidates(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
-    let rows: Vec<CandidateProjection> = sqlx::query_as(
-        "SELECT candidate_id, candidate_type, statement, validation_state, confidence FROM candidate_projection ORDER BY candidate_id",
+    let rows: Vec<CandidateWithSource> = sqlx::query_as(
+        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                cp.source_fragment_id, sf.text AS source_text, sf.speaker \
+         FROM candidate_projection cp \
+         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+         ORDER BY cp.candidate_id",
     )
     .fetch_all(&pool)
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
-    Ok(Json(json!(rows.iter().map(candidate_json).collect::<Vec<_>>())))
+    Ok(Json(json!(rows.iter().map(candidate_with_source_json).collect::<Vec<_>>())))
 }
 
 /// Triggers extraction for one named source fragment (ADR-0013): explicit
@@ -239,5 +274,48 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
         assert!(parsed.get("candidate_id").is_some(), "response must include the created candidate_id");
+    }
+
+    #[tokio::test]
+    async fn candidates_route_includes_source_fragment_evidence() {
+        let pool = test_pool().await;
+        let ingested = crate::transcript::ingest_transcript(
+            &pool,
+            &crate::transcript::MeetingMetadata {
+                title: "api-test meeting".to_string(),
+                date: None,
+                organiser: None,
+                participants: vec![],
+            },
+            "Roopa: please send me a transition plan by Friday.",
+        )
+        .await
+        .expect("ingest transcript");
+        let fragment_id = ingested.fragment_ids[0];
+
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "request", "send a transition plan", fragment_id, Some(0.8), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/candidates").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row.get("candidate_id").and_then(|v| v.as_str()) == Some(&candidate_id.to_string()))
+            .expect("the just-created candidate must be in the response");
+
+        assert_eq!(row.get("source_fragment_id").and_then(|v| v.as_str()), Some(fragment_id.to_string().as_str()));
+        assert_eq!(row.get("source_text").and_then(|v| v.as_str()), Some("please send me a transition plan by Friday."));
+        assert_eq!(row.get("speaker").and_then(|v| v.as_str()), Some("Roopa"));
     }
 }

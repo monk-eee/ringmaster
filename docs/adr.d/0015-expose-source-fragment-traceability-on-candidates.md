@@ -1,9 +1,9 @@
 # ADR-0015: Expose source-fragment traceability on candidates
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accepted go"), 2026-08-14
 - **Depends on:** [ADR-0010](0010-transcript-ingestion-parsing-chunking-provenance.md), [ADR-0011](0011-extraction-pipeline-candidate-schema-and-model-adapter.md), [ADR-0013](0013-http-endpoints-trigger-and-list-extraction-candidates.md)
 - **Tags:** architecture, api, extraction, data-model
 

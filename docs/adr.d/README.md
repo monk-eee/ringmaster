@@ -32,4 +32,6 @@ accepted and implemented.
 | [ADR-0012: Add a minimal HTTP read API and a Node web front end, tested with Playwright](0012-minimal-http-api-and-node-web-front-end.md) | Accepted | [EV-0012](../evidence.d/0012-minimal-http-api-and-node-web-front-end.md) |
 | [ADR-0013: HTTP endpoints trigger and list model-based extraction candidates](0013-http-endpoints-trigger-and-list-extraction-candidates.md) | Accepted | [EV-0013](../evidence.d/0013-http-endpoints-trigger-and-list-extraction-candidates.md) |
 | [ADR-0014: Replace the server-rendered front end with a React/Vite single-page app](0014-react-vite-single-page-app.md) | Accepted | [EV-0014](../evidence.d/0014-react-vite-single-page-app.md) |
-| [ADR-0015: Expose source-fragment traceability on candidates](0015-expose-source-fragment-traceability-on-candidates.md) | Proposed | [EV-0015](../evidence.d/0015-expose-source-fragment-traceability-on-candidates.md) |
+| [ADR-0015: Expose source-fragment traceability on candidates](0015-expose-source-fragment-traceability-on-candidates.md) | Accepted | [EV-0015](../evidence.d/0015-expose-source-fragment-traceability-on-candidates.md) |
+| [ADR-0016: Publish the ringmaster repository publicly on GitHub](0016-publish-repository-publicly-on-github.md) | Proposed | [EV-0016](../evidence.d/0016-publish-repository-publicly-on-github.md) |
+| [ADR-0017: Add a GitHub Actions CI pipeline for backend, frontend, and governance](0017-add-github-actions-ci-pipeline.md) | Proposed | [EV-0017](../evidence.d/0017-add-github-actions-ci-pipeline.md) |

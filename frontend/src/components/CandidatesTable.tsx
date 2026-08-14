@@ -20,6 +20,7 @@ export default function CandidatesTable({ candidates }: Props) {
             <th>Statement</th>
             <th>Validation state</th>
             <th>Confidence</th>
+            <th>Evidence</th>
           </tr>
         </thead>
         <tbody>
@@ -29,6 +30,15 @@ export default function CandidatesTable({ candidates }: Props) {
               <td>{c.statement}</td>
               <td>{c.validation_state}</td>
               <td>{Math.round(c.confidence * 100)}%</td>
+              <td className="evidence-cell">
+                {c.source_text ? (
+                  <>
+                    <span className="speaker">{c.speaker ?? "unknown"}:</span> "{c.source_text}"
+                  </>
+                ) : (
+                  <span className="no-evidence">—</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

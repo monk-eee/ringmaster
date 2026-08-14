@@ -10,6 +10,9 @@ export type Candidate = {
   statement: string;
   validation_state: string;
   confidence: number;
+  source_fragment_id: string | null;
+  source_text: string | null;
+  speaker: string | null;
 };
 
 async function getJson<T>(path: string): Promise<T> {
