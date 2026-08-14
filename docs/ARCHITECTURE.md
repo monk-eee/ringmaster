@@ -1,6 +1,6 @@
 # Ringmaster — Architecture Summary
 
-> Point-in-time snapshot for review, generated 2026-08-14. This is a summary
+> Point-in-time snapshot for review, regenerated 2026-08-14. This is a summary
 > for orientation, not a governing document — [`docs/adr.d/`](adr.d/README.md)
 > is the source of truth for what's actually decided, and `docs/evidence.d/`
 > (via `node scripts/check-evidence.mjs`) for what's actually proven.
@@ -50,8 +50,11 @@ flowchart LR
   (`present`/`absent` regex over files, `parity` = every accepted ADR has
   evidence, `manual` = human-asserted, decays to `Stale` after a threshold).
   Never executes shell code from evidence data.
-- 19 ADRs **Accepted**, 1 (`ADR-0020`) currently **Proposed**; evidence
-  checker reports `OK: no invariant is violated`.
+- All 26 ADRs are **Accepted**. Evidence currently reports 23 `Proven`, one
+  intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code decision),
+  and two `Broken` (`ADR-0025`, `ADR-0026` — both accepted decisions whose
+  implementation is actively landing; `Broken` here means "in flight," not
+  "defective"). Re-run the checker for the current count.
 
 ---
 
@@ -61,8 +64,17 @@ flowchart LR
   The commitment is the durable object; everything else changes around it.
 - **Time-centric, not work-centric:**
   `Date/Horizon → Obligation → Risk → Action → Evidence → Outcome`, with a
-  7/30/60/90-day future-risk horizon as the key surfaced view (not yet built
-  — see gaps).
+  7/30/60/90-day future-risk horizon as the eventual goal view (still not
+  built — see gaps).
+- **"The UX is the product"** — a later, substantial vision addendum
+  ([VISION.md § The Daily Brief](VISION.md#the-daily-brief)) reframed the
+  home screen itself, not the graph/infrastructure underneath it, as the
+  actual product: a ranked, narrative Daily Brief instead of a task
+  dashboard, congruence over completion, context-switching as the enemy,
+  Timeline over graph/table/kanban as the default view, and a per-person
+  Relationship page as external memory. The Daily Brief half of that vision
+  is now real (see §5/§6); congruence grouping, Focus Sessions, the
+  Workbench layout, and Relationship pages remain vision, not yet ADRs.
 - **Six management directions** it tracks obligations across: delivery,
   leadership, team, people, operational, personal.
 - **Agent personas** (planned, not built): Chief of Staff, Executive Liaison,
@@ -124,14 +136,23 @@ flowchart TB
   renamed Commitment→Obligation by
   [0007](adr.d/0007-generalize-obligation-and-require-pgvector.md)). Event
   log is always the source of truth; projection is fully rebuilt, never
-  authoritative.
+  authoritative. Gained nullable `hard_due_at`/`soft_due_at`
+  ([0020](adr.d/0020-obligation-due-date-fields.md)) and a nullable
+  `source_fragment_id` for evidence traceability, joined read-only against
+  `source_fragments` at query time
+  ([0023](adr.d/0023-evidence-backed-daily-brief-reasons.md)) — the same
+  treatment `candidate_projection` already had.
 - **`candidate_events` / `candidate_projection`** — extracted candidates
   (commitment/request/risk/follow_up/decision/expectation), same
   event-sourced pattern, deterministic validation before append
   (`candidate_type` enum, `confidence ∈ [0,1]`)
   ([0011](adr.d/0011-extraction-pipeline-candidate-schema-and-model-adapter.md)).
   Gained a nullable `source_fragment_id` for evidence traceability
-  ([0015](adr.d/0015-expose-source-fragment-traceability-on-candidates.md)).
+  ([0015](adr.d/0015-expose-source-fragment-traceability-on-candidates.md)),
+  and a `validation_state` transition (`candidate` → `accepted`/`rejected`,
+  one-way, `409` if already transitioned)
+  ([0024](adr.d/0024-candidate-accept-reject-buttons.md)) — Epic E5's first
+  interactive slice; still no merge/correct/promote-to-Obligation flow.
 - **`audit_events`** — security-relevant action log, same immutability
   guarantee, `record()` function exists but **no call sites wired yet**
   ([0008](adr.d/0008-add-append-only-audit-events-table.md)).
@@ -139,7 +160,11 @@ flowchart TB
   product-spec node types (Person, Meeting, Risk, Decision, …), ordinary
   mutable rows, `node_type`/`edge_type` free-text, no FK enforcement on
   edges (deliberate, app-layer responsibility)
-  ([0009](adr.d/0009-add-graph-nodes-edges-and-source-fragments.md)).
+  ([0009](adr.d/0009-add-graph-nodes-edges-and-source-fragments.md)). Gaining
+  a direct write/traversal API — create/list/patch a node (merge-only
+  attribute updates), create an edge, fetch a node with its neighbors
+  ([0025](adr.d/0025-node-edge-write-api-and-traversal.md), implementation
+  landing incrementally as of this snapshot — see §10).
 - **`source_fragments`** — bounded transcript quotes (speaker, timing,
   SHA-256 hash), append-only/immutable at the DB level so a captured quote
   can never be silently edited
@@ -161,9 +186,9 @@ flowchart TB
 |---|---|
 | `main.rs` | Connects to Postgres, runs `sqlx::migrate!`, rebuilds the Obligation projection once at boot, serves the HTTP API on `:8080`. |
 | `api.rs` | All HTTP routes (axum `Router`), request/response shaping, error→status-code translation. |
-| `obligation.rs` | Obligation event vocabulary (`created`/`status_changed`/`closed`), append + projection rebuild. |
-| `extraction.rs` | Candidate event vocabulary, deterministic validation, `extract_candidate_via_model` (calls `model_adapter`). |
-| `graph.rs` | `nodes`/`edges`/`source_fragments` CRUD, `embed_source_fragment`, `search_source_fragments`. |
+| `obligation.rs` | Obligation event vocabulary (`created`/`status_changed`/`closed`), append + projection rebuild, due-date and source-fragment carry-forward. |
+| `extraction.rs` | Candidate event vocabulary, deterministic validation, `extract_candidate_via_model` (calls `model_adapter`), `transition_candidate` (accept/reject). |
+| `graph.rs` | `nodes`/`edges`/`source_fragments` CRUD (including `list_nodes`/`update_node` for the write API), `embed_source_fragment`, `search_source_fragments`. |
 | `transcript.rs` | `ingest_transcript`: parses `Speaker: text` turns (explicitly provisional placeholder format), creates a meeting node + hashed fragments. |
 | `model_adapter.rs` | Optional OpenAI-compatible chat-completion client (`RINGMASTER_LLM_URL`/`RINGMASTER_MODEL`); typed error, never panics, never blocks when unconfigured. |
 | `embedding_adapter.rs` | Same pattern for embeddings (`RINGMASTER_EMBEDDING_URL`/`RINGMASTER_EMBEDDING_MODEL`), independently configurable from the chat model. |
@@ -174,16 +199,23 @@ flowchart TB
 | Route | Method | Behavior |
 |---|---|---|
 | `/health` | GET | `200 OK` |
-| `/api/obligations` | GET | Read-only `obligation_projection` rows |
+| `/api/obligations` | GET | Read-only `obligation_projection` rows, `LEFT JOIN`ed with `source_fragments` for evidence (`source_fragment_id`, `source_text`) |
+| `/api/daily-brief` | GET | Non-closed obligations ranked by urgency (at-risk first, then soonest due date), each with a deterministic `reason` string that now cites linked evidence or states plainly that none is recorded |
 | `/api/candidates` | GET | Read-only `candidate_projection` rows, `LEFT JOIN`ed with `source_fragments` for evidence (`source_fragment_id`, `source_text`, `speaker`) |
+| `/api/candidates/:id/accept` | POST | Transitions a candidate still in the `candidate` state to `accepted`. `200` / `404` (unknown) / `409` (already transitioned) |
+| `/api/candidates/:id/reject` | POST | Same, to `rejected` |
 | `/api/source-fragments/:id/extract` | POST | Explicit, synchronous extraction trigger. `201` (created) / `204` (nothing extracted) / `404` (unknown fragment) / `503` (no model configured — typed, never panics) |
 | `/api/search` | GET | `?q=&limit=` — embeds the query, ranks `source_fragment` embeddings by pgvector cosine distance (`<=>`). `200` ranked JSON / `400` (missing/blank `q`) / `503` (no embedding model configured) |
+| `/api/nodes` | GET, POST | List nodes (optional `?node_type=`) / create a node |
+| `/api/nodes/:id` | GET, PATCH | Fetch a node with its neighboring edges / merge-update its attributes |
+| `/api/edges` | POST | Create an edge between two existing nodes/obligations |
 
 Common posture across every write/optional-model route: **never automatic**
 (extraction and embedding are always explicit calls, never triggered by
 ingestion), **never panics**, degrades to a typed `503` rather than blocking
-anything when a model isn't configured. 32/32 backend tests pass
-(`cargo test`), including live round-trips against real local models when
+anything when a model isn't configured. Run `cargo test` for the current
+pass count (climbing steadily; see `docs/evidence.d/` for what's actually
+verified) — including live round-trips against real local models when
 `RINGMASTER_LLM_URL`/`RINGMASTER_EMBEDDING_URL` are set, and deterministic
 tests that need no live model.
 
@@ -195,25 +227,29 @@ React 18 + Vite 5 SPA, `npm run dev` on `:3000`. Vite's dev server proxies
 `/api/*` to the backend (`BACKEND_URL`, read server-side only — same-origin
 from the browser's perspective, no CORS needed).
 
-- **`App.tsx`** — three tabs (`Obligations` / `Candidates` / `Search`),
-  client-side status filter + sort on Obligations, manual refresh (re-fetches
-  Obligations/Candidates, no page reload).
-- **`components/ObligationsTable.tsx`**, **`CandidatesTable.tsx`**,
-  **`SearchResults.tsx`**, **`StatusBadge.tsx`** — presentational.
+- **`App.tsx`** — four tabs (`Daily Brief` / `Obligations` / `Candidates` /
+  `Search`), **Daily Brief is the default landing tab**
+  ([ADR-0022](adr.d/0022-daily-brief-endpoint.md), matching VISION.md's
+  "start with Attention, not Work"), client-side status filter + sort on
+  Obligations, manual refresh (no page reload). A fifth **Graph Explorer**
+  tab is accepted ([ADR-0026](adr.d/0026-graph-explorer-frontend.md)) but
+  not yet built as of this snapshot — see §10.
+- **`components/DailyBrief.tsx`**, **`ObligationsTable.tsx`**,
+  **`CandidatesTable.tsx`**, **`SearchResults.tsx`**, **`StatusBadge.tsx`** —
+  presentational. `CandidatesTable.tsx` now renders working Accept/Reject
+  buttons for candidates still in the `candidate` state
+  ([ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)).
 - **`api.ts`** — typed `fetch` wrappers, including `searchSourceFragments`.
 - Playwright spec (`tests/obligations.spec.ts`) exercises real client-side
   interaction (tab switching, search), not just static DOM structure.
 
 The Search tab (`GET /api/search`, query box, ranked results with speaker +
-similarity) was added as a presentational surface over an already-accepted,
-already-additive read route — the same treatment
+similarity) and the Daily Brief tab were both added as presentational
+surfaces over an already-accepted, already-additive read route — a
+precedent set by
 [ADR-0015](adr.d/0015-expose-source-fragment-traceability-on-candidates.md)'s
-evidence column got, per that commit's own stated reasoning, without a new
-ADR number. Worth noting for review since
-[ADR-0019](adr.d/0019-semantic-search-over-source-fragments.md)'s own scope
-section had named frontend surfacing as "a future, separate UI decision" —
-a defensible editorial call, but a judgment call rather than a clean-cut
-case.
+evidence column, then explicitly ratified for the Search tab by
+[ADR-0021](adr.d/0021-ratify-search-tab-surfaced-without-its-own-adr.md).
 
 ---
 
@@ -287,20 +323,38 @@ chosen yet), branch protection rules.
 | 0017 | GitHub Actions CI pipeline | Accepted |
 | 0018 | Generate and store embeddings for source fragments | Accepted |
 | 0019 | Semantic search over embedded source fragments | Accepted |
-| 0020 | Add due-date fields to Obligation (Epic E7 schema prerequisite) | Proposed |
+| 0020 | Add due-date fields to Obligation (Epic E7 schema prerequisite) | Accepted |
+| 0021 | Ratify Search tab surfaced without its own ADR (retroactive) | Accepted |
+| 0022 | Read-only Daily Brief endpoint: Obligations ranked by urgency | Accepted |
+| 0023 | Evidence-backed Daily Brief reasons: source-fragment traceability on Obligation | Accepted |
+| 0024 | Accept/reject buttons for candidates (Epic E5's first interactive slice) | Accepted |
+| 0025 | Node/edge write API and neighborhood traversal | Accepted |
+| 0026 | Graph explorer frontend: data entry, drill-down, relationship visualization | Accepted |
 
 See [`docs/adr.d/README.md`](adr.d/README.md) for the live index — this
-table is a snapshot and will drift.
+table is a snapshot and will drift. All 26 are Accepted as of this snapshot;
+ADR-0025/0026 are still landing implementation (see §10).
 
 ## 10. Known gaps / deferred work (named explicitly by their own ADRs)
 
-- **Epic E5 (Validation UI)** — no accept/correct/reject/merge queue for
-  candidates yet; candidates sit in `Candidate` state indefinitely.
+- **Epic E5 (Validation UI)** — [ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)
+  shipped a first interactive slice (Accept/Reject buttons, one-way
+  `candidate`→`accepted`/`rejected` transition), but there's still no
+  correct/merge queue and no flow that promotes an accepted candidate into
+  a real Obligation — candidates and Obligations remain two separate,
+  unlinked lifecycles.
 - **Epic E7 (attention/risk-horizon engine)** and **Epic E8 (rich web
-  home)** — the actual 7/30/60/90-day view the whole product thesis centers
-  on doesn't exist yet. ADR-0020 (Proposed) is a first schema step toward
-  E7: nullable `hard_due_at`/`soft_due_at` on Obligation, no risk-signal
-  computation yet.
+  home)** — the Daily Brief ([ADR-0022](adr.d/0022-daily-brief-endpoint.md)/
+  [ADR-0023](adr.d/0023-evidence-backed-daily-brief-reasons.md)) is a real,
+  shipped first slice of this (urgency ranking + cited evidence), but the
+  full 7/30/60/90-day future-risk horizon, Congruence Engine, and Focus
+  Sessions from [VISION.md](VISION.md#the-daily-brief) remain vision, not
+  yet ADRs.
+- **Node/edge write API** ([ADR-0025](adr.d/0025-node-edge-write-api-and-traversal.md))
+  and **Graph Explorer frontend** ([ADR-0026](adr.d/0026-graph-explorer-frontend.md))
+  are both Accepted; implementation is actively landing as of this
+  snapshot (re-run `node scripts/check-evidence.mjs` for the current
+  Proven/Broken split — Broken here means in-flight, not defective).
 - **Hybrid search** — only plain vector similarity exists; keyword/full-text
   fusion, metadata filters, and graph expansion from a search hit are all
   deferred ([0019](adr.d/0019-semantic-search-over-source-fragments.md)).
