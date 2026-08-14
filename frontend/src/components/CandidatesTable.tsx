@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { acceptCandidate, rejectCandidate, type Candidate } from "../api";
+import { acceptCandidate, promoteCandidate, rejectCandidate, type Candidate } from "../api";
 
 type Props = { candidates: Candidate[]; onChanged: () => void };
 
@@ -7,7 +7,7 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  async function handle(action: (id: string) => Promise<Candidate>, candidateId: string) {
+  async function handle(action: (id: string) => Promise<unknown>, candidateId: string) {
     setPendingId(candidateId);
     setActionError(null);
     try {
@@ -76,6 +76,16 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
                       {pendingId === c.candidate_id ? "…" : "Reject"}
                     </button>
                   </>
+                ) : c.validation_state === "accepted" ? (
+                  <button
+                    className="promote-button"
+                    disabled={pendingId === c.candidate_id}
+                    onClick={() => handle(promoteCandidate, c.candidate_id)}
+                  >
+                    {pendingId === c.candidate_id ? "…" : "Promote to Obligation"}
+                  </button>
+                ) : c.validation_state === "promoted" && c.promoted_obligation_id ? (
+                  <code title={c.promoted_obligation_id}>{c.promoted_obligation_id.slice(0, 8)}…</code>
                 ) : (
                   <span className="no-evidence">—</span>
                 )}

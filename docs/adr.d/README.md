@@ -44,5 +44,5 @@ accepted and implemented.
 | [ADR-0024: Accept/reject buttons for candidates — Epic E5's first interactive slice](0024-candidate-accept-reject-buttons.md) | Accepted | [EV-0024](../evidence.d/0024-candidate-accept-reject-buttons.md) |
 | [ADR-0025: Node/edge write API and neighborhood traversal](0025-node-edge-write-api-and-traversal.md) | Accepted | [EV-0025](../evidence.d/0025-node-edge-write-api-and-traversal.md) |
 | [ADR-0026: Graph explorer frontend — data entry, drill-down, and relationship visualization](0026-graph-explorer-frontend.md) | Accepted | [EV-0026](../evidence.d/0026-graph-explorer-frontend.md) |
-| [ADR-0027: Promote an accepted candidate into an Obligation](0027-promote-accepted-candidate-to-obligation.md) | Proposed | [EV-0027](../evidence.d/0027-promote-accepted-candidate-to-obligation.md) |
-| [ADR-0028: Person relationship view — resolve linked Obligations into a per-person page](0028-person-relationship-view.md) | Proposed | [EV-0028](../evidence.d/0028-person-relationship-view.md) |
+| [ADR-0027: Promote an accepted candidate into an Obligation](0027-promote-accepted-candidate-to-obligation.md) | Accepted | [EV-0027](../evidence.d/0027-promote-accepted-candidate-to-obligation.md) |
+| [ADR-0028: Person relationship view — resolve linked Obligations into a per-person page](0028-person-relationship-view.md) | Accepted | [EV-0028](../evidence.d/0028-person-relationship-view.md) |

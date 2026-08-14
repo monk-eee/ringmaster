@@ -1,8 +1,9 @@
 # ADR-0027: Promote an accepted candidate into an Obligation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
+- **Approval:** Direct instruction ("go ahead"), 2026-08-14
 - **Depends on:** [ADR-0005](0005-adopt-rust-event-sourced-postgres-commitment-graph.md), [ADR-0011](0011-extraction-pipeline-candidate-schema-and-model-adapter.md), [ADR-0023](0023-evidence-backed-daily-brief-reasons.md), [ADR-0024](0024-candidate-accept-reject-buttons.md)
 - **Tags:** architecture, api, frontend, data-model, validation-ui
 

@@ -125,6 +125,7 @@ struct CandidateState {
     validation_state: String,
     confidence: Option<f32>,
     source_fragment_id: Option<Uuid>,
+    promoted_obligation_id: Option<Uuid>,
 }
 
 /// Provisional extraction prompt (ADR-0011): not a final, product-quality
@@ -221,10 +222,17 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
                     .and_then(|s| Uuid::parse_str(s).ok());
                 states.insert(
                     event.candidate_id,
-                    CandidateState { candidate_type, statement, validation_state: "candidate".to_string(), confidence, source_fragment_id },
+                    CandidateState {
+                        candidate_type,
+                        statement,
+                        validation_state: "candidate".to_string(),
+                        confidence,
+                        source_fragment_id,
+                        promoted_obligation_id: None,
+                    },
                 );
             }
-            transition @ ("accepted" | "corrected" | "rejected" | "superseded" | "observed_complete" | "closed") => {
+            transition @ ("accepted" | "corrected" | "rejected" | "superseded" | "observed_complete" | "closed" | "promoted") => {
                 if let Some(state) = states.get_mut(&event.candidate_id) {
                     state.validation_state = transition.to_string();
                     if let Some(statement) = event.payload.get("statement").and_then(|v| v.as_str()) {
@@ -232,6 +240,13 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
                     }
                     if let Some(candidate_type) = event.payload.get("candidate_type").and_then(|v| v.as_str()) {
                         state.candidate_type = candidate_type.to_string();
+                    }
+                    if transition == "promoted" {
+                        if let Some(obligation_id) =
+                            event.payload.get("obligation_id").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())
+                        {
+                            state.promoted_obligation_id = Some(obligation_id);
+                        }
                     }
                 }
             }
@@ -244,8 +259,8 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
     let mut written = 0u64;
     for (candidate_id, state) in &states {
         sqlx::query(
-            "INSERT INTO candidate_projection (candidate_id, candidate_type, statement, validation_state, confidence, source_fragment_id) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO candidate_projection (candidate_id, candidate_type, statement, validation_state, confidence, source_fragment_id, promoted_obligation_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(candidate_id)
         .bind(&state.candidate_type)
@@ -253,6 +268,7 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
         .bind(&state.validation_state)
         .bind(state.confidence)
         .bind(state.source_fragment_id)
+        .bind(state.promoted_obligation_id)
         .execute(&mut *tx)
         .await?;
         written += 1;

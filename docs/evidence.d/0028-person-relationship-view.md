@@ -10,33 +10,44 @@ adr = "0028-person-relationship-view"
 
 [[check]]
 id = "obligation-neighbor-resolves"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once GET /api/nodes/:id resolves an Obligation-typed edge target instead of returning a null neighbor."
+invariant = "GET /api/nodes/:id resolves an Obligation-typed edge target's status/dates/reason instead of returning a null neighbor."
+type = "present"
+pattern = '"type": "obligation"'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "unknown-neighbor-still-null"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the existing ADR-0025 test is updated to assert only a genuinely-unknown id (neither nodes nor obligation_projection) still reports a null neighbor."
+invariant = "A genuinely unknown neighbor id (neither nodes nor obligation_projection) still reports null."
+type = "present"
+pattern = 'node_detail_includes_neighbor_summary_and_handles_a_non_node_edge_target'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "person-relationship-grouping"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once a person node's GET /api/nodes/:id response includes an at_risk/open grouped relationship object."
+invariant = "A person node's response includes an at_risk/open grouped relationship object; other node types omit it."
+type = "present"
+pattern = 'node_detail_omits_relationship_grouping_for_non_person_nodes'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "relationship-view-component-exists"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the Graph Explorer's detail panel renders a Relationship view for person nodes."
+invariant = "The Graph Explorer's detail panel renders a Relationship view for person nodes."
+type = "present"
+pattern = 'renderRelationshipGroup'
+paths = ["frontend/src/components/GraphExplorer.tsx"]
 ```
 
 ## Notes
 
-Pre-implementation: all four checks are deliberately `manual`/unproven,
-per this repo's own convention (evidence stays honest about intent vs.
-proof until the ADR is accepted and implemented). Do not implement before
-[ADR-0028](../adr.d/0028-person-relationship-view.md)'s Status flips to
-Accepted.
+All four checks are automated against the implementing route/component.
+`cargo test` covers: an edge into a real, linked Obligation resolving with
+its real status/dates/reason (`node_detail_resolves_a_real_linked_obligation_with_status_and_reason`);
+a genuinely unknown id still reporting null, unchanged from ADR-0025
+(`node_detail_includes_neighbor_summary_and_handles_a_non_node_edge_target`);
+and a non-person node never getting a `relationship` field
+(`node_detail_omits_relationship_grouping_for_non_person_nodes`). Verified
+live: created a real person node and linked it to a real at-risk Obligation
+via `POST /api/edges`, confirmed `GET /api/nodes/:id` returned the resolved
+neighbor and the `relationship.at_risk` group, and confirmed in the browser
+that the Graph tab's detail panel renders the "Relationship" section with
+the correct status badge and reason text above the existing SVG view.

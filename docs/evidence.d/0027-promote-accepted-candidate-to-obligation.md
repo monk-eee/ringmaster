@@ -11,31 +11,32 @@ adr = "0027-promote-accepted-candidate-to-obligation"
 [[check]]
 id = "promote-route-exists"
 invariant = "A route promotes an accepted candidate into a new Obligation and rejects any other validation_state with 409."
-type = "manual"
-# Not yet implemented. ADR-0027 is Proposed; replace with a `present`
-# check against "/api/candidates/:id/promote" in backend/src/api.rs once
-# the route exists.
+type = "present"
+pattern = '"/api/candidates/:id/promote"'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "promoted-obligation-id-column-exists"
 invariant = "candidate_projection carries the linked Obligation id forward after promotion."
-type = "manual"
-# Not yet implemented. Replace with a `present` check against
-# "promoted_obligation_id" in the migration that adds the column, once it
-# exists.
+type = "present"
+pattern = 'promoted_obligation_id'
+paths = ["backend/migrations/0011_candidate_promoted_obligation.sql"]
 
 [[check]]
 id = "candidates-table-has-promote-control"
 invariant = "The Candidates table offers a promote action for accepted candidates and shows the linked Obligation once promoted."
-type = "manual"
-# Not yet implemented. Replace with a `present` check against a promote
-# call site in frontend/src/components/CandidatesTable.tsx once it exists.
+type = "present"
+pattern = 'promoteCandidate'
+paths = ["frontend/src/components/CandidatesTable.tsx"]
 ```
 
 ## Notes
 
-All three checks are honestly `manual` because no implementation exists
-yet — ADR-0027 is `Proposed`, not `Accepted`. Per this repository's own
-evidence policy ([ADR-0002](../adr.d/0002-keep-current-evidence-separate-from-accepted-decisions.md)),
-these must become declarative `present`/`absent` checks as each piece
-lands, not be marked proven in advance.
+All three checks are automated and verified directly against the route,
+migration, and frontend component that implement them. `cargo test`
+covers: promoting an accepted candidate creates an `open` Obligation
+carrying its `source_fragment_id` forward and marks the candidate
+`promoted` with `promoted_obligation_id` linked; `409` for a candidate
+still in `candidate` state, already `rejected`, or already `promoted`;
+`404` for an unknown candidate. 55/55 backend tests pass; `tsc --noEmit`
+and `vite build` both pass on the frontend.

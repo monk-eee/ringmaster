@@ -11,6 +11,7 @@ export type Candidate = {
   validation_state: string;
   confidence: number;
   source_fragment_id: string | null;
+  promoted_obligation_id: string | null;
   source_text: string | null;
   speaker: string | null;
 };
@@ -45,10 +46,24 @@ export type NodeNeighbor = {
   to_id: string;
   edge_type: string;
   confidence: number | null;
-  neighbor: { id: string; node_type: string; canonical_text: string } | null;
+  neighbor:
+    | { id: string; node_type: string; canonical_text: string }
+    | { id: string; type: "obligation"; status: string; hard_due_at: string | null; soft_due_at: string | null; reason: string }
+    | null;
 };
 
-export type NodeDetail = GraphNode & { neighbors: NodeNeighbor[] };
+export type RelationshipObligation = {
+  obligation_id: string;
+  status: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  reason: string;
+};
+
+export type NodeDetail = GraphNode & {
+  neighbors: NodeNeighbor[];
+  relationship: { at_risk: RelationshipObligation[]; open: RelationshipObligation[] } | null;
+};
 
 export type Edge = {
   id: string;
@@ -114,6 +129,10 @@ export function acceptCandidate(candidateId: string): Promise<Candidate> {
 
 export function rejectCandidate(candidateId: string): Promise<Candidate> {
   return postJson<Candidate>(`/api/candidates/${encodeURIComponent(candidateId)}/reject`);
+}
+
+export function promoteCandidate(candidateId: string): Promise<Obligation> {
+  return postJson<Obligation>(`/api/candidates/${encodeURIComponent(candidateId)}/promote`);
 }
 
 export function fetchNodes(nodeType?: string): Promise<GraphNode[]> {

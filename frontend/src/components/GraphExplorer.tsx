@@ -1,13 +1,77 @@
 import { useEffect, useState } from "react";
-import { createEdge, createNode, fetchNodeDetail, fetchNodes, updateNode, type GraphNode, type NodeDetail } from "../api";
+import { createEdge, createNode, fetchNodeDetail, fetchNodes, updateNode, type GraphNode, type NodeDetail, type NodeNeighbor, type RelationshipObligation } from "../api";
+import StatusBadge from "./StatusBadge";
 
 const RADIUS = 120;
 const CENTER = 160;
+
+const NODE_TYPE_COLORS: Record<string, { bg: string; fg: string }> = {
+  person: { bg: "#e0e7ff", fg: "#2547d0" },
+  meeting: { bg: "#fef3c7", fg: "#92400e" },
+  risk: { bg: "#fde3d8", fg: "#c2410c" },
+  decision: { bg: "#dcfce7", fg: "#15803d" },
+  expectation: { bg: "#f3e8ff", fg: "#7e22ce" },
+  customer_problem: { bg: "#fee2e2", fg: "#b91c1c" },
+  outcome: { bg: "#cffafe", fg: "#0e7490" },
+  service: { bg: "#e9eaef", fg: "#454b58" },
+};
+
+const FALLBACK_NODE_TYPE_PALETTE: { bg: string; fg: string }[] = [
+  { bg: "#ccfbf1", fg: "#0f766e" },
+  { bg: "#fce7f3", fg: "#be185d" },
+  { bg: "#ffedd5", fg: "#9a3412" },
+  { bg: "#ecfccb", fg: "#4d7c0f" },
+  { bg: "#e0f2fe", fg: "#0369a1" },
+  { bg: "#ede9fe", fg: "#6d28d9" },
+];
+
+const NEUTRAL_NODE_COLOR = { bg: "#e9eaef", fg: "#9aa1ae" };
+
+// Deterministic per-type color so the same node type always renders the same way, even for freeform types.
+function nodeTypeColors(nodeType: string): { bg: string; fg: string } {
+  const known = NODE_TYPE_COLORS[nodeType];
+  if (known) return known;
+  let hash = 0;
+  for (let index = 0; index < nodeType.length; index += 1) {
+    hash = (hash * 31 + nodeType.charCodeAt(index)) >>> 0;
+  }
+  return FALLBACK_NODE_TYPE_PALETTE[hash % FALLBACK_NODE_TYPE_PALETTE.length];
+}
+
+function estimateTextWidth(text: string, fontSize: number): number {
+  return text.length * fontSize * 0.6;
+}
 
 function parseAttributes(text: string): Record<string, unknown> | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
   return JSON.parse(trimmed) as Record<string, unknown>;
+}
+
+/// Reuses the Daily Brief's own list/row/reason presentation (ADR-0028) so a
+/// person's linked Obligations look identical to how the Daily Brief shows them.
+function renderRelationshipGroup(title: string, entries: RelationshipObligation[]) {
+  if (entries.length === 0) return null;
+  return (
+    <>
+      <p className="relationship-group-title">{title}</p>
+      <ol className="daily-brief-list">
+        {entries.map((entry) => (
+          <li key={entry.obligation_id}>
+            <div className="daily-brief-row">
+              <code title={entry.obligation_id}>{entry.obligation_id.slice(0, 8)}…</code>
+              <StatusBadge value={entry.status} />
+            </div>
+            <span className="daily-brief-reason">{entry.reason}</span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+function isNodeNeighbor(neighbor: NodeNeighbor["neighbor"]): neighbor is { id: string; node_type: string; canonical_text: string } {
+  return neighbor !== null && !("type" in neighbor);
 }
 
 export default function GraphExplorer() {
@@ -129,7 +193,10 @@ export default function GraphExplorer() {
       {error && <p className="error">{error}</p>}
 
       <div className="card">
-        <h2>Add a node</h2>
+        <div className="card-header">
+          <h2>Add a node</h2>
+        </div>
+        <div className="card-body">
         <form className="toolbar" onSubmit={handleCreate}>
           <input placeholder="Node type (e.g. person, risk)" list="node-type-suggestions" value={newNodeType} onChange={(event) => setNewNodeType(event.target.value)} required />
           <datalist id="node-type-suggestions">
@@ -157,11 +224,19 @@ export default function GraphExplorer() {
             {creating ? "Creating…" : "Create node"}
           </button>
         </form>
+        </div>
       </div>
 
       <div className="graph-layout">
         <div className="card node-list">
-          <label>
+          <div className="card-header">
+            <h2>Nodes</h2>
+            <span className="card-header-meta">
+              {visibleNodes.length} of {nodes.length}
+            </span>
+          </div>
+          <div className="card-body">
+          <label className="filter-label">
             Filter by type
             <select value={nodeTypeFilter} onChange={(event) => setNodeTypeFilter(event.target.value)}>
               <option value="all">All</option>
@@ -172,6 +247,14 @@ export default function GraphExplorer() {
               ))}
             </select>
           </label>
+          {nodeTypeFilter !== "all" && (
+            <button type="button" className="filter-chip" onClick={() => setNodeTypeFilter("all")}>
+              {nodeTypeFilter}
+              <span className="filter-chip-x" aria-hidden="true">
+                ×
+              </span>
+            </button>
+          )}
           {visibleNodes.length === 0 ? (
             <p className="empty-state">No nodes yet.</p>
           ) : (
@@ -179,22 +262,33 @@ export default function GraphExplorer() {
               {visibleNodes.map((node) => (
                 <li key={node.id}>
                   <button className={node.id === selectedNodeId ? "node-list-button node-list-button-active" : "node-list-button"} onClick={() => loadDetail(node.id)}>
-                    <span className="node-type-tag">{node.node_type}</span> {node.canonical_text}
+                    <span className="node-type-tag" style={{ background: nodeTypeColors(node.node_type).bg, color: nodeTypeColors(node.node_type).fg }}>
+                      {node.node_type}
+                    </span>{" "}
+                    {node.canonical_text}
                   </button>
                 </li>
               ))}
             </ul>
           )}
+          </div>
         </div>
 
         <div className="card node-detail">
+          <div className="card-header">
+            <h2>Node detail</h2>
+          </div>
+          <div className="card-body">
           {!detail ? (
             <p className="empty-state">Select a node to drill in.</p>
           ) : (
             <>
-              <h2>
-                <span className="node-type-tag">{detail.node_type}</span> {detail.canonical_text}
-              </h2>
+              <h3>
+                <span className="node-type-tag" style={{ background: nodeTypeColors(detail.node_type).bg, color: nodeTypeColors(detail.node_type).fg }}>
+                  {detail.node_type}
+                </span>{" "}
+                {detail.canonical_text}
+              </h3>
               <p className="lifecycle-state">Lifecycle: {detail.lifecycle_state}</p>
               <dl className="attributes-list">
                 {Object.entries(detail.attributes).map(([key, value]) => (
@@ -205,24 +299,48 @@ export default function GraphExplorer() {
                 ))}
               </dl>
 
+              {detail.node_type === "person" && detail.relationship && (
+                <div className="relationship-obligations">
+                  <h4>Relationship</h4>
+                  {detail.relationship.at_risk.length === 0 && detail.relationship.open.length === 0 ? (
+                    <p className="empty-state">No linked Obligations yet.</p>
+                  ) : (
+                    <>
+                      {renderRelationshipGroup("At Risk", detail.relationship.at_risk)}
+                      {renderRelationshipGroup("Open Commitments", detail.relationship.open)}
+                    </>
+                  )}
+                </div>
+              )}
+
               <svg width={CENTER * 2} height={CENTER * 2} className="relationship-view" role="img" aria-label={`Relationships for ${detail.canonical_text}`}>
                 {neighbors.map((neighbor, index) => {
                   const angle = (2 * Math.PI * index) / Math.max(neighbors.length, 1) - Math.PI / 2;
                   const x = CENTER + RADIUS * Math.cos(angle);
                   const y = CENTER + RADIUS * Math.sin(angle);
-                  const label = neighbor.neighbor?.canonical_text ?? "Obligation";
+                  const label = isNodeNeighbor(neighbor.neighbor) ? neighbor.neighbor.canonical_text : neighbor.neighbor ? "Obligation" : "Unknown";
+                  const midX = (CENTER + x) / 2;
+                  const midY = (CENTER + y) / 2 - 4;
+                  const pillWidth = estimateTextWidth(neighbor.edge_type, 10) + 12;
+                  const neighborColor = isNodeNeighbor(neighbor.neighbor)
+                    ? nodeTypeColors(neighbor.neighbor.node_type)
+                    : neighbor.neighbor
+                    ? { bg: "#fef9c3", fg: "#854d0e" }
+                    : { bg: "#e9eaef", fg: "#9aa1ae" };
                   return (
                     <g key={neighbor.edge_id}>
                       <line x1={CENTER} y1={CENTER} x2={x} y2={y} className="relationship-edge" />
-                      <text x={(CENTER + x) / 2} y={(CENTER + y) / 2 - 4} className="relationship-edge-label" textAnchor="middle">
+                      <rect x={midX - pillWidth / 2} y={midY - 9} width={pillWidth} height={14} rx={7} className="relationship-edge-pill" />
+                      <text x={midX} y={midY + 1} className="relationship-edge-label" textAnchor="middle">
                         {neighbor.edge_type}
                       </text>
                       <circle
                         cx={x}
                         cy={y}
                         r={18}
-                        className={neighbor.neighbor ? "relationship-node relationship-node-clickable" : "relationship-node"}
-                        onClick={neighbor.neighbor ? () => loadDetail(neighbor.neighbor!.id) : undefined}
+                        className={isNodeNeighbor(neighbor.neighbor) ? "relationship-node relationship-node-clickable" : "relationship-node"}
+                        style={{ fill: neighborColor.bg, stroke: neighborColor.fg }}
+                        onClick={isNodeNeighbor(neighbor.neighbor) ? () => loadDetail(neighbor.neighbor!.id) : undefined}
                       />
                       <text x={x} y={y + 32} textAnchor="middle" className="relationship-node-label">
                         {label.length > 14 ? `${label.slice(0, 14)}…` : label}
@@ -230,11 +348,21 @@ export default function GraphExplorer() {
                     </g>
                   );
                 })}
-                <circle cx={CENTER} cy={CENTER} r={22} className="relationship-node relationship-node-center" />
+                <circle cx={CENTER} cy={CENTER} r={30} className="relationship-node-halo" />
+                <circle
+                  cx={CENTER}
+                  cy={CENTER}
+                  r={22}
+                  className="relationship-node relationship-node-center"
+                  style={{ fill: nodeTypeColors(detail.node_type).bg, stroke: nodeTypeColors(detail.node_type).fg }}
+                />
                 <text x={CENTER} y={CENTER + 40} textAnchor="middle" className="relationship-node-label">
                   {detail.canonical_text.length > 14 ? `${detail.canonical_text.slice(0, 14)}…` : detail.canonical_text}
                 </text>
               </svg>
+              <p className="relationship-count">
+                {neighbors.length === 0 ? "No relationships yet." : `${neighbors.length} relationship${neighbors.length === 1 ? "" : "s"}`}
+              </p>
 
               <form className="toolbar" onSubmit={handleEnrich}>
                 <div className="field">
@@ -268,6 +396,7 @@ export default function GraphExplorer() {
               </form>
             </>
           )}
+          </div>
         </div>
       </div>
     </div>

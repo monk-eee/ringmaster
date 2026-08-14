@@ -2,6 +2,7 @@ use crate::embedding_adapter::EmbeddingConfig;
 use crate::extraction::{self, CandidateProjection, ModelExtractionError};
 use crate::graph;
 use crate::model_adapter::ModelConfig;
+use crate::obligation;
 use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Response},
@@ -17,7 +18,8 @@ use uuid::Uuid;
 /// (ADR-0012), plus `/api/candidates` and the extraction trigger (ADR-0013),
 /// plus the semantic search route (ADR-0019), plus the Daily Brief route
 /// (ADR-0022), plus the accept/reject candidate routes (ADR-0024), plus the
-/// node/edge write API and traversal routes (ADR-0025).
+/// node/edge write API and traversal routes (ADR-0025), plus the promote
+/// route (ADR-0027).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -26,6 +28,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
+        .route("/api/candidates/:id/promote", post(promote_candidate))
         .route("/api/source-fragments/:id/extract", post(extract_source_fragment))
         .route("/api/search", get(search))
         .route("/api/nodes", get(list_nodes_route).post(create_node_route))
@@ -186,6 +189,7 @@ struct CandidateWithSource {
     validation_state: String,
     confidence: Option<f32>,
     source_fragment_id: Option<Uuid>,
+    promoted_obligation_id: Option<Uuid>,
     source_text: Option<String>,
     speaker: Option<String>,
 }
@@ -198,6 +202,7 @@ fn candidate_with_source_json(row: &CandidateWithSource) -> JsonValue {
         "validation_state": row.validation_state,
         "confidence": row.confidence,
         "source_fragment_id": row.source_fragment_id,
+        "promoted_obligation_id": row.promoted_obligation_id,
         "source_text": row.source_text,
         "speaker": row.speaker,
     })
@@ -209,7 +214,7 @@ fn candidate_with_source_json(row: &CandidateWithSource) -> JsonValue {
 async fn list_candidates(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     let rows: Vec<CandidateWithSource> = sqlx::query_as(
         "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
-                cp.source_fragment_id, sf.text AS source_text, sf.speaker \
+                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
          FROM candidate_projection cp \
          LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
          ORDER BY cp.candidate_id",
@@ -232,7 +237,7 @@ async fn transition_candidate_route(
 ) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     let current: CandidateWithSource = sqlx::query_as(
         "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
-                cp.source_fragment_id, sf.text AS source_text, sf.speaker \
+                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
          FROM candidate_projection cp \
          LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
          WHERE cp.candidate_id = $1",
@@ -261,7 +266,7 @@ async fn transition_candidate_route(
 
     let updated: CandidateWithSource = sqlx::query_as(
         "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
-                cp.source_fragment_id, sf.text AS source_text, sf.speaker \
+                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
          FROM candidate_projection cp \
          LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
          WHERE cp.candidate_id = $1",
@@ -289,6 +294,94 @@ async fn reject_candidate(
     Path(id): Path<Uuid>,
 ) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     transition_candidate_route(&pool, id, "rejected").await
+}
+
+/// Promotes an `accepted` candidate into a new Obligation (ADR-0027).
+/// `409` unless the candidate is currently `accepted` -- promotion is
+/// one-way, matching accept/reject's own one-way 409 semantics. The new
+/// Obligation carries the candidate's `source_fragment_id` forward as its
+/// own evidence link (ADR-0023); no due date is implied by a candidate.
+async fn promote_candidate(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, (axum::http::StatusCode, String)> {
+    let current: CandidateWithSource = sqlx::query_as(
+        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
+         FROM candidate_projection cp \
+         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+         WHERE cp.candidate_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "candidate not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+
+    if current.validation_state != "accepted" {
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            format!("candidate is \"{}\", not \"accepted\"", current.validation_state),
+        ));
+    }
+
+    let obligation_id = Uuid::new_v4();
+    obligation::append_event(
+        &pool,
+        obligation_id,
+        obligation::ObligationEventType::Created,
+        json!({"status": "open", "source_fragment_id": current.source_fragment_id}),
+    )
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    extraction::transition_candidate(&pool, id, "promoted", json!({"obligation_id": obligation_id}))
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    obligation::rebuild_projection(&pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    extraction::rebuild_candidate_projection(&pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    #[allow(clippy::type_complexity)]
+    let (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text): (
+        Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<Uuid>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
+                op.source_fragment_id, sf.text \
+         FROM obligation_projection op \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE op.obligation_id = $1",
+    )
+    .bind(obligation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(json!({
+            "obligation_id": obligation_id,
+            "status": status,
+            "updated_at": updated_at.to_rfc3339(),
+            "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
+            "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+            "source_fragment_id": source_fragment_id,
+            "source_text": source_text,
+        })),
+    )
+        .into_response())
 }
 
 /// Triggers extraction for one named source fragment (ADR-0013): explicit
@@ -397,12 +490,32 @@ struct NeighborRow {
     neighbor_id: Option<Uuid>,
     neighbor_node_type: Option<String>,
     neighbor_canonical_text: Option<String>,
+    obligation_id: Option<Uuid>,
+    obligation_status: Option<String>,
+    obligation_hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    obligation_soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    obligation_source_text: Option<String>,
+}
+
+/// Orders like the Daily Brief's own `ASC NULLS LAST`: a due date sorts
+/// before no due date at all, regardless of which of the two fields it is.
+fn due_date_sort_key(value: Option<chrono::DateTime<chrono::Utc>>) -> (u8, i64) {
+    match value {
+        Some(due) => (0, due.timestamp()),
+        None => (1, 0),
+    }
 }
 
 /// Reads one node plus its one-hop neighborhood of edges (ADR-0025): every
 /// edge touching this node, paired with a summary of the node on the other
-/// end when that end is itself a `nodes` row (an edge into an Obligation id
-/// comes back with a null neighbor summary, never a failed join).
+/// end when that end is itself a `nodes` row. An edge into an Obligation id
+/// resolves against `obligation_projection` instead (ADR-0028, amending
+/// ADR-0025's own scope): status, due dates, and the same `reason` string
+/// the Daily Brief shows. An id found in neither table still reports a
+/// null neighbor, unchanged from ADR-0025. A `person` node additionally
+/// gets a `relationship` object grouping its resolved Obligations into
+/// `at_risk`/`open` (closed excluded), ordered the same way the Daily
+/// Brief orders them.
 async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     let node = graph::get_node(&pool, id).await.map_err(|error| match error {
         sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "node not found".to_string()),
@@ -411,9 +524,14 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
 
     let neighbors: Vec<NeighborRow> = sqlx::query_as(
         "SELECT e.id, e.from_id, e.to_id, e.edge_type, e.confidence, \
-                n.id AS neighbor_id, n.node_type AS neighbor_node_type, n.canonical_text AS neighbor_canonical_text \
+                n.id AS neighbor_id, n.node_type AS neighbor_node_type, n.canonical_text AS neighbor_canonical_text, \
+                op.obligation_id AS obligation_id, op.status AS obligation_status, \
+                op.hard_due_at AS obligation_hard_due_at, op.soft_due_at AS obligation_soft_due_at, \
+                sf.text AS obligation_source_text \
          FROM edges e \
          LEFT JOIN nodes n ON n.id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
+         LEFT JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
          WHERE e.from_id = $1 OR e.to_id = $1",
     )
     .bind(id)
@@ -422,22 +540,74 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     let neighbors_json: Vec<JsonValue> = neighbors
-        .into_iter()
+        .iter()
         .map(|row| {
+            let neighbor = if let Some(neighbor_id) = row.neighbor_id {
+                Some(json!({
+                    "id": neighbor_id,
+                    "node_type": row.neighbor_node_type,
+                    "canonical_text": row.neighbor_canonical_text,
+                }))
+            } else {
+                row.obligation_id.map(|obligation_id| {
+                    json!({
+                        "id": obligation_id,
+                        "type": "obligation",
+                        "status": row.obligation_status,
+                        "hard_due_at": row.obligation_hard_due_at.map(|value| value.to_rfc3339()),
+                        "soft_due_at": row.obligation_soft_due_at.map(|value| value.to_rfc3339()),
+                        "reason": daily_brief_reason(
+                            row.obligation_status.as_deref().unwrap_or(""),
+                            row.obligation_hard_due_at,
+                            row.obligation_soft_due_at,
+                            row.obligation_source_text.as_deref(),
+                        ),
+                    })
+                })
+            };
             json!({
                 "edge_id": row.id,
                 "from_id": row.from_id,
                 "to_id": row.to_id,
                 "edge_type": row.edge_type,
                 "confidence": row.confidence,
-                "neighbor": row.neighbor_id.map(|neighbor_id| json!({
-                    "id": neighbor_id,
-                    "node_type": row.neighbor_node_type,
-                    "canonical_text": row.neighbor_canonical_text,
-                })),
+                "neighbor": neighbor,
             })
         })
         .collect();
+
+    let relationship = if node.node_type == "person" {
+        let mut linked: Vec<&NeighborRow> = neighbors
+            .iter()
+            .filter(|row| matches!(row.obligation_status.as_deref(), Some(status) if status != "closed"))
+            .collect();
+        linked.sort_by_key(|row| (due_date_sort_key(row.obligation_hard_due_at), due_date_sort_key(row.obligation_soft_due_at)));
+
+        let mut at_risk: Vec<JsonValue> = Vec::new();
+        let mut open: Vec<JsonValue> = Vec::new();
+        for row in linked {
+            let entry = json!({
+                "obligation_id": row.obligation_id,
+                "status": row.obligation_status,
+                "hard_due_at": row.obligation_hard_due_at.map(|value| value.to_rfc3339()),
+                "soft_due_at": row.obligation_soft_due_at.map(|value| value.to_rfc3339()),
+                "reason": daily_brief_reason(
+                    row.obligation_status.as_deref().unwrap_or(""),
+                    row.obligation_hard_due_at,
+                    row.obligation_soft_due_at,
+                    row.obligation_source_text.as_deref(),
+                ),
+            });
+            if row.obligation_status.as_deref() == Some("at_risk") {
+                at_risk.push(entry);
+            } else {
+                open.push(entry);
+            }
+        }
+        Some(json!({ "at_risk": at_risk, "open": open }))
+    } else {
+        None
+    };
 
     Ok(Json(json!({
         "id": node.id,
@@ -446,6 +616,7 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
         "attributes": node.attributes,
         "lifecycle_state": node.lifecycle_state,
         "neighbors": neighbors_json,
+        "relationship": relationship,
     })))
 }
 
@@ -987,6 +1158,124 @@ mod tests {
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
+    /// ADR-0027: promoting an accepted candidate creates a new, open
+    /// Obligation that carries the candidate's source_fragment_id forward,
+    /// and the candidate itself becomes "promoted" with the new id linked.
+    #[tokio::test]
+    async fn promote_route_creates_an_obligation_from_an_accepted_candidate() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(&pool, uuid::Uuid::new_v4(), "We will migrate the pipeline by Q3.", "promote-test-hash")
+            .await
+            .expect("create source fragment");
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "commitment", "migrate the pipeline", fragment_id, Some(0.9), None)
+            .await
+            .expect("extract candidate");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(created.get("status").and_then(|v| v.as_str()), Some("open"));
+        assert_eq!(created.get("source_fragment_id").and_then(|v| v.as_str()), Some(fragment_id.to_string().as_str()));
+        let obligation_id = created.get("obligation_id").and_then(|v| v.as_str()).expect("obligation_id present").to_string();
+
+        let candidates_response = app(pool)
+            .oneshot(Request::builder().uri("/api/candidates").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let candidates_body = axum::body::to_bytes(candidates_response.into_body(), usize::MAX).await.unwrap();
+        let candidates: JsonValue = serde_json::from_slice(&candidates_body).expect("valid json body");
+        let candidate_row = candidates
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row.get("candidate_id").and_then(|v| v.as_str()) == Some(&candidate_id.to_string()))
+            .expect("the promoted candidate must still be present");
+        assert_eq!(candidate_row.get("validation_state").and_then(|v| v.as_str()), Some("promoted"));
+        assert_eq!(candidate_row.get("promoted_obligation_id").and_then(|v| v.as_str()), Some(obligation_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn promote_route_returns_409_for_a_candidate_not_yet_accepted() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn promote_route_returns_409_for_an_already_promoted_candidate() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::transition_candidate(&pool, candidate_id, "promoted", json!({"obligation_id": uuid::Uuid::new_v4()}))
+            .await
+            .expect("append promoted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn promote_route_returns_404_for_an_unknown_candidate() {
+        let pool = test_pool().await;
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{}/promote", uuid::Uuid::new_v4()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
     #[tokio::test]
     async fn search_route_returns_400_when_query_is_missing() {
         let pool = test_pool().await;
@@ -1113,14 +1402,18 @@ mod tests {
     }
 
     /// ADR-0025: an edge's neighbor summary must be present when the other
-    /// end is a real node, and null (not a failed join) when it is not.
+    /// end is a real node, and null (not a failed join) when it is not --
+    /// ADR-0028 narrows "not" to mean "resolves against neither `nodes` nor
+    /// `obligation_projection`", proven by
+    /// `node_detail_resolves_a_real_linked_obligation_with_status_and_reason`
+    /// below.
     #[tokio::test]
     async fn node_detail_includes_neighbor_summary_and_handles_a_non_node_edge_target() {
         let pool = test_pool().await;
         let person_id = graph::create_node(&pool, "person", "Neighbor Test Person", json!({})).await.expect("create person");
         let risk_id = graph::create_node(&pool, "risk", "Neighbor Test Risk", json!({})).await.expect("create risk");
         graph::create_edge(&pool, person_id, risk_id, "flagged", None).await.expect("create edge to a real node");
-        let obligation_id = uuid::Uuid::new_v4(); // stands in for a real Obligation id, not a nodes row (ADR-0009).
+        let obligation_id = uuid::Uuid::new_v4(); // a genuinely unknown id: neither a nodes row nor a real Obligation.
         graph::create_edge(&pool, person_id, obligation_id, "made", None).await.expect("create edge to a non-node id");
 
         let response = app(pool)
@@ -1138,6 +1431,80 @@ mod tests {
 
         let to_obligation = neighbors.iter().find(|edge| edge["to_id"] == obligation_id.to_string()).expect("edge to the non-node id present");
         assert!(to_obligation["neighbor"].is_null(), "an edge whose other end is not a nodes row must report a null neighbor, not fail");
+    }
+
+    /// ADR-0028: an edge into a *real* Obligation resolves with its status
+    /// and the same `reason` text the Daily Brief shows, and a person's
+    /// linked, non-closed Obligations are grouped into at_risk/open.
+    #[tokio::test]
+    async fn node_detail_resolves_a_real_linked_obligation_with_status_and_reason() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Relationship Test Person", json!({})).await.expect("create person");
+
+        let at_risk_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            at_risk_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "at_risk"}),
+        )
+        .await
+        .expect("append an at-risk obligation");
+        graph::create_edge(&pool, person_id, at_risk_id, "owns", None).await.expect("link person to the at-risk obligation");
+
+        let closed_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, closed_id, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append an obligation to be closed");
+        crate::obligation::append_event(&pool, closed_id, crate::obligation::ObligationEventType::Closed, json!({}))
+            .await
+            .expect("close it");
+        graph::create_edge(&pool, person_id, closed_id, "owns", None).await.expect("link person to the closed obligation");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let neighbors = detail["neighbors"].as_array().unwrap();
+        let to_at_risk = neighbors.iter().find(|edge| edge["to_id"] == at_risk_id.to_string()).expect("edge to the at-risk obligation present");
+        assert_eq!(to_at_risk["neighbor"]["type"], "obligation");
+        assert_eq!(to_at_risk["neighbor"]["status"], "at_risk");
+        assert_eq!(to_at_risk["neighbor"]["reason"], "Marked at risk. No evidence recorded.");
+
+        let relationship = &detail["relationship"];
+        let at_risk_group = relationship["at_risk"].as_array().unwrap();
+        assert!(at_risk_group.iter().any(|entry| entry["obligation_id"] == at_risk_id.to_string()), "the at-risk obligation must appear in the at_risk group");
+        let open_group = relationship["open"].as_array().unwrap();
+        assert!(
+            !open_group.iter().any(|entry| entry["obligation_id"] == closed_id.to_string()),
+            "a closed obligation must never appear in either relationship group"
+        );
+        assert!(
+            !at_risk_group.iter().any(|entry| entry["obligation_id"] == closed_id.to_string()),
+            "a closed obligation must never appear in either relationship group"
+        );
+    }
+
+    /// ADR-0028: only person nodes get a `relationship` grouping.
+    #[tokio::test]
+    async fn node_detail_omits_relationship_grouping_for_non_person_nodes() {
+        let pool = test_pool().await;
+        let risk_id = graph::create_node(&pool, "risk", "Non-Person Relationship Test", json!({})).await.expect("create risk node");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{risk_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert!(detail["relationship"].is_null(), "a non-person node must not get a relationship grouping");
     }
 
     #[tokio::test]

@@ -1,9 +1,9 @@
 # ADR-0028: Person relationship view — resolve linked Obligations into a per-person page
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("acceptr and build"), 2026-08-14
 - **Depends on:** [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md), [ADR-0020](0020-obligation-due-date-fields.md), [ADR-0022](0022-daily-brief-endpoint.md), [ADR-0023](0023-evidence-backed-daily-brief-reasons.md), [ADR-0025](0025-node-edge-write-api-and-traversal.md), [ADR-0026](0026-graph-explorer-frontend.md)
 - **Amends:** [ADR-0025](0025-node-edge-write-api-and-traversal.md)'s neighbor-resolution scope for the specific case of an edge whose other end is an Obligation id, not the ADR as a whole
 - **Tags:** architecture, api, frontend, data-model, graph
