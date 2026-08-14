@@ -131,7 +131,7 @@ fn daily_brief_reason(
 const STALE_THRESHOLD_DAYS: i64 = 14;
 const DATE_COMPRESSION_WINDOW_DAYS: i64 = 7;
 
-/// Risk Engine v1 (ADR-0036): the two of PRODUCT-SPEC.md §7.1's nine signals
+/// Risk Engine v1 (ADR-0039): the two of PRODUCT-SPEC.md §7.1's nine signals
 /// derivable today with zero schema change and zero fabricated data. Each
 /// signal is independent and additive -- no combined severity score is
 /// computed here, since weighting them together needs a model this ADR does
@@ -171,7 +171,7 @@ fn risk_signals(
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
 /// ORDER BY, not a scoring model. Joins read-only against `source_fragments`
-/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0036).
+/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0039).
 async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -245,7 +245,7 @@ fn time_horizon_bucket(status: &str, hard_due_at: Option<chrono::DateTime<chrono
 /// evidence join and `daily_brief_reason` the Daily Brief already uses --
 /// this is a different lens (when it's due) on the same data, not a new
 /// scoring model. Soonest-due-first within each bucket; an empty bucket is
-/// simply omitted from the response. Also attaches `risk_signals` (ADR-0036).
+/// simply omitted from the response. Also attaches `risk_signals` (ADR-0039).
 async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -1064,7 +1064,7 @@ mod tests {
             .expect("connect to test database")
     }
 
-    /// ADR-0036: risk_signals is a pure function -- no database, no
+    /// ADR-0039: risk_signals is a pure function -- no database, no
     /// flakiness -- covering both signals independently and together.
     #[test]
     fn risk_signals_flags_date_compression_when_due_soon_with_no_evidence() {
@@ -1373,7 +1373,7 @@ mod tests {
         assert!(unevidenced_row["source_fragment_id"].is_null());
     }
 
-    /// ADR-0036: the Daily Brief attaches risk_signals to each row, computed
+    /// ADR-0039: the Daily Brief attaches risk_signals to each row, computed
     /// from the same fields the reason string already uses.
     #[tokio::test]
     async fn daily_brief_route_attaches_risk_signals() {
@@ -2127,7 +2127,7 @@ mod tests {
         }
     }
 
-    /// ADR-0036: the Time Horizon route attaches the same risk_signals field.
+    /// ADR-0039: the Time Horizon route attaches the same risk_signals field.
     #[tokio::test]
     async fn time_horizon_route_attaches_risk_signals() {
         let pool = test_pool().await;
@@ -2463,5 +2463,96 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(wrong_type_response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// ADR-0037: one fragment has an extracted (still-unreviewed) candidate,
+    /// the other has none -- proves fragments with zero candidates still
+    /// appear (not silently omitted) and that fragment-level progress counts
+    /// extracted/pending fragments, not raw candidate rows.
+    #[tokio::test]
+    async fn meeting_candidates_route_lists_extracted_and_pending_fragments() {
+        let pool = test_pool().await;
+        let ingested = crate::transcript::ingest_transcript(
+            &pool,
+            &crate::transcript::MeetingMetadata { title: "Candidates Progress Test".to_string(), date: None, organiser: None, participants: vec![] },
+            "Roopa: please send me a transition plan.\nLyndon: sure, by Friday.",
+        )
+        .await
+        .expect("ingest transcript");
+        assert_eq!(ingested.fragment_ids.len(), 2);
+
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "request", "send a transition plan", ingested.fragment_ids[0], Some(0.8), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/meetings/{}/candidates", ingested.meeting_id)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let fragments = parsed["fragments"].as_array().expect("fragments is an array");
+        assert_eq!(fragments.len(), 2);
+        let extracted_fragment = fragments[0]["candidates"].as_array().expect("candidates is an array");
+        assert_eq!(extracted_fragment.len(), 1);
+        assert_eq!(extracted_fragment[0]["candidate_id"], candidate_id.to_string());
+        assert_eq!(extracted_fragment[0]["validation_state"], "candidate");
+        let pending_fragment = fragments[1]["candidates"].as_array().expect("candidates is an array");
+        assert_eq!(pending_fragment.len(), 0, "a fragment with no candidate yet must still appear, with an empty array");
+
+        assert_eq!(parsed["progress"]["fragment_count"], 2);
+        assert_eq!(parsed["progress"]["extracted_fragment_count"], 1);
+        assert_eq!(parsed["progress"]["pending_fragment_count"], 1);
+        assert_eq!(parsed["progress"]["by_validation_state"]["candidate"], 1);
+    }
+
+    /// ADR-0037: mirrors ADR-0036's own 404 contract for this sibling route.
+    #[tokio::test]
+    async fn meeting_candidates_route_404s_for_a_non_meeting_node() {
+        let pool = test_pool().await;
+
+        let unknown_id = uuid::Uuid::new_v4();
+        let unknown_response = app(pool.clone())
+            .oneshot(Request::builder().uri(format!("/api/meetings/{unknown_id}/candidates")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(unknown_response.status(), axum::http::StatusCode::NOT_FOUND);
+
+        let person_id = graph::create_node(&pool, "person", "Not A Meeting Either", json!({})).await.expect("create person node");
+        let wrong_type_response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/meetings/{person_id}/candidates")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(wrong_type_response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// ADR-0037: this route only reads; calling it must never itself create
+    /// a candidate for a never-extracted fragment.
+    #[tokio::test]
+    async fn meeting_candidates_route_never_triggers_extraction() {
+        let pool = test_pool().await;
+        let ingested = crate::transcript::ingest_transcript(
+            &pool,
+            &crate::transcript::MeetingMetadata { title: "No Extraction Test".to_string(), date: None, organiser: None, participants: vec![] },
+            "Roopa: an unextracted turn.",
+        )
+        .await
+        .expect("ingest transcript");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/meetings/{}/candidates", ingested.meeting_id)).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        assert_eq!(parsed["progress"]["extracted_fragment_count"], 0);
+        assert_eq!(parsed["progress"]["pending_fragment_count"], 1);
+        assert_eq!(parsed["fragments"][0]["candidates"].as_array().unwrap().len(), 0);
     }
 }
