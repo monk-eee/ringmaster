@@ -41,6 +41,7 @@ id = "one-hop-api-remains-boundary"
 invariant = "Traversal composes repeated calls to the existing one-hop GET /api/nodes/:id; no backend route, schema, or frontend dependency was added."
 type = "manual"
 rationale = "A negative claim (no new route/dependency) is not reliably provable by a positive regex match; verified by direct review of this ADR's diff (frontend-only, no new imports in package.json) and of backend/src/api.rs (no new route registered)."
+last_verified = "2026-08-14"
 
 [[check]]
 id = "playwright-proves-multi-step-traversal"
