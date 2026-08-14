@@ -326,6 +326,14 @@ performance metrics.
 
 ## 8. User experience
 
+> [VISION.md § The UX is the product](VISION.md#the-ux-is-the-product)
+> (2026-08-14) sharpens the panel-based Home below into a single ranked
+> "Daily Brief" narrative, plus newer concepts (Congruence Engine, context
+> clustering, a workbench layout, timeline-first navigation, per-person
+> relationship pages) not yet reflected in this versioned section. Treat
+> this note as a pointer for a future revision, not an amendment to the
+> spec below.
+
 ### 8.1 Home: "Run the show"
 
 | Panel | Content |
@@ -533,6 +541,12 @@ adoption. Baselines should be collected before setting targets.
 | ADO actions | Deferred until read-only linkage and evidence quality earn trust. |
 
 ## 16. Initial implementation backlog
+
+> [VISION.md § A reframed priority order](VISION.md#a-reframed-priority-order)
+> (2026-08-14) proposes prioritizing a Daily Brief, Relationship View, and
+> Time Horizon ahead of Validation UI (E5) and the rest of Attention
+> horizon (E7) — reconciling that into this table is a future revision, not
+> made here.
 
 | Epic | First deliverable |
 |---|---|

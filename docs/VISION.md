@@ -223,6 +223,119 @@ leakage. The precise boundary between them (federation vs. ingestion vs.
 shared schema) is not yet decided — see
 [Open questions](#open-questions-for-future-adrs).
 
+## The UX is the product
+
+*(monk-eee, 2026-08-14 — a reframe worth recording verbatim in spirit, not
+just summary.)* The graph, Rust, pgvector, MCP, provider integrations, even
+the ADR-governance process itself — all of that is infrastructure. Nobody
+opens Ringmaster because it has a good node/edge model. They open it because
+they're thinking *"Shit, what am I forgetting?"*, *"What should I do next?"*,
+or *"Why does this feel overwhelming?"*
+
+**The biggest UX mistake to avoid** is building an engineer's UI — a grid of
+entity types (People, Meetings, Services, Risks, Nodes, Edges, Obligations,
+Candidates) or a row of vanity counts (327 obligations, 91 risks, 204
+candidates). Nobody wants to manage entities. They want to manage their
+attention.
+
+### The Daily Brief
+
+Imagine opening Ringmaster on a Monday morning. Not a count. A brief:
+
+> **Good morning, Lyndon.** You have 4 things needing attention.
+>
+> 1. **Transition Plan** — Roopa expectation. Due in 8 days. No evidence
+>    recorded.
+> 2. **New Team Members** — Intro conversations missing. 2 people affected.
+> 3. **John Leave Coverage** — Starts in 12 days. No replacement owner
+>    recorded.
+> 4. **Team Health** — No morale activity in 43 days.
+
+That screen *is* the product. Everything else — the graph, the extraction
+pipeline, the attention horizon, the risk engine — exists to make that one
+screen true, current, and trustworthy. This sharpens §8.1's existing "Home:
+Run the show" panels (Attention now, Future risk horizon, Commitments
+upward, People and team, Delivery and customer, Recently changed) from a
+dashboard grid into a single ranked, narrative brief.
+
+### Congruence over completion
+
+Not "what should I do?" but **"what should I do together?"** When several
+open items are actually one piece of context — a transition plan, an
+ownership review, service mapping, new team members — Ringmaster should
+notice they're connected and propose a themed block of focused work ("Spend
+90 minutes on Reorg Transition: ownership review, transition plan draft,
+onboarding notes, service allocation") rather than surfacing four
+unconnected tasks. This turns "manage tasks" into "manage context."
+
+A longer-horizon version of this same idea is a **Congruence Engine**
+(working name; "Coherence Score" also considered): detecting when a stated
+commitment, the goals derived from it, and the actual work being done drift
+apart — "Improve quality" was promised, but no ADO work items exist under
+it; a monthly morale commitment has no evidence in 70 days; twenty work
+items exist with no customer outcome linked. Not task management —
+management *coherence*. This is a new concept beyond anything currently in
+[PRODUCT-SPEC.md §7](PRODUCT-SPEC.md#7-attention-and-risk-engine)'s risk
+signals and deserves its own future bounded ADR once the underlying
+obligation/work-item linkage exists to detect it from.
+
+### Context switching is the enemy
+
+Managers don't lose time doing work — they lose time switching between
+unrelated kinds of work (quality review → vacation request → onboarding →
+customer escalation → sprint planning → career discussion, back to back).
+Rather than one flat list, Ringmaster should cluster by management context
+— People, Delivery, Leadership, Operations — and name the expected focus
+time for each cluster ("People Work, 45 minutes: David onboarding, Hector
+growth discussion, team morale planning"). This is a different organizing
+principle than §8.1's panel-by-panel layout: cluster by *what kind of
+attention it takes*, not by entity type.
+
+### The manager's workbench, not a dashboard
+
+Three panes, not a dashboard grid:
+
+| Pane | Content |
+|---|---|
+| Left — Attention | Needs attention now / needs attention soon / recently changed. |
+| Centre — Current focus | The selected item's owners, risks, evidence, related commitments. |
+| Right — Relationship context | The relevant person: open commitments, recent asks, next scheduled conversation. |
+
+### Timeline, not graph, not table, not kanban
+
+The whole thesis is `Date → Obligation → Risk`
+([§6, Attention and risk engine](PRODUCT-SPEC.md#7-attention-and-risk-engine)).
+Managers think in time, not hierarchy or entity type. The default view
+worth building toward is a timeline — today, then each upcoming
+obligation/risk/milestone in date order — not a graph visualization, not an
+entity table, not a kanban board.
+
+### Relationship pages as external memory
+
+A dedicated page per person (Roopa, David, John, ...) showing: commitments
+made to them, requests from them, decisions involving them, risks affecting
+commitments connected to them, recent meetings, open follow-ups. This
+sharpens §8.2's "Entity view" (owner/counterparty/related people) into a
+first-class, person-centric page rather than a generic entity template —
+this *is* the organizational memory the [Organizational memory](#organizational-memory)
+section above describes, made concrete as a UI surface.
+
+### A reframed priority order
+
+monk-eee's stated build order, if prioritizing from a blank slate: Daily
+Brief, Relationship View, Time Horizon, Congruence Engine, Risk Engine,
+Candidate Validation, ADO integration, Automation — reasoning that if the
+first six work properly, ADO integration becomes close to obvious. This
+maps onto, and reprioritizes ahead of, the existing
+[§16 backlog](PRODUCT-SPEC.md#16-initial-implementation-backlog)'s E5–E8
+ordering; reconciling the two into a formal, versioned backlog revision is
+PRODUCT-SPEC.md's own call, not made here.
+
+The through-line, in monk-eee's own words: **"Ringmaster isn't helping
+managers manage work. It's helping managers maintain a coherent mental
+model of reality."** That's the product. The graph, Rust, and pgvector are
+just how it's kept true.
+
 ## Ultimate goal
 
 A manager should be able to open Ringmaster on Monday morning and immediately
