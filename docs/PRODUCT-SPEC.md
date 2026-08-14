@@ -334,7 +334,9 @@ performance metrics.
 > this note as a pointer for a future revision, not an amendment to the
 > spec below. The meeting-to-memory journey and progressive relationship
 > graph are developed in
-> [RELATIONSHIP-GRAPH-DESIGN.md](RELATIONSHIP-GRAPH-DESIGN.md).
+> [RELATIONSHIP-GRAPH-DESIGN.md](RELATIONSHIP-GRAPH-DESIGN.md); the evidence-
+> synchronized validation experience is developed in
+> [MEETING-REVIEW-DESIGN.md](MEETING-REVIEW-DESIGN.md).
 
 ### 8.1 Home: "Run the show"
 

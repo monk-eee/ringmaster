@@ -82,7 +82,9 @@ sentence: **Roopa requested the transition plan.**
 
 ### 2. Review
 
-The meeting review experience places evidence and interpretation together:
+The meeting review experience places evidence and interpretation together.
+Its full screen, claim-bundle, correction, merge, and failure-state design is
+developed in [MEETING-REVIEW-DESIGN.md](MEETING-REVIEW-DESIGN.md).
 
 ```text
 +-------------------------------+-------------------------------+
