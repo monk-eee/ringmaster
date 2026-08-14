@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchCandidates, fetchObligations, type Candidate, type Obligation } from "./api";
+import { fetchCandidates, fetchObligations, searchSourceFragments, type Candidate, type Obligation, type SearchResult } from "./api";
 import ObligationsTable from "./components/ObligationsTable";
 import CandidatesTable from "./components/CandidatesTable";
+import SearchResults from "./components/SearchResults";
 
-type Tab = "obligations" | "candidates";
+type Tab = "obligations" | "candidates" | "search";
 type SortKey = "updated_at" | "status";
+
+const TAB_TITLES: Record<Tab, string> = {
+  obligations: "Obligations",
+  candidates: "Candidates",
+  search: "Search",
+};
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("obligations");
@@ -14,6 +21,12 @@ export default function App() {
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -26,6 +39,22 @@ export default function App() {
       setError((cause as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runSearch(event: React.FormEvent) {
+    event.preventDefault();
+    if (!searchQuery.trim()) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      setSearchResults(await searchSourceFragments(searchQuery));
+    } catch (cause) {
+      setSearchError((cause as Error).message);
+      setSearchResults([]);
+    } finally {
+      setHasSearched(true);
+      setSearchLoading(false);
     }
   }
 
@@ -48,7 +77,7 @@ export default function App() {
         <img className="logo" src="/ringmaster_logo.png" alt="Ringmaster" />
         <div className="page-heading">
           <div className="eyebrow">Ringmaster</div>
-          <h1>{tab === "obligations" ? "Obligations" : "Candidates"}</h1>
+          <h1>{TAB_TITLES[tab]}</h1>
         </div>
       </header>
       <main>
@@ -69,42 +98,70 @@ export default function App() {
           >
             Candidates
           </button>
+          <button
+            role="tab"
+            aria-selected={tab === "search"}
+            className={tab === "search" ? "tab tab-active" : "tab"}
+            onClick={() => setTab("search")}
+          >
+            Search
+          </button>
         </nav>
 
-        <div className="toolbar">
-          {tab === "obligations" && (
-            <>
-              <label>
-                Status
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                  <option value="all">All</option>
-                  {statuses.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Sort by
-                <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)}>
-                  <option value="updated_at">Last updated</option>
-                  <option value="status">Status</option>
-                </select>
-              </label>
-            </>
-          )}
-          <button onClick={load} disabled={loading}>
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
-
-        {error && <p className="error">Could not reach backend: {error}</p>}
-
-        {tab === "obligations" ? (
-          <ObligationsTable obligations={visibleObligations} />
+        {tab === "search" ? (
+          <>
+            <form className="toolbar" onSubmit={runSearch}>
+              <input
+                type="search"
+                placeholder="Search meeting evidence…"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+              <button type="submit" disabled={searchLoading || !searchQuery.trim()}>
+                {searchLoading ? "Searching…" : "Search"}
+              </button>
+            </form>
+            {searchError && <p className="error">{searchError}</p>}
+            <SearchResults results={searchResults} hasSearched={hasSearched} />
+          </>
         ) : (
-          <CandidatesTable candidates={candidates} />
+          <>
+            <div className="toolbar">
+              {tab === "obligations" && (
+                <>
+                  <label>
+                    Status
+                    <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                      <option value="all">All</option>
+                      {statuses.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Sort by
+                    <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)}>
+                      <option value="updated_at">Last updated</option>
+                      <option value="status">Status</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              <button onClick={load} disabled={loading}>
+                {loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+
+            {error && <p className="error">Could not reach backend: {error}</p>}
+
+            {tab === "obligations" ? (
+              <ObligationsTable obligations={visibleObligations} />
+            ) : (
+              <CandidatesTable candidates={candidates} />
+            )}
+          </>
         )}
       </main>
     </>

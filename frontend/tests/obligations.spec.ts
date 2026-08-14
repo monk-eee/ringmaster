@@ -57,3 +57,23 @@ test("filtering obligations by status only shows matching rows", async ({ page }
     await expect(badges.nth(index)).toHaveText(concreteStatus!);
   }
 });
+
+// ADR-0019: tolerant of whether RINGMASTER_EMBEDDING_URL is configured in
+// this environment -- asserts search reaches a final rendered state
+// (results, empty state, or a surfaced backend error), never a crash.
+test("search tab submits a query and renders a final state", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("tab", { name: "Search" }).click();
+  await expect(page.getByRole("tab", { name: "Search" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("h1")).toHaveText("Search");
+
+  await page.getByPlaceholder("Search meeting evidence…").fill("transition plan");
+  await page.getByRole("button", { name: "Search" }).click();
+
+  await expect(page.getByRole("button", { name: "Search" })).toBeEnabled({ timeout: 15000 });
+  const hasError = (await page.locator("p.error").count()) > 0;
+  const hasEmptyState = (await page.locator("p.empty-state").count()) > 0;
+  const hasResultRows = (await page.locator("table tbody tr").count()) > 0;
+  expect(hasError || hasEmptyState || hasResultRows).toBe(true);
+});

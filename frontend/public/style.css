@@ -107,13 +107,19 @@ main {
 }
 
 .toolbar select,
-.toolbar button {
+.toolbar button,
+.toolbar input[type="search"] {
   font: inherit;
   padding: 0.3rem 0.5rem;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
+}
+
+.toolbar input[type="search"] {
+  flex: 1;
+  min-width: 240px;
 }
 
 .toolbar button {

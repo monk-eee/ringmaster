@@ -15,9 +15,19 @@ export type Candidate = {
   speaker: string | null;
 };
 
+export type SearchResult = {
+  source_fragment_id: string;
+  text: string;
+  speaker: string | null;
+  similarity: number;
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
-  if (!response.ok) throw new Error(`${path} responded ${response.status}`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(body || `${path} responded ${response.status}`);
+  }
   return (await response.json()) as T;
 }
 
@@ -27,4 +37,8 @@ export function fetchObligations(): Promise<Obligation[]> {
 
 export function fetchCandidates(): Promise<Candidate[]> {
   return getJson<Candidate[]>("/api/candidates");
+}
+
+export function searchSourceFragments(query: string): Promise<SearchResult[]> {
+  return getJson<SearchResult[]>(`/api/search?q=${encodeURIComponent(query)}`);
 }
