@@ -50,9 +50,11 @@ flowchart LR
   (`present`/`absent` regex over files, `parity` = every accepted ADR has
   evidence, `manual` = human-asserted, decays to `Stale` after a threshold).
   Never executes shell code from evidence data.
-- All 26 ADRs are **Accepted**. Evidence currently reports 25 `Proven` and
-  one intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code
-  decision) — zero `Broken`. Re-run the checker for the current count.
+- All 34 ADRs are **Accepted**. Evidence currently reports 32 `Proven` and
+  two intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code
+  decision; `ADR-0034`, one deliberately-`manual` transactional-rollback
+  check with no schema-level constraint to trigger a real failure) — zero
+  `Broken`. Re-run the checker for the current count.
 
 ---
 
@@ -200,14 +202,18 @@ flowchart TB
 | `/health` | GET | `200 OK` |
 | `/api/obligations` | GET | Read-only `obligation_projection` rows, `LEFT JOIN`ed with `source_fragments` for evidence (`source_fragment_id`, `source_text`) |
 | `/api/daily-brief` | GET | Non-closed obligations ranked by urgency (at-risk first, then soonest due date), each with a deterministic `reason` string that now cites linked evidence or states plainly that none is recorded |
+| `/api/time-horizon` | GET | Non-closed obligations bucketed by effective due date into Overdue/Next 7/30/90 days/Beyond, an at-risk Obligation with no date landing in Overdue; reuses the Daily Brief's own `reason` function |
+| `/api/focus-blocks` | GET | Non-closed Obligations sharing a linked graph node (person, meeting, …) grouped into a Suggested Focus Block; a node linked to fewer than two counts forms no block |
 | `/api/candidates` | GET | Read-only `candidate_projection` rows, `LEFT JOIN`ed with `source_fragments` for evidence (`source_fragment_id`, `source_text`, `speaker`) |
 | `/api/candidates/:id/accept` | POST | Transitions a candidate still in the `candidate` state to `accepted`. `200` / `404` (unknown) / `409` (already transitioned) |
 | `/api/candidates/:id/reject` | POST | Same, to `rejected` |
+| `/api/candidates/:id/promote` | POST | Creates an open Obligation from an `accepted` candidate (carrying its `source_fragment_id` forward), marks the candidate `promoted` with the new Obligation's id linked. `409` for any other `validation_state` |
 | `/api/source-fragments/:id/extract` | POST | Explicit, synchronous extraction trigger. `201` (created) / `204` (nothing extracted) / `404` (unknown fragment) / `503` (no model configured — typed, never panics) |
+| `/api/meetings/ingest` | POST | Atomically creates one Meeting node plus its ordered, hashed source fragments from raw transcript text; `400` on blank required fields; never triggers extraction or embedding implicitly |
 | `/api/search` | GET | `?q=&limit=` — embeds the query, ranks `source_fragment` embeddings by pgvector cosine distance (`<=>`). `200` ranked JSON / `400` (missing/blank `q`) / `503` (no embedding model configured) |
 | `/api/nodes` | GET, POST | List nodes (optional `?node_type=`) / create a node |
-| `/api/nodes/:id` | GET, PATCH | Fetch a node with its neighboring edges / merge-update its attributes |
-| `/api/edges` | POST | Create an edge between two existing nodes/obligations |
+| `/api/nodes/:id` | GET, PATCH | Fetch a node with its neighboring edges (each edge now carries `valid_from`/`valid_to`; an Obligation-typed neighbor resolves its real status/dates/reason instead of `null`) and, for a `person` node, an `at_risk`/`open` relationship grouping / merge-update its attributes |
+| `/api/edges` | POST | Create an edge between two existing nodes/obligations. Optional `valid_from` + `supersede: true` closes out any prior current edge sharing the same `(from_id, edge_type)` in one transaction; omitted/false leaves every prior caller unchanged |
 
 Common posture across every write/optional-model route: **never automatic**
 (extraction and embedding are always explicit calls, never triggered by
@@ -226,23 +232,43 @@ React 18 + Vite 5 SPA, `npm run dev` on `:3000`. Vite's dev server proxies
 `/api/*` to the backend (`BACKEND_URL`, read server-side only — same-origin
 from the browser's perspective, no CORS needed).
 
-- **`App.tsx`** — five tabs (`Daily Brief` / `Obligations` / `Candidates` /
-  `Search` / `Graph`), **Daily Brief is the default landing tab**
-  ([ADR-0022](adr.d/0022-daily-brief-endpoint.md), matching VISION.md's
-  "start with Attention, not Work"), client-side status filter + sort on
-  Obligations, manual refresh (no page reload). The **Graph** tab
+- **`App.tsx`** — six tabs (`Daily Brief` / `Obligations` / `Candidates` /
+  `Search` / `Graph` / `Time Horizon`), **Daily Brief is the default landing
+  tab** ([ADR-0022](adr.d/0022-daily-brief-endpoint.md), matching
+  VISION.md's "start with Attention, not Work"), client-side status filter +
+  sort on Obligations, manual refresh (no page reload). The **Time Horizon**
+  tab ([ADR-0029](adr.d/0029-time-horizon-view.md)) renders the same
+  Obligation data as a different lens — bucketed by due-date window instead
+  of ranked by urgency — with a colored summary ribbon and per-bucket accent
+  borders. The **Graph** tab
   ([ADR-0026](adr.d/0026-graph-explorer-frontend.md)) creates/lists/filters
   nodes by type, drills into a node's attributes and lifecycle state, adds
-  relationships, and renders a one-hop SVG relationship view with
-  click-to-recenter on a neighbor.
+  relationships (optionally superseding a prior current one of the same
+  type, [ADR-0032](adr.d/0032-temporal-edge-validity-supersede-on-write.md)),
+  and renders a one-hop SVG relationship view with click-to-recenter — now
+  composed into a durable, reversible **traversal trail**
+  ([ADR-0033](adr.d/0033-progressive-graph-traversal-trail.md)) instead of
+  discarding prior context on every click, with superseded edges shown
+  dashed/muted. A `person` node's detail panel additionally resolves its
+  linked Obligations into an `at_risk`/`open` relationship view
+  ([ADR-0028](adr.d/0028-person-relationship-view.md)).
 - **`components/DailyBrief.tsx`**, **`ObligationsTable.tsx`**,
   **`CandidatesTable.tsx`**, **`SearchResults.tsx`**, **`StatusBadge.tsx`**,
-  **`GraphExplorer.tsx`** — presentational. `CandidatesTable.tsx` renders
-  working Accept/Reject buttons for candidates still in the `candidate`
-  state ([ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)).
+  **`GraphExplorer.tsx`**, **`TimeHorizon.tsx`** — presentational.
+  `CandidatesTable.tsx` renders working Accept/Reject buttons for candidates
+  still in the `candidate` state
+  ([ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)), plus a
+  Promote button for `accepted` candidates that creates a real Obligation
+  ([ADR-0027](adr.d/0027-promote-accepted-candidate-to-obligation.md)).
+  Obligation/candidate/node type labels and icons are now human-readable
+  across every table and the Graph Explorer via a shared `typeIcon()`
+  vocabulary ([ADR-0030](adr.d/0030-human-readable-titles-and-type-iconography.md)).
+  A **Suggested Focus Blocks** card groups non-closed Obligations sharing a
+  linked node ([ADR-0031](adr.d/0031-suggested-focus-blocks.md)).
 - **`api.ts`** — typed `fetch` wrappers, including `searchSourceFragments`.
 - Playwright spec (`tests/obligations.spec.ts`) exercises real client-side
-  interaction (tab switching, search), not just static DOM structure.
+  interaction (tab switching, search, multi-step graph traversal), not just
+  static DOM structure.
 
 The Search tab (`GET /api/search`, query box, ranked results with speaker +
 similarity) and the Daily Brief tab were both added as presentational
@@ -331,32 +357,49 @@ chosen yet), branch protection rules.
 | 0024 | Accept/reject buttons for candidates (Epic E5's first interactive slice) | Accepted |
 | 0025 | Node/edge write API and neighborhood traversal | Accepted |
 | 0026 | Graph explorer frontend: data entry, drill-down, relationship visualization | Accepted |
+| 0027 | Promote an accepted candidate into an Obligation | Accepted |
+| 0028 | Person relationship view: resolve linked Obligations into a per-person page | Accepted |
+| 0029 | Time Horizon view: Obligations bucketed by due-date window | Accepted |
+| 0030 | Human-readable titles and type iconography across the UI | Accepted |
+| 0031 | Suggested Focus Blocks: group Obligations sharing a linked node | Accepted |
+| 0032 | Temporal edge validity: supersede-on-write and relationship history | Accepted |
+| 0033 | Progressive graph traversal trail over one-hop neighborhoods | Accepted |
+| 0034 | Expose atomic meeting-transcript ingestion over HTTP | Accepted |
 
 See [`docs/adr.d/README.md`](adr.d/README.md) for the live index — this
-table is a snapshot and will drift. All 26 are Accepted and Proven as of
-this snapshot (`ADR-0004` intentionally `Asserted`, not code-backed).
+table is a snapshot and will drift. All 34 are Accepted; 32 Proven, two
+intentionally Asserted (`ADR-0004`, `ADR-0034`) as of this snapshot.
 
 ## 10. Known gaps / deferred work (named explicitly by their own ADRs)
 
 - **Epic E5 (Validation UI)** — [ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)
-  shipped a first interactive slice (Accept/Reject buttons, one-way
-  `candidate`→`accepted`/`rejected` transition), but there's still no
-  correct/merge queue and no flow that promotes an accepted candidate into
-  a real Obligation — candidates and Obligations remain two separate,
-  unlinked lifecycles.
+  shipped Accept/Reject, and
+  [ADR-0027](adr.d/0027-promote-accepted-candidate-to-obligation.md) closed
+  the gap this section used to name: an `accepted` candidate can now be
+  promoted into a real, linked Obligation. Still no correct/merge queue for
+  a `corrected` candidate.
 - **Epic E7 (attention/risk-horizon engine)** and **Epic E8 (rich web
   home)** — the Daily Brief ([ADR-0022](adr.d/0022-daily-brief-endpoint.md)/
-  [ADR-0023](adr.d/0023-evidence-backed-daily-brief-reasons.md)) is a real,
-  shipped first slice of this (urgency ranking + cited evidence), but the
-  full 7/30/60/90-day future-risk horizon, Congruence Engine, and Focus
-  Sessions from [VISION.md](VISION.md#the-daily-brief) remain vision, not
-  yet ADRs.
+  [ADR-0023](adr.d/0023-evidence-backed-daily-brief-reasons.md)), Time
+  Horizon ([ADR-0029](adr.d/0029-time-horizon-view.md)), and Suggested Focus
+  Blocks ([ADR-0031](adr.d/0031-suggested-focus-blocks.md)) are real, shipped
+  first slices of this (urgency ranking, due-date bucketing, shared-node
+  grouping, all with cited evidence). The Congruence Engine (drift between a
+  stated commitment and actual linked work) and a real Risk Engine (§7.1's
+  nine signals — staleness, unowned obligations, coverage gaps, etc.) remain
+  vision, not yet ADRs — both explicitly deferred until the underlying
+  work-item linkage exists to detect them honestly.
 - **Graph substrate** ([ADR-0025](adr.d/0025-node-edge-write-api-and-traversal.md)/
   [ADR-0026](adr.d/0026-graph-explorer-frontend.md)) has a working write
-  API and frontend now, but no entity resolution/dedup (creating a node
-  for the same real-world person/meeting twice is possible), no multi-hop
-  traversal beyond one direct neighbor, and no node-type-specific
-  attribute validation — every node type shares the same generic JSON bag.
+  API and frontend, now with temporal validity
+  ([ADR-0032](adr.d/0032-temporal-edge-validity-supersede-on-write.md)) and a
+  progressive traversal trail
+  ([ADR-0033](adr.d/0033-progressive-graph-traversal-trail.md)), but still
+  no entity resolution/dedup (creating a node for the same real-world
+  person/meeting twice is possible), no multi-hop traversal beyond one
+  direct neighbor at a time (the trail composes repeated one-hop calls
+  client-side; the API boundary itself is unchanged), and no node-type-specific
+  attribute validation.
 - **Hybrid search** — only plain vector similarity exists; keyword/full-text
   fusion, metadata filters, and graph expansion from a search hit are all
   deferred ([0019](adr.d/0019-semantic-search-over-source-fragments.md)).
@@ -364,9 +407,18 @@ this snapshot (`ADR-0004` intentionally `Asserted`, not code-backed).
   design, honestly stated in
   [0008](adr.d/0008-add-append-only-audit-events-table.md).
 - **Transcript parser** is an explicitly provisional `Speaker: text`
-  placeholder, not a real Teams/Scout export format.
+  placeholder, not a real Teams/Scout export format — now reachable over
+  HTTP ([ADR-0034](adr.d/0034-http-meeting-transcript-ingestion.md)) but the
+  parsing format itself is unchanged.
 - **No dedup/idempotency** anywhere yet — repeated ingestion or extraction
   calls create duplicate rows by design (deferred, not a bug).
+- **Meeting Review** (validating extracted candidates beside the source
+  transcript, correcting mistakes inline) and a genuine interactive **Time
+  Horizon timeline** (zoom/pan, banded periods, typed markers) are recorded
+  as working product-design intent
+  ([MEETING-REVIEW-DESIGN.md](MEETING-REVIEW-DESIGN.md),
+  [TIME-HORIZON-TIMELINE-DESIGN.md](TIME-HORIZON-TIMELINE-DESIGN.md)) —
+  neither is an ADR and neither governs implementation yet.
 - **MindLeak/Ringmaster boundary** for federation depth, and the full
   multi-user authorization model, remain explicitly open per
   [VISION.md](VISION.md#open-questions-for-future-adrs).
