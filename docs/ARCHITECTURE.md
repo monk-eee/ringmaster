@@ -50,11 +50,9 @@ flowchart LR
   (`present`/`absent` regex over files, `parity` = every accepted ADR has
   evidence, `manual` = human-asserted, decays to `Stale` after a threshold).
   Never executes shell code from evidence data.
-- All 26 ADRs are **Accepted**. Evidence currently reports 23 `Proven`, one
-  intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code decision),
-  and two `Broken` (`ADR-0025`, `ADR-0026` — both accepted decisions whose
-  implementation is actively landing; `Broken` here means "in flight," not
-  "defective"). Re-run the checker for the current count.
+- All 26 ADRs are **Accepted**. Evidence currently reports 25 `Proven` and
+  one intentionally-`Asserted` (`ADR-0004`, a policy-only, non-code
+  decision) — zero `Broken`. Re-run the checker for the current count.
 
 ---
 
@@ -160,11 +158,12 @@ flowchart TB
   product-spec node types (Person, Meeting, Risk, Decision, …), ordinary
   mutable rows, `node_type`/`edge_type` free-text, no FK enforcement on
   edges (deliberate, app-layer responsibility)
-  ([0009](adr.d/0009-add-graph-nodes-edges-and-source-fragments.md)). Gaining
+  ([0009](adr.d/0009-add-graph-nodes-edges-and-source-fragments.md)). Gained
   a direct write/traversal API — create/list/patch a node (merge-only
   attribute updates), create an edge, fetch a node with its neighbors
-  ([0025](adr.d/0025-node-edge-write-api-and-traversal.md), implementation
-  landing incrementally as of this snapshot — see §10).
+  ([0025](adr.d/0025-node-edge-write-api-and-traversal.md)) — entity
+  resolution/dedup, edits/deletes to edges, and multi-hop traversal beyond
+  one hop remain explicitly out of scope per that ADR.
 - **`source_fragments`** — bounded transcript quotes (speaker, timing,
   SHA-256 hash), append-only/immutable at the DB level so a captured quote
   can never be silently edited
@@ -227,18 +226,20 @@ React 18 + Vite 5 SPA, `npm run dev` on `:3000`. Vite's dev server proxies
 `/api/*` to the backend (`BACKEND_URL`, read server-side only — same-origin
 from the browser's perspective, no CORS needed).
 
-- **`App.tsx`** — four tabs (`Daily Brief` / `Obligations` / `Candidates` /
-  `Search`), **Daily Brief is the default landing tab**
+- **`App.tsx`** — five tabs (`Daily Brief` / `Obligations` / `Candidates` /
+  `Search` / `Graph`), **Daily Brief is the default landing tab**
   ([ADR-0022](adr.d/0022-daily-brief-endpoint.md), matching VISION.md's
   "start with Attention, not Work"), client-side status filter + sort on
-  Obligations, manual refresh (no page reload). A fifth **Graph Explorer**
-  tab is accepted ([ADR-0026](adr.d/0026-graph-explorer-frontend.md)) but
-  not yet built as of this snapshot — see §10.
+  Obligations, manual refresh (no page reload). The **Graph** tab
+  ([ADR-0026](adr.d/0026-graph-explorer-frontend.md)) creates/lists/filters
+  nodes by type, drills into a node's attributes and lifecycle state, adds
+  relationships, and renders a one-hop SVG relationship view with
+  click-to-recenter on a neighbor.
 - **`components/DailyBrief.tsx`**, **`ObligationsTable.tsx`**,
-  **`CandidatesTable.tsx`**, **`SearchResults.tsx`**, **`StatusBadge.tsx`** —
-  presentational. `CandidatesTable.tsx` now renders working Accept/Reject
-  buttons for candidates still in the `candidate` state
-  ([ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)).
+  **`CandidatesTable.tsx`**, **`SearchResults.tsx`**, **`StatusBadge.tsx`**,
+  **`GraphExplorer.tsx`** — presentational. `CandidatesTable.tsx` renders
+  working Accept/Reject buttons for candidates still in the `candidate`
+  state ([ADR-0024](adr.d/0024-candidate-accept-reject-buttons.md)).
 - **`api.ts`** — typed `fetch` wrappers, including `searchSourceFragments`.
 - Playwright spec (`tests/obligations.spec.ts`) exercises real client-side
   interaction (tab switching, search), not just static DOM structure.
@@ -332,8 +333,8 @@ chosen yet), branch protection rules.
 | 0026 | Graph explorer frontend: data entry, drill-down, relationship visualization | Accepted |
 
 See [`docs/adr.d/README.md`](adr.d/README.md) for the live index — this
-table is a snapshot and will drift. All 26 are Accepted as of this snapshot;
-ADR-0025/0026 are still landing implementation (see §10).
+table is a snapshot and will drift. All 26 are Accepted and Proven as of
+this snapshot (`ADR-0004` intentionally `Asserted`, not code-backed).
 
 ## 10. Known gaps / deferred work (named explicitly by their own ADRs)
 
@@ -350,11 +351,12 @@ ADR-0025/0026 are still landing implementation (see §10).
   full 7/30/60/90-day future-risk horizon, Congruence Engine, and Focus
   Sessions from [VISION.md](VISION.md#the-daily-brief) remain vision, not
   yet ADRs.
-- **Node/edge write API** ([ADR-0025](adr.d/0025-node-edge-write-api-and-traversal.md))
-  and **Graph Explorer frontend** ([ADR-0026](adr.d/0026-graph-explorer-frontend.md))
-  are both Accepted; implementation is actively landing as of this
-  snapshot (re-run `node scripts/check-evidence.mjs` for the current
-  Proven/Broken split — Broken here means in-flight, not defective).
+- **Graph substrate** ([ADR-0025](adr.d/0025-node-edge-write-api-and-traversal.md)/
+  [ADR-0026](adr.d/0026-graph-explorer-frontend.md)) has a working write
+  API and frontend now, but no entity resolution/dedup (creating a node
+  for the same real-world person/meeting twice is possible), no multi-hop
+  traversal beyond one direct neighbor, and no node-type-specific
+  attribute validation — every node type shares the same generic JSON bag.
 - **Hybrid search** — only plain vector similarity exists; keyword/full-text
   fusion, metadata filters, and graph expansion from a search hit are all
   deferred ([0019](adr.d/0019-semantic-search-over-source-fragments.md)).
