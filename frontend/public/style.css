@@ -410,3 +410,107 @@ td.evidence-cell .no-evidence {
   opacity: 0.55;
   cursor: default;
 }
+
+.graph-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.node-list-items {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.node-list-button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+}
+
+.node-list-button:hover {
+  background: var(--surface-alt);
+}
+
+.node-list-button-active {
+  background: var(--open-bg);
+  border-color: var(--accent);
+}
+
+.node-type-tag {
+  display: inline-block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.4rem;
+  margin-right: 0.4rem;
+}
+
+.lifecycle-state {
+  color: var(--muted);
+  margin-top: -0.5rem;
+}
+
+.attributes-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.attributes-list dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.attributes-list dd {
+  margin: 0;
+}
+
+.relationship-view {
+  display: block;
+  margin: 0.5rem auto;
+}
+
+.relationship-edge {
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.relationship-edge-label {
+  font-size: 0.65rem;
+  fill: var(--muted);
+}
+
+.relationship-node {
+  fill: var(--open-bg);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.relationship-node-center {
+  fill: var(--accent);
+  stroke: var(--accent-strong);
+}
+
+.relationship-node-clickable {
+  cursor: pointer;
+}
+
+.relationship-node-label {
+  font-size: 0.7rem;
+  fill: var(--text);
+}

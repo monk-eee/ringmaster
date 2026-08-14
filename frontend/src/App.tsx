@@ -13,8 +13,9 @@ import ObligationsTable from "./components/ObligationsTable";
 import CandidatesTable from "./components/CandidatesTable";
 import SearchResults from "./components/SearchResults";
 import DailyBrief from "./components/DailyBrief";
+import GraphExplorer from "./components/GraphExplorer";
 
-type Tab = "daily-brief" | "obligations" | "candidates" | "search";
+type Tab = "daily-brief" | "obligations" | "candidates" | "search" | "graph";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
@@ -22,6 +23,7 @@ const TAB_TITLES: Record<Tab, string> = {
   obligations: "Obligations",
   candidates: "Candidates",
   search: "Search",
+  graph: "Graph",
 };
 
 export default function App() {
@@ -131,9 +133,19 @@ export default function App() {
           >
             Search
           </button>
+          <button
+            role="tab"
+            aria-selected={tab === "graph"}
+            className={tab === "graph" ? "tab tab-active" : "tab"}
+            onClick={() => setTab("graph")}
+          >
+            Graph
+          </button>
         </nav>
 
-        {tab === "search" ? (
+        {tab === "graph" ? (
+          <GraphExplorer />
+        ) : tab === "search" ? (
           <>
             <form className="toolbar" onSubmit={runSearch}>
               <input
