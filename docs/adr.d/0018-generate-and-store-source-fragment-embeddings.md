@@ -1,9 +1,9 @@
 # ADR-0018: Generate and store embeddings for source fragments
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accept and continue"), 2026-08-14
 - **Depends on:** [ADR-0007](0007-generalize-obligation-and-require-pgvector.md), [ADR-0010](0010-transcript-ingestion-parsing-chunking-provenance.md), [ADR-0011](0011-extraction-pipeline-candidate-schema-and-model-adapter.md)
 - **Tags:** architecture, data-model, embeddings, semantic-retrieval
 

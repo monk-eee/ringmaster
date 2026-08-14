@@ -1,3 +1,4 @@
+use crate::embedding_adapter::{self, EmbeddingAdapterError, EmbeddingConfig};
 use serde_json::Value as Json;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
@@ -108,6 +109,51 @@ pub async fn get_source_fragment(pool: &PgPool, id: Uuid) -> Result<SourceFragme
         .await
 }
 
+/// Embeds and stores one named source fragment (ADR-0018). Reads the
+/// fragment's own immutable text, calls the configured embedding adapter,
+/// and inserts one `embeddings` row. Never automatic on ingestion --
+/// called explicitly, the same non-blocking posture ADR-0013 chose for
+/// extraction.
+#[derive(Debug)]
+pub enum EmbeddingError {
+    Adapter(EmbeddingAdapterError),
+    Database(sqlx::Error),
+}
+
+impl std::fmt::Display for EmbeddingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Adapter(error) => write!(f, "{error}"),
+            Self::Database(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for EmbeddingError {}
+
+pub async fn embed_source_fragment(
+    pool: &PgPool,
+    config: &EmbeddingConfig,
+    source_fragment_id: Uuid,
+) -> Result<Uuid, EmbeddingError> {
+    let fragment = get_source_fragment(pool, source_fragment_id).await.map_err(EmbeddingError::Database)?;
+    let vector = embedding_adapter::embed(config, &fragment.text).await.map_err(EmbeddingError::Adapter)?;
+    let literal = format!("[{}]", vector.iter().map(|value| value.to_string()).collect::<Vec<_>>().join(","));
+
+    let (id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO embeddings (entity_id, entity_type, model_id, embedding, source_hash) \
+         VALUES ($1, 'source_fragment', $2, $3::vector, $4) RETURNING id",
+    )
+    .bind(source_fragment_id)
+    .bind(&config.model)
+    .bind(&literal)
+    .bind(&fragment.hash)
+    .fetch_one(pool)
+    .await
+    .map_err(EmbeddingError::Database)?;
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +210,31 @@ mod tests {
         assert_eq!(fragment.source_id, meeting_id);
         assert_eq!(fragment.text, "We have a two-week transition.");
         assert_eq!(fragment.hash, "hash123");
+    }
+
+    /// Exercises a real, live round-trip when RINGMASTER_EMBEDDING_URL is
+    /// configured (ADR-0018); otherwise reports and passes trivially,
+    /// same posture as extraction::tests's own live-model test.
+    #[tokio::test]
+    async fn embed_source_fragment_round_trips_against_a_live_endpoint_when_configured() {
+        let Some(config) = EmbeddingConfig::from_env() else {
+            eprintln!("skipped: RINGMASTER_EMBEDDING_URL is not set, no live embedding model configured");
+            return;
+        };
+        let pool = test_pool().await;
+        let meeting_id = Uuid::new_v4();
+        let fragment_id = create_source_fragment(&pool, meeting_id, "We have a two-week transition.", "embed-test-hash")
+            .await
+            .expect("create source fragment");
+
+        let result = embed_source_fragment(&pool, &config, fragment_id).await;
+        assert!(result.is_ok(), "live embedding call failed: {:?}", result.err());
+
+        let (dimension,): (i32,) = sqlx::query_as("SELECT vector_dims(embedding) FROM embeddings WHERE entity_id = $1")
+            .bind(fragment_id)
+            .fetch_one(&pool)
+            .await
+            .expect("read stored embedding back");
+        assert_eq!(dimension, 768);
     }
 }

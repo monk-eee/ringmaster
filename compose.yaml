@@ -29,6 +29,9 @@ services:
       # host-access DNS name; defaults to a local Ollama server.
       RINGMASTER_LLM_URL: ${RINGMASTER_LLM_URL:-http://host.containers.internal:11434/v1}
       RINGMASTER_MODEL: ${RINGMASTER_MODEL:-glm-4.7-flash:latest}
+      # ADR-0018: optional embedding adapter, same host and posture as above.
+      RINGMASTER_EMBEDDING_URL: ${RINGMASTER_EMBEDDING_URL:-http://host.containers.internal:11434/v1}
+      RINGMASTER_EMBEDDING_MODEL: ${RINGMASTER_EMBEDDING_MODEL:-nomic-embed-text}
     ports:
       - "8080:8080"
     depends_on:
