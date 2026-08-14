@@ -240,9 +240,15 @@ attention.
 
 ### The Daily Brief
 
-Imagine opening Ringmaster on a Monday morning. Not a count. A brief:
+Jira, Planner, ADO, Monday, even Copilot — all of them start with **Work**.
+Ringmaster should start with **Attention**. Imagine opening Ringmaster on a
+Monday morning. Not a count. A brief:
 
-> **Good morning, Lyndon.** You have 4 things needing attention.
+> **Good morning, Lyndon.**
+>
+> 4 things need attention today.
+> 2 will become risks this week.
+> 1 commitment appears forgotten.
 >
 > 1. **Transition Plan** — Roopa expectation. Due in 8 days. No evidence
 >    recorded.
@@ -258,15 +264,25 @@ Run the show" panels (Attention now, Future risk horizon, Commitments
 upward, People and team, Delivery and customer, Recently changed) from a
 dashboard grid into a single ranked, narrative brief.
 
-### Congruence over completion
+### Congruence over completion — "the killer widget"
 
 Not "what should I do?" but **"what should I do together?"** When several
 open items are actually one piece of context — a transition plan, an
 ownership review, service mapping, new team members — Ringmaster should
-notice they're connected and propose a themed block of focused work ("Spend
-90 minutes on Reorg Transition: ownership review, transition plan draft,
-onboarding notes, service allocation") rather than surfacing four
-unconnected tasks. This turns "manage tasks" into "manage context."
+notice they're connected and propose a themed block of focused work rather
+than surfacing four unconnected tasks:
+
+> **Suggested Focus Blocks**
+>
+> 🎯 **Reorg Transition** — these belong together: Transition Plan, Service
+> Ownership, New Team Members, Knowledge Transfer. Estimated effort: 90
+> mins. **[Start Focus Session]**
+
+The grouping isn't manual linking — it comes from the graph already
+knowing these share the same people, the same services, the same
+meetings, the same dates, and the same customer outcomes. monk-eee calls
+this "the most useful thing in the application." This turns "manage
+tasks" into "manage context."
 
 A longer-horizon version of this same idea is a **Congruence Engine**
 (working name; "Coherence Score" also considered): detecting when a stated
@@ -279,17 +295,25 @@ management *coherence*. This is a new concept beyond anything currently in
 signals and deserves its own future bounded ADR once the underlying
 obligation/work-item linkage exists to detect it from.
 
-### Context switching is the enemy
+### Context switching is the enemy — Focus Sessions
 
 Managers don't lose time doing work — they lose time switching between
 unrelated kinds of work (quality review → vacation request → onboarding →
 customer escalation → sprint planning → career discussion, back to back).
 Rather than one flat list, Ringmaster should cluster by management context
-— People, Delivery, Leadership, Operations — and name the expected focus
-time for each cluster ("People Work, 45 minutes: David onboarding, Hector
-growth discussion, team morale planning"). This is a different organizing
-principle than §8.1's panel-by-panel layout: cluster by *what kind of
-attention it takes*, not by entity type.
+— People, Delivery, Leadership, Operations — as an explicit **Focus
+Session** the manager starts on purpose:
+
+> **People Focus Session** — David onboarding, training follow-up,
+> recognition for Hector, career discussion with John, team morale
+> activity. Estimated 35 mins.
+>
+> **Leadership Focus Session** — Roopa commitments, transition plan, FY27
+> goals. Estimated 25 mins.
+
+Now the manager works *in* contexts instead of bouncing constantly. This is
+a different organizing principle than §8.1's panel-by-panel layout: cluster
+by *what kind of attention it takes*, not by entity type.
 
 ### The manager's workbench, not a dashboard
 
@@ -301,24 +325,115 @@ Three panes, not a dashboard grid:
 | Centre — Current focus | The selected item's owners, risks, evidence, related commitments. |
 | Right — Relationship context | The relevant person: open commitments, recent asks, next scheduled conversation. |
 
-### Timeline, not graph, not table, not kanban
+Concretely, selecting an item in the left pane fills the centre pane with
+its full context — urgency color-coded (🔴🟠🟡🟢), never a bare list:
+
+```
+ATTENTION NOW          CURRENT FOCUS
+🔴 Transition Plan     Transition Plan
+🟠 New Team Members      Due: 8 days · Counterparty: Roopa
+🟡 Leave Coverage        Related: Ownership review, Service allocation,
+🟢 Team Morale                    New team onboarding
+                         Risks: No draft located, No evidence in 8 days
+                         Evidence: Meeting transcript, Roopa 1:1
+```
+
+### Timeline, not graph, not table, not kanban — the Future Risk Horizon
 
 The whole thesis is `Date → Obligation → Risk`
 ([§6, Attention and risk engine](PRODUCT-SPEC.md#7-attention-and-risk-engine)).
 Managers think in time, not hierarchy or entity type. The default view
 worth building toward is a timeline — today, then each upcoming
 obligation/risk/milestone in date order — not a graph visualization, not an
-entity table, not a kanban board.
+entity table, not a kanban board:
+
+> **Future Problems**
+>
+> **Next 7 Days** — 🔴 Transition Plan (no evidence recorded); 🟠 Team
+> onboarding (no intro meetings completed).
+>
+> **Next 30 Days** — 🟡 John leave coverage (no successor identified); 🟡
+> Training follow-up (no activity recorded).
+>
+> **Next 90 Days** — 🟢 Connect cycle; 🟢 Service review cycle; 🟢 Team
+> morale checkpoint.
+
+Notice what's absent: no tasks, no epics, no stories. Problems.
 
 ### Relationship pages as external memory
 
 A dedicated page per person (Roopa, David, John, ...) showing: commitments
 made to them, requests from them, decisions involving them, risks affecting
-commitments connected to them, recent meetings, open follow-ups. This
-sharpens §8.2's "Entity view" (owner/counterparty/related people) into a
-first-class, person-centric page rather than a generic entity template —
-this *is* the organizational memory the [Organizational memory](#organizational-memory)
+commitments connected to them, recent meetings, open follow-ups:
+
+> **Roopa**
+>
+> Open Commitments (4) — Transition Plan, Ownership Review, Quality
+> Metrics, FY27 Alignment.
+> Recent Requests — Service visibility, Quality outcomes.
+> Upcoming — 1:1 Tuesday.
+> Risks — Transition plan evidence missing.
+> Last interaction — 3 days ago.
+
+A manager spends most of their time managing relationships, not entities —
+monk-eee expects "this view will be gold." This sharpens §8.2's "Entity
+view" (owner/counterparty/related people) into a first-class, person-
+centric page rather than a generic entity template — this *is* the
+organizational memory the [Organizational memory](#organizational-memory)
 section above describes, made concrete as a UI surface.
+
+### The home-screen formula
+
+Every morning, Ringmaster should answer exactly five questions:
+
+1. What needs attention today?
+2. What becomes risky soon?
+3. What am I likely forgetting?
+4. What should I tell my manager?
+5. **What should I do together?**
+
+The last one is unique to Ringmaster — no work-tracking tool asks it,
+because none of them model congruence across obligations in the first
+place.
+
+### Instruments, not dashboards
+
+What's worth stealing from flight simulators isn't a dashboard — it's
+instruments. A top bar showing overall **Attention Pressure** (a filled
+bar, not a number to optimize) alongside a load reading per management
+direction:
+
+```
+Attention Pressure  ██████░░░░
+
+People       6
+Delivery     4
+Leadership   8
+Operations   2
+```
+
+The point isn't to create stress or gamify a score — it's to answer
+*"where is managerial load accumulating?"* at a glance, the same way a
+pilot glances at instruments rather than reading a report.
+
+### One button: "What am I forgetting?"
+
+The most radical simplification of all: not search, not a query language,
+not a graph explorer. One button:
+
+> 🪄 **WHAT AM I FORGETTING?**
+
+which answers directly, in plain language:
+
+> - Training follow-up from 18 days ago
+> - Commitment to provide transition plan
+> - Team morale activity overdue
+> - John leave coverage unresolved
+
+This is the same underlying data
+([§9.2 attention_items](PRODUCT-SPEC.md#92-postgresql-and-pgvector),
+semantic search over embeddings) presented as a single, fearless
+interaction instead of a search box a manager has to know how to use.
 
 ### A reframed priority order
 
