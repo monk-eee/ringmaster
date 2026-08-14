@@ -19,13 +19,15 @@ use uuid::Uuid;
 /// plus the semantic search route (ADR-0019), plus the Daily Brief route
 /// (ADR-0022), plus the accept/reject candidate routes (ADR-0024), plus the
 /// node/edge write API and traversal routes (ADR-0025), plus the promote
-/// route (ADR-0027), plus the Time Horizon route (ADR-0029).
+/// route (ADR-0027), plus the Time Horizon route (ADR-0029), plus the
+/// Suggested Focus Blocks route (ADR-0031).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/obligations", get(list_obligations))
         .route("/api/daily-brief", get(daily_brief))
         .route("/api/time-horizon", get(time_horizon))
+        .route("/api/focus-blocks", get(focus_blocks))
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
@@ -243,6 +245,83 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
         .into();
 
     Ok(Json(body))
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct FocusBlockRow {
+    node_id: Uuid,
+    node_type: String,
+    canonical_text: String,
+    obligation_id: Uuid,
+    status: String,
+    hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    source_text: Option<String>,
+}
+
+/// Groups non-closed Obligations that share a linked node into a Suggested
+/// Focus Block (ADR-0031): reuses `daily_brief_reason` verbatim -- no new
+/// reasoning logic, no schema change. A node linked to fewer than two
+/// non-closed Obligations forms no block; a closed Obligation is never
+/// counted. Blocks are ordered by Obligation count descending, the closest
+/// thing to "significance" this data can honestly support. No estimated
+/// time, no "Start Focus Session" -- neither has real backing data.
+async fn focus_blocks(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let rows: Vec<FocusBlockRow> = sqlx::query_as(
+        "SELECT n.id AS node_id, n.node_type, n.canonical_text, \
+                op.obligation_id, op.status, op.hard_due_at, op.soft_due_at, sf.text AS source_text \
+         FROM nodes n \
+         JOIN edges e ON e.from_id = n.id OR e.to_id = n.id \
+         JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = n.id THEN e.to_id ELSE e.from_id END) \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE op.status <> 'closed'",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    struct Block {
+        node_type: String,
+        canonical_text: String,
+        obligations: std::collections::HashMap<Uuid, JsonValue>,
+    }
+
+    let mut blocks: std::collections::HashMap<Uuid, Block> = std::collections::HashMap::new();
+    for row in rows {
+        let reason = daily_brief_reason(&row.status, row.hard_due_at, row.soft_due_at, row.source_text.as_deref());
+        let entry = blocks.entry(row.node_id).or_insert_with(|| Block {
+            node_type: row.node_type.clone(),
+            canonical_text: row.canonical_text.clone(),
+            obligations: std::collections::HashMap::new(),
+        });
+        entry.obligations.insert(
+            row.obligation_id,
+            json!({
+                "obligation_id": row.obligation_id,
+                "status": row.status,
+                "hard_due_at": row.hard_due_at.map(|value| value.to_rfc3339()),
+                "soft_due_at": row.soft_due_at.map(|value| value.to_rfc3339()),
+                "reason": reason,
+            }),
+        );
+    }
+
+    let mut result: Vec<JsonValue> = blocks
+        .into_iter()
+        .filter(|(_, block)| block.obligations.len() >= 2)
+        .map(|(node_id, block)| {
+            json!({
+                "node_id": node_id,
+                "node_type": block.node_type,
+                "canonical_text": block.canonical_text,
+                "obligations": block.obligations.into_values().collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    result.sort_by_key(|block| std::cmp::Reverse(block["obligations"].as_array().map(|list| list.len()).unwrap_or(0)));
+
+    Ok(Json(json!(result)))
 }
 
 fn candidate_json(row: &CandidateProjection) -> JsonValue {
@@ -565,6 +644,8 @@ struct NeighborRow {
     to_id: Uuid,
     edge_type: String,
     confidence: Option<f32>,
+    valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    valid_to: Option<chrono::DateTime<chrono::Utc>>,
     neighbor_id: Option<Uuid>,
     neighbor_node_type: Option<String>,
     neighbor_canonical_text: Option<String>,
@@ -601,7 +682,7 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
     })?;
 
     let neighbors: Vec<NeighborRow> = sqlx::query_as(
-        "SELECT e.id, e.from_id, e.to_id, e.edge_type, e.confidence, \
+        "SELECT e.id, e.from_id, e.to_id, e.edge_type, e.confidence, e.valid_from, e.valid_to, \
                 n.id AS neighbor_id, n.node_type AS neighbor_node_type, n.canonical_text AS neighbor_canonical_text, \
                 op.obligation_id AS obligation_id, op.status AS obligation_status, \
                 op.hard_due_at AS obligation_hard_due_at, op.soft_due_at AS obligation_soft_due_at, \
@@ -649,6 +730,8 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
                 "to_id": row.to_id,
                 "edge_type": row.edge_type,
                 "confidence": row.confidence,
+                "valid_from": row.valid_from.map(|value| value.to_rfc3339()),
+                "valid_to": row.valid_to.map(|value| value.to_rfc3339()),
                 "neighbor": neighbor,
             })
         })
@@ -727,11 +810,18 @@ struct CreateEdgeRequest {
     to_id: Uuid,
     edge_type: String,
     confidence: Option<f32>,
+    #[serde(default)]
+    valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    supersede: bool,
 }
 
-/// Creates one edge between any two entity ids (ADR-0025/ADR-0009).
+/// Creates one edge between any two entity ids (ADR-0025/ADR-0009). An
+/// opt-in `supersede: true` closes out any prior current edge sharing this
+/// `from_id`/`edge_type` (ADR-0032); omitted or false leaves every existing
+/// caller's behavior unchanged.
 async fn create_edge_route(State(pool): State<PgPool>, Json(body): Json<CreateEdgeRequest>) -> Result<Response, (axum::http::StatusCode, String)> {
-    let id = graph::create_edge(&pool, body.from_id, body.to_id, &body.edge_type, body.confidence)
+    let id = graph::create_edge_with_options(&pool, body.from_id, body.to_id, &body.edge_type, body.confidence, body.valid_from, body.supersede)
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     let edge = graph::get_edge(&pool, id).await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -1608,6 +1698,71 @@ mod tests {
         assert_eq!(created["edge_type"], "collaborates_with");
     }
 
+    /// ADR-0032: supersede omitted (or false) leaves valid_from/valid_to
+    /// NULL, unchanged from every pre-ADR-0032 caller's behavior.
+    #[tokio::test]
+    async fn edge_create_route_without_supersede_leaves_valid_from_and_valid_to_null() {
+        let pool = test_pool().await;
+        let from_id = graph::create_node(&pool, "person", "Supersede Default Test From", json!({})).await.expect("create from-node");
+        let to_id = graph::create_node(&pool, "person", "Supersede Default Test To", json!({})).await.expect("create to-node");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/edges")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"from_id": from_id, "to_id": to_id, "edge_type": "lives_in"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(created["valid_from"], JsonValue::Null);
+        assert_eq!(created["valid_to"], JsonValue::Null);
+    }
+
+    /// ADR-0032: supersede: true closes the prior current edge sharing the
+    /// same (from_id, edge_type) but leaves a different edge_type on the
+    /// same from_id untouched -- matching is (from_id, edge_type) only, not
+    /// to_id, matching the LIVES_IN Barcelona -> Madrid example.
+    #[tokio::test]
+    async fn edge_create_route_with_supersede_closes_the_prior_current_edge_matching_from_id_and_edge_type() {
+        let pool = test_pool().await;
+        let user_id = graph::create_node(&pool, "person", "Supersede Test User", json!({})).await.expect("create user node");
+        let barcelona_id = graph::create_node(&pool, "city", "Barcelona", json!({})).await.expect("create barcelona node");
+        let madrid_id = graph::create_node(&pool, "city", "Madrid", json!({})).await.expect("create madrid node");
+        let risk_id = graph::create_node(&pool, "risk", "Unrelated Risk", json!({})).await.expect("create risk node");
+
+        let barcelona_edge_id = graph::create_edge(&pool, user_id, barcelona_id, "lives_in", None).await.expect("create initial lives_in edge");
+        let flagged_edge_id = graph::create_edge(&pool, user_id, risk_id, "flagged", None).await.expect("create an unrelated edge_type on the same from_id");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/edges")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"from_id": user_id, "to_id": madrid_id, "edge_type": "lives_in", "supersede": true}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert!(created["valid_from"].is_string(), "new current edge must carry a valid_from");
+        assert_eq!(created["valid_to"], JsonValue::Null, "the new edge is current");
+
+        let superseded = graph::get_edge(&pool, barcelona_edge_id).await.expect("fetch the superseded edge");
+        assert!(superseded.valid_to.is_some(), "the prior lives_in edge must be closed out");
+
+        let untouched = graph::get_edge(&pool, flagged_edge_id).await.expect("fetch the unrelated edge_type");
+        assert_eq!(untouched.valid_to, None, "a different edge_type on the same from_id must not be superseded");
+    }
+
     /// ADR-0029: buckets by effective due date, at-risk-with-no-date is the
     /// one exception (lands in overdue), and closed Obligations never appear.
     #[tokio::test]
@@ -1673,5 +1828,114 @@ mod tests {
                 assert!(items.iter().all(|row| row["obligation_id"] != closed_id.to_string()), "a closed obligation must never appear in any bucket");
             }
         }
+    }
+
+    /// ADR-0031: two non-closed Obligations linked to the same node form a
+    /// block; the shared node's identity and both Obligations' reasons
+    /// (reusing daily_brief_reason verbatim) are present.
+    #[tokio::test]
+    async fn focus_blocks_route_groups_by_shared_node() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Roopa", json!({})).await.expect("create person node");
+
+        let obligation_a = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, obligation_a, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append obligation a");
+        let obligation_b = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, obligation_b, crate::obligation::ObligationEventType::Created, json!({"status": "at_risk"}))
+            .await
+            .expect("append obligation b");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        graph::create_edge(&pool, person_id, obligation_a, "owns", None).await.expect("link obligation a");
+        graph::create_edge(&pool, obligation_b, person_id, "owns", None).await.expect("link obligation b");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/focus-blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let blocks = parsed.as_array().expect("response is a json array");
+        let block = blocks
+            .iter()
+            .find(|block| block["node_id"] == person_id.to_string())
+            .expect("a block for the shared person node must exist");
+        assert_eq!(block["node_type"], "person");
+        assert_eq!(block["canonical_text"], "Roopa");
+        let obligations = block["obligations"].as_array().expect("obligations is an array");
+        assert_eq!(obligations.len(), 2);
+        assert!(obligations.iter().any(|o| o["obligation_id"] == obligation_a.to_string()));
+        assert!(obligations.iter().any(|o| o["obligation_id"] == obligation_b.to_string() && o["reason"] == "Marked at risk. No evidence recorded."));
+    }
+
+    #[tokio::test]
+    async fn focus_blocks_route_forms_no_block_for_a_single_linked_obligation() {
+        let pool = test_pool().await;
+        let meeting_id = graph::create_node(&pool, "meeting", "Weekly sync", json!({})).await.expect("create meeting node");
+
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, obligation_id, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append obligation");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+        graph::create_edge(&pool, meeting_id, obligation_id, "discussed", None).await.expect("link obligation");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/focus-blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let blocks = parsed.as_array().expect("response is a json array");
+        assert!(
+            blocks.iter().all(|block| block["node_id"] != meeting_id.to_string()),
+            "a node linked to only one non-closed obligation must form no block"
+        );
+    }
+
+    #[tokio::test]
+    async fn focus_blocks_route_excludes_a_closed_obligation() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Closed Test Person", json!({})).await.expect("create person node");
+
+        let open_a = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, open_a, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append open obligation a");
+        let open_b = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, open_b, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append open obligation b");
+        let closed_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, closed_id, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append obligation to close");
+        crate::obligation::append_event(&pool, closed_id, crate::obligation::ObligationEventType::Closed, json!({}))
+            .await
+            .expect("close it");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        graph::create_edge(&pool, person_id, open_a, "owns", None).await.expect("link open obligation a");
+        graph::create_edge(&pool, person_id, open_b, "owns", None).await.expect("link open obligation b");
+        graph::create_edge(&pool, person_id, closed_id, "owns", None).await.expect("link closed obligation");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/focus-blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let blocks = parsed.as_array().expect("response is a json array");
+        let block = blocks
+            .iter()
+            .find(|block| block["node_id"] == person_id.to_string())
+            .expect("a block must still form from the two open obligations");
+        let obligations = block["obligations"].as_array().expect("obligations is an array");
+        assert_eq!(obligations.len(), 2, "the closed obligation must not be counted");
+        assert!(obligations.iter().all(|o| o["obligation_id"] != closed_id.to_string()), "the closed obligation must never appear in a block");
     }
 }

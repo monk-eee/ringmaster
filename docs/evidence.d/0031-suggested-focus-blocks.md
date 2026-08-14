@@ -10,33 +10,44 @@ adr = "0031-suggested-focus-blocks"
 
 [[check]]
 id = "focus-blocks-route-groups-by-shared-node"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once GET /api/focus-blocks groups non-closed Obligations that share a linked node."
+invariant = "GET /api/focus-blocks groups non-closed Obligations that share a linked node."
+type = "present"
+pattern = '"/api/focus-blocks"'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "single-linked-obligation-forms-no-block"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once a node linked to fewer than two non-closed Obligations is confirmed to form no block."
+invariant = "A node linked to fewer than two non-closed Obligations forms no block."
+type = "present"
+pattern = 'block.obligations.len\(\) >= 2'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "closed-excluded-from-focus-blocks"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once a closed Obligation is confirmed absent from every block and never counted toward the two-or-more threshold."
+invariant = "A closed Obligation is never counted or shown in any block."
+type = "present"
+pattern = "op.status <> 'closed'"
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "focus-blocks-card-exists"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the Daily Brief tab renders a Suggested Focus Blocks card."
+invariant = "The Daily Brief tab renders a Suggested Focus Blocks card."
+type = "present"
+pattern = 'export default function FocusBlocks'
+paths = ["frontend/src/components/FocusBlocks.tsx"]
 ```
 
 ## Notes
 
-Pre-implementation: all four checks are deliberately `manual`/unproven,
-per this repo's own convention (evidence stays honest about intent vs.
-proof until the ADR is accepted and implemented). Do not implement before
+All four checks are automated against the route module and frontend
+component that implement them. `cargo test` covers: two non-closed
+Obligations linked to the same node form a block with both reasons
+present (reusing `daily_brief_reason` verbatim); a node linked to only
+one non-closed Obligation forms no block; a closed Obligation is excluded
+from the count and from the block's obligation list even when two other
+open Obligations still form one. Verified live: linking two Obligations
+to the same person node via `POST /api/edges` produces a Suggested Focus
+Blocks card above the Daily Brief's ranked list. `tsc --noEmit`, `vite
+build`, and all 5 Playwright tests pass; 61/61 backend tests pass.
 [ADR-0031](../adr.d/0031-suggested-focus-blocks.md)'s Status flips to
 Accepted.

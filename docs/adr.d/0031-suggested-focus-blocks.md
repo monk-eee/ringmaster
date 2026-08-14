@@ -1,9 +1,9 @@
 # ADR-0031: Suggested Focus Blocks — group Obligations sharing a linked node
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accept and build"), 2026-08-14
 - **Depends on:** [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md), [ADR-0022](0022-daily-brief-endpoint.md), [ADR-0023](0023-evidence-backed-daily-brief-reasons.md), [ADR-0025](0025-node-edge-write-api-and-traversal.md), [ADR-0028](0028-person-relationship-view.md)
 - **Tags:** architecture, api, frontend, data-model
 

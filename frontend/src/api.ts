@@ -54,6 +54,21 @@ export type TimeHorizon = {
   beyond?: TimeHorizonItem[];
 };
 
+export type FocusBlockObligation = {
+  obligation_id: string;
+  status: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  reason: string;
+};
+
+export type FocusBlock = {
+  node_id: string;
+  node_type: string;
+  canonical_text: string;
+  obligations: FocusBlockObligation[];
+};
+
 export type GraphNode = {
   id: string;
   node_type: string;
@@ -68,6 +83,8 @@ export type NodeNeighbor = {
   to_id: string;
   edge_type: string;
   confidence: number | null;
+  valid_from: string | null;
+  valid_to: string | null;
   neighbor:
     | { id: string; node_type: string; canonical_text: string }
     | { id: string; type: "obligation"; status: string; hard_due_at: string | null; soft_due_at: string | null; reason: string }
@@ -93,6 +110,8 @@ export type Edge = {
   to_id: string;
   edge_type: string;
   confidence: number | null;
+  valid_from: string | null;
+  valid_to: string | null;
 };
 
 async function getJson<T>(path: string): Promise<T> {
@@ -149,6 +168,10 @@ export function fetchTimeHorizon(): Promise<TimeHorizon> {
   return getJson<TimeHorizon>("/api/time-horizon");
 }
 
+export function fetchFocusBlocks(): Promise<FocusBlock[]> {
+  return getJson<FocusBlock[]>("/api/focus-blocks");
+}
+
 export function acceptCandidate(candidateId: string): Promise<Candidate> {
   return postJson<Candidate>(`/api/candidates/${encodeURIComponent(candidateId)}/accept`);
 }
@@ -180,6 +203,6 @@ export function updateNode(
   return patchJson<GraphNode>(`/api/nodes/${encodeURIComponent(id)}`, patch);
 }
 
-export function createEdge(fromId: string, toId: string, edgeType: string, confidence?: number): Promise<Edge> {
-  return postJson<Edge>("/api/edges", { from_id: fromId, to_id: toId, edge_type: edgeType, confidence });
+export function createEdge(fromId: string, toId: string, edgeType: string, confidence?: number, supersede?: boolean): Promise<Edge> {
+  return postJson<Edge>("/api/edges", { from_id: fromId, to_id: toId, edge_type: edgeType, confidence, supersede });
 }

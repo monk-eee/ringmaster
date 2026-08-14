@@ -467,6 +467,13 @@ td.evidence-cell .no-evidence {
   gap: 1.5rem;
 }
 
+.focus-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
 .time-horizon {
   display: flex;
   flex-direction: column;

@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchCandidates,
   fetchDailyBrief,
+  fetchFocusBlocks,
   fetchObligations,
   fetchTimeHorizon,
   searchSourceFragments,
   type Candidate,
   type DailyBriefItem,
+  type FocusBlock,
   type Obligation,
   type SearchResult,
   type TimeHorizon as TimeHorizonData,
@@ -15,6 +17,7 @@ import ObligationsTable from "./components/ObligationsTable";
 import CandidatesTable from "./components/CandidatesTable";
 import SearchResults from "./components/SearchResults";
 import DailyBrief from "./components/DailyBrief";
+import FocusBlocks from "./components/FocusBlocks";
 import GraphExplorer from "./components/GraphExplorer";
 import TimeHorizon from "./components/TimeHorizon";
 
@@ -35,6 +38,7 @@ export default function App() {
   const [obligations, setObligations] = useState<Obligation[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [dailyBrief, setDailyBrief] = useState<DailyBriefItem[]>([]);
+  const [focusBlocks, setFocusBlocks] = useState<FocusBlock[]>([]);
   const [timeHorizon, setTimeHorizon] = useState<TimeHorizonData>({});
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
@@ -51,15 +55,17 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [nextObligations, nextCandidates, nextDailyBrief, nextTimeHorizon] = await Promise.all([
+      const [nextObligations, nextCandidates, nextDailyBrief, nextFocusBlocks, nextTimeHorizon] = await Promise.all([
         fetchObligations(),
         fetchCandidates(),
         fetchDailyBrief(),
+        fetchFocusBlocks(),
         fetchTimeHorizon(),
       ]);
       setObligations(nextObligations);
       setCandidates(nextCandidates);
       setDailyBrief(nextDailyBrief);
+      setFocusBlocks(nextFocusBlocks);
       setTimeHorizon(nextTimeHorizon);
     } catch (cause) {
       setError((cause as Error).message);
@@ -194,6 +200,7 @@ export default function App() {
               </button>
             </div>
             {error && <p className="error">Could not reach backend: {error}</p>}
+            <FocusBlocks blocks={focusBlocks} />
             <DailyBrief items={dailyBrief} />
           </>
         ) : (
