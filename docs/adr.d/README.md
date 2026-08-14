@@ -38,5 +38,5 @@ accepted and implemented.
 | [ADR-0018: Generate and store embeddings for source fragments](0018-generate-and-store-source-fragment-embeddings.md) | Accepted | [EV-0018](../evidence.d/0018-generate-and-store-source-fragment-embeddings.md) |
 | [ADR-0019: Semantic search over embedded source fragments](0019-semantic-search-over-source-fragments.md) | Accepted | [EV-0019](../evidence.d/0019-semantic-search-over-source-fragments.md) |
 | [ADR-0020: Add due-date fields to Obligation, the schema prerequisite for Epic E7](0020-obligation-due-date-fields.md) | Accepted | [EV-0020](../evidence.d/0020-obligation-due-date-fields.md) |
-| [ADR-0021: Ratify surfacing semantic search in the frontend SPA (retroactive)](0021-ratify-search-tab-surfaced-without-its-own-adr.md) | Proposed | [EV-0021](../evidence.d/0021-ratify-search-tab-surfaced-without-its-own-adr.md) |
-| [ADR-0022: A read-only Daily Brief endpoint — Obligations ranked by urgency](0022-daily-brief-endpoint.md) | Proposed | [EV-0022](../evidence.d/0022-daily-brief-endpoint.md) |
+| [ADR-0021: Ratify surfacing semantic search in the frontend SPA (retroactive)](0021-ratify-search-tab-surfaced-without-its-own-adr.md) | Accepted | [EV-0021](../evidence.d/0021-ratify-search-tab-surfaced-without-its-own-adr.md) |
+| [ADR-0022: A read-only Daily Brief endpoint — Obligations ranked by urgency](0022-daily-brief-endpoint.md) | Accepted | [EV-0022](../evidence.d/0022-daily-brief-endpoint.md) |
