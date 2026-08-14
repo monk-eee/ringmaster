@@ -1,5 +1,6 @@
 import type { Obligation } from "../api";
 import StatusBadge from "./StatusBadge";
+import { typeIcon } from "../icons";
 
 type Props = { obligations: Obligation[] };
 
@@ -25,8 +26,18 @@ export default function ObligationsTable({ obligations }: Props) {
         <tbody>
           {obligations.map((o) => (
             <tr key={o.obligation_id}>
-              <td className="id-cell">
-                <code title={o.obligation_id}>{o.obligation_id.slice(0, 8)}…</code>
+              <td className="obligation-title-cell">
+                <span className="type-icon" aria-hidden="true">
+                  {typeIcon("obligation")}
+                </span>
+                {o.source_text ? (
+                  <span className="obligation-title">"{o.source_text}"</span>
+                ) : (
+                  <span className="no-evidence">No evidence recorded</span>
+                )}
+                <code className="id-marker" title={o.obligation_id}>
+                  {o.obligation_id.slice(0, 8)}…
+                </code>
               </td>
               <td>
                 <StatusBadge value={o.status} />

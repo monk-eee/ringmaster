@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createEdge, createNode, fetchNodeDetail, fetchNodes, updateNode, type GraphNode, type NodeDetail, type NodeNeighbor, type RelationshipObligation } from "../api";
 import StatusBadge from "./StatusBadge";
+import { typeIcon } from "../icons";
 
 const RADIUS = 120;
 const CENTER = 160;
@@ -263,7 +264,7 @@ export default function GraphExplorer() {
                 <li key={node.id}>
                   <button className={node.id === selectedNodeId ? "node-list-button node-list-button-active" : "node-list-button"} onClick={() => loadDetail(node.id)}>
                     <span className="node-type-tag" style={{ background: nodeTypeColors(node.node_type).bg, color: nodeTypeColors(node.node_type).fg }}>
-                      {node.node_type}
+                      <span aria-hidden="true">{typeIcon(node.node_type)}</span> {node.node_type}
                     </span>{" "}
                     {node.canonical_text}
                   </button>
@@ -285,7 +286,7 @@ export default function GraphExplorer() {
             <>
               <h3>
                 <span className="node-type-tag" style={{ background: nodeTypeColors(detail.node_type).bg, color: nodeTypeColors(detail.node_type).fg }}>
-                  {detail.node_type}
+                  <span aria-hidden="true">{typeIcon(detail.node_type)}</span> {detail.node_type}
                 </span>{" "}
                 {detail.canonical_text}
               </h3>
@@ -319,6 +320,7 @@ export default function GraphExplorer() {
                   const x = CENTER + RADIUS * Math.cos(angle);
                   const y = CENTER + RADIUS * Math.sin(angle);
                   const label = isNodeNeighbor(neighbor.neighbor) ? neighbor.neighbor.canonical_text : neighbor.neighbor ? "Obligation" : "Unknown";
+                  const labelIcon = isNodeNeighbor(neighbor.neighbor) ? typeIcon(neighbor.neighbor.node_type) : neighbor.neighbor ? typeIcon("obligation") : "";
                   const midX = (CENTER + x) / 2;
                   const midY = (CENTER + y) / 2 - 4;
                   const pillWidth = estimateTextWidth(neighbor.edge_type, 10) + 12;
@@ -343,7 +345,7 @@ export default function GraphExplorer() {
                         onClick={isNodeNeighbor(neighbor.neighbor) ? () => loadDetail(neighbor.neighbor!.id) : undefined}
                       />
                       <text x={x} y={y + 32} textAnchor="middle" className="relationship-node-label">
-                        {label.length > 14 ? `${label.slice(0, 14)}…` : label}
+                        {labelIcon} {label.length > 14 ? `${label.slice(0, 14)}…` : label}
                       </text>
                     </g>
                   );
@@ -357,7 +359,7 @@ export default function GraphExplorer() {
                   style={{ fill: nodeTypeColors(detail.node_type).bg, stroke: nodeTypeColors(detail.node_type).fg }}
                 />
                 <text x={CENTER} y={CENTER + 40} textAnchor="middle" className="relationship-node-label">
-                  {detail.canonical_text.length > 14 ? `${detail.canonical_text.slice(0, 14)}…` : detail.canonical_text}
+                  {typeIcon(detail.node_type)} {detail.canonical_text.length > 14 ? `${detail.canonical_text.slice(0, 14)}…` : detail.canonical_text}
                 </text>
               </svg>
               <p className="relationship-count">

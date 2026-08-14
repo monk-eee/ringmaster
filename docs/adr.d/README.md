@@ -47,4 +47,4 @@ accepted and implemented.
 | [ADR-0027: Promote an accepted candidate into an Obligation](0027-promote-accepted-candidate-to-obligation.md) | Accepted | [EV-0027](../evidence.d/0027-promote-accepted-candidate-to-obligation.md) |
 | [ADR-0028: Person relationship view — resolve linked Obligations into a per-person page](0028-person-relationship-view.md) | Accepted | [EV-0028](../evidence.d/0028-person-relationship-view.md) |
 | [ADR-0029: Time Horizon view — Obligations bucketed by due-date window](0029-time-horizon-view.md) | Accepted | [EV-0029](../evidence.d/0029-time-horizon-view.md) |
-| [ADR-0030: Human-readable titles and type iconography across the UI](0030-human-readable-titles-and-type-iconography.md) | Proposed | [EV-0030](../evidence.d/0030-human-readable-titles-and-type-iconography.md) |
+| [ADR-0030: Human-readable titles and type iconography across the UI](0030-human-readable-titles-and-type-iconography.md) | Accepted | [EV-0030](../evidence.d/0030-human-readable-titles-and-type-iconography.md) |

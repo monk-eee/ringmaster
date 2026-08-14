@@ -2,6 +2,10 @@ export type Obligation = {
   obligation_id: string;
   status: string;
   updated_at: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  source_fragment_id: string | null;
+  source_text: string | null;
 };
 
 export type Candidate = {
@@ -30,6 +34,7 @@ export type DailyBriefItem = {
   soft_due_at: string | null;
   updated_at: string;
   reason: string;
+  source_fragment_id: string | null;
 };
 
 export type TimeHorizonItem = {

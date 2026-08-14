@@ -1,11 +1,8 @@
 import type { DailyBriefItem } from "../api";
 import StatusBadge from "./StatusBadge";
+import { typeIcon } from "../icons";
 
 type Props = { items: DailyBriefItem[] };
-
-function shortId(id: string): string {
-  return `${id.slice(0, 8)}…`;
-}
 
 export default function DailyBrief({ items }: Props) {
   if (items.length === 0) {
@@ -25,8 +22,13 @@ export default function DailyBrief({ items }: Props) {
         {items.map((item) => (
           <li key={item.obligation_id}>
             <div className="daily-brief-row">
-              <code title={item.obligation_id}>{shortId(item.obligation_id)}</code>
+              <span className="type-icon" aria-hidden="true">
+                {typeIcon("obligation")}
+              </span>
               <StatusBadge value={item.status} />
+              <code className="id-marker" title={item.obligation_id}>
+                {item.obligation_id.slice(0, 8)}…
+              </code>
             </div>
             <span className="daily-brief-reason">{item.reason}</span>
           </li>

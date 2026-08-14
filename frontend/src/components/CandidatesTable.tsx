@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { acceptCandidate, promoteCandidate, rejectCandidate, type Candidate } from "../api";
+import { typeIcon } from "../icons";
 
 type Props = { candidates: Candidate[]; onChanged: () => void };
 
@@ -45,7 +46,12 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
         <tbody>
           {candidates.map((c) => (
             <tr key={c.candidate_id}>
-              <td>{c.candidate_type}</td>
+              <td>
+                <span className="type-icon" aria-hidden="true">
+                  {typeIcon(c.candidate_type)}
+                </span>
+                {c.candidate_type}
+              </td>
               <td>{c.statement}</td>
               <td>{c.validation_state}</td>
               <td>{Math.round(c.confidence * 100)}%</td>
