@@ -40,3 +40,4 @@ accepted and implemented.
 | [ADR-0020: Add due-date fields to Obligation, the schema prerequisite for Epic E7](0020-obligation-due-date-fields.md) | Accepted | [EV-0020](../evidence.d/0020-obligation-due-date-fields.md) |
 | [ADR-0021: Ratify surfacing semantic search in the frontend SPA (retroactive)](0021-ratify-search-tab-surfaced-without-its-own-adr.md) | Accepted | [EV-0021](../evidence.d/0021-ratify-search-tab-surfaced-without-its-own-adr.md) |
 | [ADR-0022: A read-only Daily Brief endpoint — Obligations ranked by urgency](0022-daily-brief-endpoint.md) | Accepted | [EV-0022](../evidence.d/0022-daily-brief-endpoint.md) |
+| [ADR-0023: Evidence-backed Daily Brief reasons — source-fragment traceability on Obligation](0023-evidence-backed-daily-brief-reasons.md) | Proposed | [EV-0023](../evidence.d/0023-evidence-backed-daily-brief-reasons.md) |
