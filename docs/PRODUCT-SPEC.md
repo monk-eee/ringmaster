@@ -332,7 +332,9 @@ performance metrics.
 > clustering, a workbench layout, timeline-first navigation, per-person
 > relationship pages) not yet reflected in this versioned section. Treat
 > this note as a pointer for a future revision, not an amendment to the
-> spec below.
+> spec below. The meeting-to-memory journey and progressive relationship
+> graph are developed in
+> [RELATIONSHIP-GRAPH-DESIGN.md](RELATIONSHIP-GRAPH-DESIGN.md).
 
 ### 8.1 Home: "Run the show"
 

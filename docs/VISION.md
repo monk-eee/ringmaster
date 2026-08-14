@@ -382,6 +382,116 @@ centric page rather than a generic entity template — this *is* the
 organizational memory the [Organizational memory](#organizational-memory)
 section above describes, made concrete as a UI surface.
 
+### A meeting enters as a proposed subgraph
+
+The intended starting workflow is ordinary management work. Lyndon has a
+meeting with his manager, Roopa Venkat, and gives the transcript to an agent
+through Ringmaster's MCP or CLI surface. The durable output is not another
+meeting summary. It is a proposed addition to organizational memory:
+
+```text
+Roopa Venkat ── attended ──> Weekly 1:1
+Weekly 1:1 ── contains ──> Transcript fragment
+Roopa Venkat ── requested ──> Transition plan
+Lyndon ── owns ──> Transition plan
+Transition plan ── originated from ──> Weekly 1:1
+Transition plan ── supported by ──> Exact transcript fragment
+Transition plan ── expected by ──> Next 1:1
+```
+
+The agent extracts people, meetings, actions, requests, obligations,
+decisions, risks, expectations, dates, documents, and the relationships
+between them. A useful agent-facing grammar is **source → relationship →
+destination**. In the product, however, these are typed, directed
+relationships rendered as ordinary language — "Roopa requested the
+transition plan" — rather than abstract database labels.
+
+The proposal retains the meeting, exact quoted fragments, speaker, time,
+confidence, and extraction history. The interface presents the transcript
+beside the proposed items; selecting an item highlights its supporting
+passage. The manager can accept, correct, merge, or reject it. Accepted
+items become durable memory and flow into the relevant relationship page,
+Daily Brief, and Future Risk Horizon. Model suggestions remain visibly
+different from accepted facts.
+
+The ingestion boundary should feel atomic and repeatable from the agent's
+perspective: submit one meeting and its proposed subgraph, rather than issue
+a loose series of unrelated low-level writes. The eventual implementation
+details — batch contract, identity resolution, idempotency, and promotion
+rules — require bounded ADRs. The product intent is clear regardless: MCP
+or CLI is the ingestion surface; the web experience is where evidence is
+reviewed and attention is directed.
+
+### The graph as progressive exploration
+
+The graph is not only hidden machinery. It can also be a primary memory and
+discovery surface when it is traversed deliberately, one meaningful step at
+a time. The fuller interaction design is captured in
+[Relationship Memory and Progressive Graph Design](RELATIONSHIP-GRAPH-DESIGN.md).
+Opening Roopa starts with Roopa and her immediate neighbours.
+Selecting the Weekly 1:1 makes that meeting the new centre and enriches it
+with participants, transcript evidence, extracted actions, decisions,
+risks, related documents, and adjacent meetings. Selecting a Product Docs
+Archive mentioned in that meeting makes the archive the new centre and
+reveals the documents, decisions, obligations, people, and history connected
+to it.
+
+```text
+Roopa Venkat
+    └── attended ──> Weekly 1:1
+                           └── discussed ──> Product Docs Archive
+                                                    └── informed ──> Migration decision
+                                                                            └── created ──> Migration obligation
+```
+
+The traversal path remains visible and reversible:
+
+```text
+Roopa > Weekly 1:1 > Product Docs Archive > Migration decision
+```
+
+Every selected node becomes a suitably enriched object, not merely a label
+in a diagram. Its detail surface answers:
+
+- What is this?
+- Why is it connected to the place I started?
+- What happened before?
+- What is true now?
+- What actions or risks are open?
+- What happens next?
+- Which sources support this account?
+
+The default neighbourhood is one hop. The manager can widen it to three,
+ten, or another useful distance, but depth is not permission to dump the
+entire graph onto the screen. Each extra hop is progressively disclosed,
+ranked, and constrained by the current question. A broad ten-hop enquiry is
+better expressed as "find the strongest paths between Roopa and the Product
+Docs Archive" than as thousands of simultaneously rendered nodes.
+
+Useful traversal controls include:
+
+- **Distance** — one hop, two, three, or a custom reach.
+- **Direction** — incoming, outgoing, or both.
+- **Time** — current truth, full history, or truth as of a chosen date.
+- **Relationship lens** — actions, people, meetings, documents, risks, or
+  everything.
+- **Evidence posture** — accepted facts only or accepted facts plus model
+  suggestions.
+
+Visual language should preserve trust. Current accepted relationships are
+solid. Superseded relationships remain available in history. Suggested or
+semantically discovered relationships are visibly provisional — for
+example, dashed — and can be inspected, accepted, or rejected. Every
+important connection can explain itself through a readable path and source
+evidence.
+
+This produces two synchronized experiences over the same memory. The
+relationship page gives an opinionated **past → present → future** account
+of working with Roopa. The progressive graph lets the manager leave that
+account and follow the context wherever it leads. The graph is not a
+decorative network visualization and not an engineer-only CRUD screen. It
+is a navigable model of organizational memory.
+
 ### The home-screen formula
 
 Every morning, Ringmaster should answer exactly five questions:
