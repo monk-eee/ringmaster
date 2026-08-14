@@ -204,6 +204,33 @@ pub async fn get_source_fragment(pool: &PgPool, id: Uuid) -> Result<SourceFragme
         .await
 }
 
+#[derive(Debug, Clone, FromRow, serde::Serialize)]
+pub struct MeetingFragment {
+    pub id: Uuid,
+    pub text: String,
+    pub speaker: Option<String>,
+    pub sequence: Option<i32>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Reads one meeting's source fragments in transcript turn order
+/// (ADR-0036). Orders by `sequence` when present -- every fragment
+/// ingested via `ingest_transcript` since this ADR has one -- falling back
+/// to `created_at`/`id` for any fragment created before this column
+/// existed. `created_at` alone is unreliable within one ingestion
+/// transaction because Postgres's `now()` is the transaction start time,
+/// not a per-statement time, so fragments from the same ingestion call can
+/// share an identical timestamp.
+pub async fn list_source_fragments_by_meeting(pool: &PgPool, meeting_id: Uuid) -> Result<Vec<MeetingFragment>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, text, speaker, sequence, created_at FROM source_fragments \
+         WHERE source_id = $1 ORDER BY sequence ASC NULLS LAST, created_at ASC, id ASC",
+    )
+    .bind(meeting_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Embeds and stores one named source fragment (ADR-0018). Reads the
 /// fragment's own immutable text, calls the configured embedding adapter,
 /// and inserts one `embeddings` row. Never automatic on ingestion --

@@ -53,3 +53,5 @@ accepted and implemented.
 | [ADR-0033: Progressive graph traversal trail over one-hop neighborhoods](0033-progressive-graph-traversal-trail.md) | Accepted | [EV-0033](../evidence.d/0033-progressive-graph-traversal-trail.md) |
 | [ADR-0034: Expose atomic meeting-transcript ingestion over HTTP](0034-http-meeting-transcript-ingestion.md) | Accepted | [EV-0034](../evidence.d/0034-http-meeting-transcript-ingestion.md) |
 | [ADR-0035: Time Horizon timeline view — an alternative, zoomable presentation of the existing bucketed data](0035-time-horizon-timeline-view.md) | Accepted | [EV-0035](../evidence.d/0035-time-horizon-timeline-view.md) |
+| [ADR-0036: Meeting detail read — one meeting with its ordered transcript fragments](0036-meeting-detail-read.md) | Accepted | [EV-0036](../evidence.d/0036-meeting-detail-read.md) |
+| [ADR-0037: Meeting-scoped candidate listing and extraction progress](0037-meeting-scoped-candidate-listing.md) | Accepted | [EV-0037](../evidence.d/0037-meeting-scoped-candidate-listing.md) |

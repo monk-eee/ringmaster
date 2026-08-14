@@ -81,16 +81,17 @@ pub async fn ingest_transcript(
     .await?;
 
     let mut fragment_ids = Vec::new();
-    for turn in parse_transcript(raw_text) {
+    for (sequence, turn) in parse_transcript(raw_text).into_iter().enumerate() {
         let hash = sha256_hex(&turn.text);
         let (fragment_id,): (Uuid,) = sqlx::query_as(
-            "INSERT INTO source_fragments (source_id, text, speaker, hash) \
-             VALUES ($1, $2, $3, $4) RETURNING id",
+            "INSERT INTO source_fragments (source_id, text, speaker, hash, sequence) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id",
         )
         .bind(meeting_id)
         .bind(&turn.text)
         .bind(&turn.speaker)
         .bind(&hash)
+        .bind(sequence as i32)
         .fetch_one(&mut *tx)
         .await?;
         fragment_ids.push(fragment_id);

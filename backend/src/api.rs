@@ -21,7 +21,8 @@ use uuid::Uuid;
 /// node/edge write API and traversal routes (ADR-0025), plus the promote
 /// route (ADR-0027), plus the Time Horizon route (ADR-0029), plus the
 /// Suggested Focus Blocks route (ADR-0031), plus the atomic meeting-ingestion
-/// route (ADR-0034).
+/// route (ADR-0034), plus the meeting detail read (ADR-0036), plus the
+/// meeting-scoped candidate listing route (ADR-0037).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -30,6 +31,8 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/time-horizon", get(time_horizon))
         .route("/api/focus-blocks", get(focus_blocks))
         .route("/api/meetings/ingest", post(ingest_meeting))
+        .route("/api/meetings/:id", get(get_meeting_detail))
+        .route("/api/meetings/:id/candidates", get(get_meeting_candidates))
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
@@ -125,11 +128,50 @@ fn daily_brief_reason(
     format!("{due_clause} {evidence_clause}")
 }
 
+const STALE_THRESHOLD_DAYS: i64 = 14;
+const DATE_COMPRESSION_WINDOW_DAYS: i64 = 7;
+
+/// Risk Engine v1 (ADR-0036): the two of PRODUCT-SPEC.md §7.1's nine signals
+/// derivable today with zero schema change and zero fabricated data. Each
+/// signal is independent and additive -- no combined severity score is
+/// computed here, since weighting them together needs a model this ADR does
+/// not decide.
+fn risk_signals(
+    hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    source_fragment_id: Option<Uuid>,
+) -> Vec<JsonValue> {
+    let mut signals = Vec::new();
+
+    if let (Some(due), None) = (hard_due_at.or(soft_due_at), source_fragment_id) {
+        let days = (due - chrono::Utc::now()).num_days();
+        if days <= DATE_COMPRESSION_WINDOW_DAYS {
+            let explanation = if days < 0 {
+                format!("Overdue by {} day(s) with no evidence linked.", -days)
+            } else {
+                format!("Due in {days} day(s) with no evidence linked.")
+            };
+            signals.push(json!({ "signal": "date_compression", "explanation": explanation }));
+        }
+    }
+
+    let stale_days = (chrono::Utc::now() - updated_at).num_days();
+    if stale_days > STALE_THRESHOLD_DAYS {
+        signals.push(json!({
+            "signal": "stale",
+            "explanation": format!("No update in {stale_days} day(s) (stale threshold: {STALE_THRESHOLD_DAYS})."),
+        }));
+    }
+
+    signals
+}
+
 /// Ranks non-closed obligations by urgency and states a plain, deterministic
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
 /// ORDER BY, not a scoring model. Joins read-only against `source_fragments`
-/// for evidence (ADR-0023).
+/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0036).
 async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -165,6 +207,7 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
                 "source_fragment_id": source_fragment_id,
                 "reason": reason,
+                "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id),
             })
         })
         .collect::<Vec<_>>();
@@ -202,7 +245,7 @@ fn time_horizon_bucket(status: &str, hard_due_at: Option<chrono::DateTime<chrono
 /// evidence join and `daily_brief_reason` the Daily Brief already uses --
 /// this is a different lens (when it's due) on the same data, not a new
 /// scoring model. Soonest-due-first within each bucket; an empty bucket is
-/// simply omitted from the response.
+/// simply omitted from the response. Also attaches `risk_signals` (ADR-0036).
 async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -237,6 +280,7 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
             "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
             "source_fragment_id": source_fragment_id,
             "reason": reason,
+            "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id),
         }));
     }
 
@@ -370,6 +414,132 @@ async fn ingest_meeting(State(pool): State<PgPool>, Json(body): Json<IngestMeeti
         })),
     )
         .into_response())
+}
+
+/// Reads one meeting and its transcript fragments in turn order (ADR-0036).
+/// 404s for an unknown id or a node that isn't a meeting -- this route's
+/// contract is specifically a meeting, not any node type. Read-only.
+async fn get_meeting_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let node = graph::get_node(&pool, id).await.map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "meeting not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+    if node.node_type != "meeting" {
+        return Err((axum::http::StatusCode::NOT_FOUND, "meeting not found".to_string()));
+    }
+
+    let fragments = graph::list_source_fragments_by_meeting(&pool, id)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok(Json(json!({
+        "id": node.id,
+        "canonical_text": node.canonical_text,
+        "attributes": node.attributes,
+        "fragments": fragments.into_iter().map(|fragment| json!({
+            "id": fragment.id,
+            "text": fragment.text,
+            "speaker": fragment.speaker,
+            "sequence": fragment.sequence,
+            "created_at": fragment.created_at.to_rfc3339(),
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+/// Read model for `GET /api/meetings/:id/candidates` only (ADR-0037): one
+/// row per (fragment, candidate) pair, left-joined so a fragment with no
+/// candidate yet still appears once with every candidate column NULL.
+#[derive(Debug, Clone, FromRow)]
+struct MeetingFragmentCandidateRow {
+    fragment_id: Uuid,
+    sequence: Option<i32>,
+    speaker: Option<String>,
+    fragment_text: String,
+    candidate_id: Option<Uuid>,
+    candidate_type: Option<String>,
+    statement: Option<String>,
+    validation_state: Option<String>,
+    confidence: Option<f32>,
+}
+
+/// Lists one meeting's fragments with their extracted candidates, if any,
+/// plus fragment-level extraction progress (ADR-0037). 404s exactly like
+/// `GET /api/meetings/:id` (ADR-0036): unknown id or a non-meeting node.
+/// Read-only; triggers no extraction.
+async fn get_meeting_candidates(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let node = graph::get_node(&pool, id).await.map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "meeting not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+    if node.node_type != "meeting" {
+        return Err((axum::http::StatusCode::NOT_FOUND, "meeting not found".to_string()));
+    }
+
+    let rows: Vec<MeetingFragmentCandidateRow> = sqlx::query_as(
+        "SELECT sf.id AS fragment_id, sf.sequence, sf.speaker, sf.text AS fragment_text, \
+                cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence \
+         FROM source_fragments sf \
+         LEFT JOIN candidate_projection cp ON cp.source_fragment_id = sf.id \
+         WHERE sf.source_id = $1 \
+         ORDER BY sf.sequence ASC NULLS LAST, sf.created_at ASC, sf.id ASC, cp.candidate_id ASC",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    // Groups the flat join back into one entry per fragment, preserving
+    // transcript order, without assuming exactly one candidate per fragment.
+    let mut fragment_order: Vec<Uuid> = Vec::new();
+    let mut fragment_data: std::collections::HashMap<Uuid, (Option<i32>, Option<String>, String, Vec<JsonValue>)> = std::collections::HashMap::new();
+    let mut by_validation_state: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+
+    for row in &rows {
+        let entry = fragment_data.entry(row.fragment_id).or_insert_with(|| {
+            fragment_order.push(row.fragment_id);
+            (row.sequence, row.speaker.clone(), row.fragment_text.clone(), Vec::new())
+        });
+        if let Some(candidate_id) = row.candidate_id {
+            entry.3.push(json!({
+                "candidate_id": candidate_id,
+                "candidate_type": row.candidate_type,
+                "statement": row.statement,
+                "validation_state": row.validation_state,
+                "confidence": row.confidence,
+            }));
+            if let Some(state) = &row.validation_state {
+                *by_validation_state.entry(state.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let fragment_count = fragment_order.len() as i64;
+    let extracted_fragment_count = fragment_order.iter().filter(|fragment_id| !fragment_data[fragment_id].3.is_empty()).count() as i64;
+
+    let fragments: Vec<JsonValue> = fragment_order
+        .iter()
+        .map(|fragment_id| {
+            let (sequence, speaker, text, candidates) = &fragment_data[fragment_id];
+            json!({
+                "fragment_id": fragment_id,
+                "sequence": sequence,
+                "speaker": speaker,
+                "text": text,
+                "candidates": candidates,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "meeting_id": id,
+        "fragments": fragments,
+        "progress": {
+            "fragment_count": fragment_count,
+            "extracted_fragment_count": extracted_fragment_count,
+            "pending_fragment_count": fragment_count - extracted_fragment_count,
+            "by_validation_state": by_validation_state,
+        },
+    })))
 }
 
 fn candidate_json(row: &CandidateProjection) -> JsonValue {
@@ -894,6 +1064,51 @@ mod tests {
             .expect("connect to test database")
     }
 
+    /// ADR-0036: risk_signals is a pure function -- no database, no
+    /// flakiness -- covering both signals independently and together.
+    #[test]
+    fn risk_signals_flags_date_compression_when_due_soon_with_no_evidence() {
+        let due = chrono::Utc::now() + chrono::Duration::days(3);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None);
+        assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
+    }
+
+    #[test]
+    fn risk_signals_does_not_flag_date_compression_when_evidence_is_linked() {
+        let due = chrono::Utc::now() + chrono::Duration::days(3);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()));
+        assert!(signals.iter().all(|signal| signal["signal"] != "date_compression"));
+    }
+
+    #[test]
+    fn risk_signals_does_not_flag_date_compression_when_due_date_is_far_out() {
+        let due = chrono::Utc::now() + chrono::Duration::days(30);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None);
+        assert!(signals.is_empty());
+    }
+
+    #[test]
+    fn risk_signals_flags_stale_when_untouched_past_threshold() {
+        let updated_at = chrono::Utc::now() - chrono::Duration::days(20);
+        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()));
+        assert!(signals.iter().any(|signal| signal["signal"] == "stale"));
+    }
+
+    #[test]
+    fn risk_signals_does_not_flag_stale_within_threshold() {
+        let updated_at = chrono::Utc::now() - chrono::Duration::days(2);
+        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()));
+        assert!(signals.is_empty());
+    }
+
+    #[test]
+    fn risk_signals_can_flag_both_signals_at_once() {
+        let due = chrono::Utc::now() - chrono::Duration::days(1);
+        let updated_at = chrono::Utc::now() - chrono::Duration::days(20);
+        let signals = risk_signals(Some(due), None, updated_at, None);
+        assert_eq!(signals.len(), 2);
+    }
+
     #[tokio::test]
     async fn health_route_returns_ok() {
         let pool = test_pool().await;
@@ -1156,6 +1371,40 @@ mod tests {
         let unevidenced_row = rows.iter().find(|row| row["obligation_id"] == without_evidence.to_string()).expect("present");
         assert_eq!(unevidenced_row["reason"], "Marked at risk. No evidence recorded.");
         assert!(unevidenced_row["source_fragment_id"].is_null());
+    }
+
+    /// ADR-0036: the Daily Brief attaches risk_signals to each row, computed
+    /// from the same fields the reason string already uses.
+    #[tokio::test]
+    async fn daily_brief_route_attaches_risk_signals() {
+        let pool = test_pool().await;
+
+        let compressed = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            compressed,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": (chrono::Utc::now() + chrono::Duration::days(2)).to_rfc3339()}),
+        )
+        .await
+        .expect("append obligation due soon with no evidence");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/daily-brief").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["obligation_id"] == compressed.to_string())
+            .expect("the just-created obligation must be present");
+        let signals = row["risk_signals"].as_array().expect("risk_signals must be an array");
+        assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
     }
 
     #[tokio::test]
@@ -1878,6 +2127,39 @@ mod tests {
         }
     }
 
+    /// ADR-0036: the Time Horizon route attaches the same risk_signals field.
+    #[tokio::test]
+    async fn time_horizon_route_attaches_risk_signals() {
+        let pool = test_pool().await;
+
+        let overdue_no_evidence = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            overdue_no_evidence,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339()}),
+        )
+        .await
+        .expect("append overdue obligation with no evidence");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/time-horizon").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row = parsed["overdue"]
+            .as_array()
+            .expect("overdue bucket must be present")
+            .iter()
+            .find(|row| row["obligation_id"] == overdue_no_evidence.to_string())
+            .expect("the just-created obligation must be present in overdue");
+        let signals = row["risk_signals"].as_array().expect("risk_signals must be an array");
+        assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
+    }
+
     /// ADR-0031: two non-closed Obligations linked to the same node form a
     /// block; the shared node's identity and both Obligations' reasons
     /// (reusing daily_brief_reason verbatim) are present.
@@ -2115,5 +2397,71 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 0, "ingestion must never create a candidate on its own");
+    }
+
+    /// ADR-0036: reads a meeting back with its fragments in transcript turn
+    /// order, proving the new `sequence` column (not `created_at` alone,
+    /// which can tie within one ingestion transaction) drives the order.
+    #[tokio::test]
+    async fn get_meeting_detail_route_returns_meeting_and_ordered_fragments() {
+        let pool = test_pool().await;
+        let request_body = json!({
+            "title": "Ordered Fragments Test",
+            "transcript": "Roopa: first turn.\nLyndon: second turn.\nRoopa: third turn.",
+        });
+        let ingest_response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/meetings/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ingest_response.status(), axum::http::StatusCode::CREATED);
+        let ingest_body = axum::body::to_bytes(ingest_response.into_body(), usize::MAX).await.unwrap();
+        let ingested: JsonValue = serde_json::from_slice(&ingest_body).expect("valid json body");
+        let meeting_id = ingested["meeting_id"].as_str().expect("meeting_id is a string");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/meetings/{meeting_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        assert_eq!(parsed["canonical_text"], "Ordered Fragments Test");
+        let fragments = parsed["fragments"].as_array().expect("fragments is an array");
+        assert_eq!(fragments.len(), 3);
+        assert_eq!(fragments[0]["text"], "first turn.");
+        assert_eq!(fragments[1]["text"], "second turn.");
+        assert_eq!(fragments[2]["text"], "third turn.");
+        assert_eq!(fragments[0]["sequence"], 0);
+        assert_eq!(fragments[1]["sequence"], 1);
+        assert_eq!(fragments[2]["sequence"], 2);
+    }
+
+    /// ADR-0036: this route's contract is specifically a meeting, so an
+    /// unknown id and an existing-but-wrong-type node both 404.
+    #[tokio::test]
+    async fn meeting_detail_route_404s_for_a_non_meeting_node() {
+        let pool = test_pool().await;
+
+        let unknown_id = uuid::Uuid::new_v4();
+        let unknown_response = app(pool.clone())
+            .oneshot(Request::builder().uri(format!("/api/meetings/{unknown_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(unknown_response.status(), axum::http::StatusCode::NOT_FOUND);
+
+        let person_id = graph::create_node(&pool, "person", "Not A Meeting", json!({})).await.expect("create person node");
+        let wrong_type_response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/meetings/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(wrong_type_response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 }
