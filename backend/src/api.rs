@@ -33,7 +33,9 @@ async fn health() -> &'static str {
 }
 
 /// Reads the current `obligation_projection` rows (ADR-0005/ADR-0012). Never
-/// writes; the projection remains the sole source this route reflects.
+/// writes; the projection remains the sole source this route reflects. Joins
+/// read-only against the immutable `source_fragments` table for evidence
+/// (ADR-0023), the same treatment ADR-0015 already gave `GET /api/candidates`.
 async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -42,9 +44,14 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
         Option<chrono::DateTime<chrono::Utc>>,
+        Option<uuid::Uuid>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT obligation_id, status, updated_at, hard_due_at, soft_due_at \
-         FROM obligation_projection ORDER BY updated_at DESC",
+        "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
+                op.source_fragment_id, sf.text \
+         FROM obligation_projection op \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         ORDER BY op.updated_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -52,13 +59,15 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
 
     let body = rows
         .into_iter()
-        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at)| {
+        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text)| {
             json!({
                 "obligation_id": obligation_id,
                 "status": status,
                 "updated_at": updated_at.to_rfc3339(),
                 "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+                "source_fragment_id": source_fragment_id,
+                "source_text": source_text,
             })
         })
         .collect::<Vec<_>>();
@@ -66,31 +75,47 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
     Ok(Json(json!(body)))
 }
 
-/// A deterministic, evidence-free reason for one Daily Brief item (ADR-0022).
-/// Never cites evidence or groups obligations together -- neither is data
-/// this route has; see the ADR's explicit scope.
-fn daily_brief_reason(status: &str, hard_due_at: Option<chrono::DateTime<chrono::Utc>>, soft_due_at: Option<chrono::DateTime<chrono::Utc>>) -> String {
-    if status == "at_risk" {
-        return "Marked at risk.".to_string();
-    }
-    if let Some(due) = hard_due_at {
+/// A deterministic reason for one Daily Brief item (ADR-0022), with a second
+/// evidence clause added by ADR-0023: cites the linked source fragment's
+/// text when present, or states plainly that none is recorded. Never
+/// fabricates evidence or groups obligations together.
+fn daily_brief_reason(
+    status: &str,
+    hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    source_text: Option<&str>,
+) -> String {
+    let due_clause = if status == "at_risk" {
+        "Marked at risk.".to_string()
+    } else if let Some(due) = hard_due_at {
         let days = (due - chrono::Utc::now()).num_days();
-        return if days < 0 {
+        if days < 0 {
             format!("Overdue by {} day(s).", -days)
         } else {
             format!("Due in {days} day(s).")
-        };
-    }
-    if let Some(due) = soft_due_at {
-        return format!("Expected around {}.", due.format("%Y-%m-%d"));
-    }
-    "No due date recorded.".to_string()
+        }
+    } else if let Some(due) = soft_due_at {
+        format!("Expected around {}.", due.format("%Y-%m-%d"))
+    } else {
+        "No due date recorded.".to_string()
+    };
+
+    let evidence_clause = match source_text {
+        Some(text) => {
+            let truncated: String = text.chars().take(80).collect();
+            format!("Last evidence: \"{truncated}\".")
+        }
+        None => "No evidence recorded.".to_string(),
+    };
+
+    format!("{due_clause} {evidence_clause}")
 }
 
 /// Ranks non-closed obligations by urgency and states a plain, deterministic
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
-/// ORDER BY, not a scoring model.
+/// ORDER BY, not a scoring model. Joins read-only against `source_fragments`
+/// for evidence (ADR-0023).
 async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -99,12 +124,16 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
         chrono::DateTime<chrono::Utc>,
         Option<chrono::DateTime<chrono::Utc>>,
         Option<chrono::DateTime<chrono::Utc>>,
+        Option<uuid::Uuid>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT obligation_id, status, updated_at, hard_due_at, soft_due_at \
-         FROM obligation_projection \
-         WHERE status <> 'closed' \
-         ORDER BY (status = 'at_risk') DESC, hard_due_at ASC NULLS LAST, \
-                  soft_due_at ASC NULLS LAST, updated_at DESC",
+        "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
+                op.source_fragment_id, sf.text \
+         FROM obligation_projection op \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE op.status <> 'closed' \
+         ORDER BY (op.status = 'at_risk') DESC, op.hard_due_at ASC NULLS LAST, \
+                  op.soft_due_at ASC NULLS LAST, op.updated_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -112,14 +141,15 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
 
     let body = rows
         .into_iter()
-        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at)| {
-            let reason = daily_brief_reason(&status, hard_due_at, soft_due_at);
+        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text)| {
+            let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
             json!({
                 "obligation_id": obligation_id,
                 "status": status,
                 "updated_at": updated_at.to_rfc3339(),
                 "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+                "source_fragment_id": source_fragment_id,
                 "reason": reason,
             })
         })
@@ -338,6 +368,93 @@ mod tests {
         assert!(row["soft_due_at"].is_null(), "an unset soft_due_at must serialize as null, not be omitted");
     }
 
+    /// ADR-0023: GET /api/obligations must surface source_fragment_id/source_text.
+    #[tokio::test]
+    async fn obligations_route_includes_source_fragment_evidence() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(
+            &pool,
+            uuid::Uuid::new_v4(),
+            "We committed to a two-week transition plan.",
+            "obligation-evidence-test-hash",
+        )
+        .await
+        .expect("create source fragment");
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "source_fragment_id": fragment_id.to_string()}),
+        )
+        .await
+        .expect("append created event with a linked source fragment");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/obligations").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["obligation_id"] == obligation_id.to_string())
+            .expect("the just-created obligation must be present");
+        assert_eq!(row["source_fragment_id"], fragment_id.to_string());
+        assert_eq!(row["source_text"], "We committed to a two-week transition plan.");
+    }
+
+    /// ADR-0023: the Daily Brief's reason cites linked evidence, or says
+    /// plainly that none is recorded -- it never fabricates either.
+    #[tokio::test]
+    async fn daily_brief_reason_cites_evidence_when_linked_and_states_none_when_not() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(
+            &pool,
+            uuid::Uuid::new_v4(),
+            "We committed to a two-week transition plan.",
+            "daily-brief-evidence-test-hash",
+        )
+        .await
+        .expect("create source fragment");
+
+        let with_evidence = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            with_evidence,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "source_fragment_id": fragment_id.to_string()}),
+        )
+        .await
+        .expect("append obligation linked to evidence");
+
+        let without_evidence = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, without_evidence, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append obligation without evidence");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/daily-brief").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let rows = parsed.as_array().unwrap();
+        let with_row = rows.iter().find(|row| row["obligation_id"] == with_evidence.to_string()).expect("linked obligation present");
+        let without_row = rows.iter().find(|row| row["obligation_id"] == without_evidence.to_string()).expect("unlinked obligation present");
+        assert_eq!(with_row["reason"], "No due date recorded. Last evidence: \"We committed to a two-week transition plan.\".");
+        assert_eq!(without_row["reason"], "No due date recorded. No evidence recorded.");
+    }
+
     /// ADR-0022: at-risk outranks any due date, closed is excluded entirely.
     #[tokio::test]
     async fn daily_brief_ranks_at_risk_first_and_excludes_closed() {
@@ -395,7 +512,56 @@ mod tests {
             at_risk_index.unwrap() < far_future_index.unwrap(),
             "at_risk must outrank an open obligation with a due date, however distant"
         );
-        assert_eq!(rows[at_risk_index.unwrap()]["reason"], "Marked at risk.");
+        assert_eq!(rows[at_risk_index.unwrap()]["reason"], "Marked at risk. No evidence recorded.");
+    }
+
+    /// ADR-0023: the reason cites the linked source fragment's text, or
+    /// states plainly that none is recorded.
+    #[tokio::test]
+    async fn daily_brief_reason_cites_linked_evidence() {
+        let pool = test_pool().await;
+        let meeting_id = uuid::Uuid::new_v4();
+        let fragment_id = graph::create_source_fragment(&pool, meeting_id, "Roopa: please send the transition plan.", "brief-evidence-hash")
+            .await
+            .expect("create source fragment");
+
+        let with_evidence = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            with_evidence,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "at_risk", "source_fragment_id": fragment_id.to_string()}),
+        )
+        .await
+        .expect("append obligation with linked evidence");
+
+        let without_evidence = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            without_evidence,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "at_risk"}),
+        )
+        .await
+        .expect("append obligation with no linked evidence");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/daily-brief").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let rows = parsed.as_array().unwrap();
+
+        let evidenced_row = rows.iter().find(|row| row["obligation_id"] == with_evidence.to_string()).expect("present");
+        assert_eq!(evidenced_row["reason"], "Marked at risk. Last evidence: \"Roopa: please send the transition plan.\".");
+        assert_eq!(evidenced_row["source_fragment_id"], fragment_id.to_string());
+
+        let unevidenced_row = rows.iter().find(|row| row["obligation_id"] == without_evidence.to_string()).expect("present");
+        assert_eq!(unevidenced_row["reason"], "Marked at risk. No evidence recorded.");
+        assert!(unevidenced_row["source_fragment_id"].is_null());
     }
 
     #[tokio::test]

@@ -1,9 +1,9 @@
 # ADR-0023: Evidence-backed Daily Brief reasons — source-fragment traceability on Obligation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accept continue"), 2026-08-14
 - **Depends on:** [ADR-0010](0010-transcript-ingestion-parsing-chunking-provenance.md), [ADR-0015](0015-expose-source-fragment-traceability-on-candidates.md), [ADR-0020](0020-obligation-due-date-fields.md), [ADR-0022](0022-daily-brief-endpoint.md)
 - **Tags:** architecture, data-model, api, attention-horizon
 
