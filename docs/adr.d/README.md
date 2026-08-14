@@ -55,3 +55,4 @@ accepted and implemented.
 | [ADR-0035: Time Horizon timeline view — an alternative, zoomable presentation of the existing bucketed data](0035-time-horizon-timeline-view.md) | Accepted | [EV-0035](../evidence.d/0035-time-horizon-timeline-view.md) |
 | [ADR-0036: Meeting detail read — one meeting with its ordered transcript fragments](0036-meeting-detail-read.md) | Accepted | [EV-0036](../evidence.d/0036-meeting-detail-read.md) |
 | [ADR-0037: Meeting-scoped candidate listing and extraction progress](0037-meeting-scoped-candidate-listing.md) | Accepted | [EV-0037](../evidence.d/0037-meeting-scoped-candidate-listing.md) |
+| [ADR-0038: Wire up audit_events for candidate validation actions](0038-wire-up-audit-events-for-candidate-validation.md) | Proposed | [EV-0038](../evidence.d/0038-wire-up-audit-events-for-candidate-validation.md) |
