@@ -15,11 +15,13 @@ use uuid::Uuid;
 
 /// Builds the HTTP API: `/health` and the read-only `/api/obligations`
 /// (ADR-0012), plus `/api/candidates` and the extraction trigger (ADR-0013),
-/// plus the semantic search route (ADR-0019).
+/// plus the semantic search route (ADR-0019), plus the Daily Brief route
+/// (ADR-0022).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/obligations", get(list_obligations))
+        .route("/api/daily-brief", get(daily_brief))
         .route("/api/candidates", get(list_candidates))
         .route("/api/source-fragments/:id/extract", post(extract_source_fragment))
         .route("/api/search", get(search))
@@ -57,6 +59,68 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
                 "updated_at": updated_at.to_rfc3339(),
                 "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!(body)))
+}
+
+/// A deterministic, evidence-free reason for one Daily Brief item (ADR-0022).
+/// Never cites evidence or groups obligations together -- neither is data
+/// this route has; see the ADR's explicit scope.
+fn daily_brief_reason(status: &str, hard_due_at: Option<chrono::DateTime<chrono::Utc>>, soft_due_at: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    if status == "at_risk" {
+        return "Marked at risk.".to_string();
+    }
+    if let Some(due) = hard_due_at {
+        let days = (due - chrono::Utc::now()).num_days();
+        return if days < 0 {
+            format!("Overdue by {} day(s).", -days)
+        } else {
+            format!("Due in {days} day(s).")
+        };
+    }
+    if let Some(due) = soft_due_at {
+        return format!("Expected around {}.", due.format("%Y-%m-%d"));
+    }
+    "No due date recorded.".to_string()
+}
+
+/// Ranks non-closed obligations by urgency and states a plain, deterministic
+/// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
+/// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
+/// ORDER BY, not a scoring model.
+async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        uuid::Uuid,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> = sqlx::query_as(
+        "SELECT obligation_id, status, updated_at, hard_due_at, soft_due_at \
+         FROM obligation_projection \
+         WHERE status <> 'closed' \
+         ORDER BY (status = 'at_risk') DESC, hard_due_at ASC NULLS LAST, \
+                  soft_due_at ASC NULLS LAST, updated_at DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let body = rows
+        .into_iter()
+        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at)| {
+            let reason = daily_brief_reason(&status, hard_due_at, soft_due_at);
+            json!({
+                "obligation_id": obligation_id,
+                "status": status,
+                "updated_at": updated_at.to_rfc3339(),
+                "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
+                "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+                "reason": reason,
             })
         })
         .collect::<Vec<_>>();
@@ -272,6 +336,66 @@ mod tests {
             .expect("the just-created obligation must be present");
         assert_eq!(row["hard_due_at"], "2026-09-01T00:00:00+00:00");
         assert!(row["soft_due_at"].is_null(), "an unset soft_due_at must serialize as null, not be omitted");
+    }
+
+    /// ADR-0022: at-risk outranks any due date, closed is excluded entirely.
+    #[tokio::test]
+    async fn daily_brief_ranks_at_risk_first_and_excludes_closed() {
+        let pool = test_pool().await;
+
+        let far_future_open = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            far_future_open,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": "2030-01-01T00:00:00Z"}),
+        )
+        .await
+        .expect("append open obligation with a distant due date");
+
+        let at_risk_no_date = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            at_risk_no_date,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "at_risk"}),
+        )
+        .await
+        .expect("append at_risk obligation with no due date");
+
+        let closed = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, closed, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append obligation to be closed");
+        crate::obligation::append_event(&pool, closed, crate::obligation::ObligationEventType::Closed, json!({}))
+            .await
+            .expect("close it");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/daily-brief").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let rows = parsed.as_array().unwrap();
+
+        assert!(
+            rows.iter().all(|row| row["obligation_id"] != closed.to_string()),
+            "a closed obligation must never appear in the Daily Brief"
+        );
+
+        let at_risk_index = rows.iter().position(|row| row["obligation_id"] == at_risk_no_date.to_string());
+        let far_future_index = rows.iter().position(|row| row["obligation_id"] == far_future_open.to_string());
+        assert!(at_risk_index.is_some() && far_future_index.is_some(), "both open items must be present");
+        assert!(
+            at_risk_index.unwrap() < far_future_index.unwrap(),
+            "at_risk must outrank an open obligation with a due date, however distant"
+        );
+        assert_eq!(rows[at_risk_index.unwrap()]["reason"], "Marked at risk.");
     }
 
     #[tokio::test]

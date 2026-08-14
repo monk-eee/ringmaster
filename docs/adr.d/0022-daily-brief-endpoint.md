@@ -1,9 +1,9 @@
 # ADR-0022: A read-only Daily Brief endpoint — Obligations ranked by urgency
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accept continue"), 2026-08-14
 - **Depends on:** [ADR-0012](0012-minimal-http-api-and-node-web-front-end.md), [ADR-0020](0020-obligation-due-date-fields.md)
 - **Tags:** architecture, api, attention-horizon
 
