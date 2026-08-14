@@ -92,6 +92,7 @@ export default function GraphExplorer() {
 
   const [edgeTargetId, setEdgeTargetId] = useState("");
   const [edgeType, setEdgeType] = useState("");
+  const [supersede, setSupersede] = useState(false);
   const [linking, setLinking] = useState(false);
 
   async function loadNodes() {
@@ -176,9 +177,10 @@ export default function GraphExplorer() {
     setError(null);
     setLinking(true);
     try {
-      await createEdge(selectedNodeId, edgeTargetId, edgeType.trim());
+      await createEdge(selectedNodeId, edgeTargetId, edgeType.trim(), undefined, supersede);
       setEdgeTargetId("");
       setEdgeType("");
+      setSupersede(false);
       await loadDetail(selectedNodeId);
     } catch (cause) {
       setError((cause as Error).message);
@@ -323,7 +325,14 @@ export default function GraphExplorer() {
                   const labelIcon = isNodeNeighbor(neighbor.neighbor) ? typeIcon(neighbor.neighbor.node_type) : neighbor.neighbor ? typeIcon("obligation") : "";
                   const midX = (CENTER + x) / 2;
                   const midY = (CENTER + y) / 2 - 4;
-                  const pillWidth = estimateTextWidth(neighbor.edge_type, 10) + 12;
+                  // ADR-0032: a closed validity window is superseded (dashed/muted); an open one with a known start is current (solid, dated).
+                  const superseded = neighbor.valid_to !== null;
+                  const pillLabel = superseded
+                    ? `${neighbor.edge_type} · until ${new Date(neighbor.valid_to!).toLocaleDateString()}`
+                    : neighbor.valid_from !== null
+                    ? `${neighbor.edge_type} · since ${new Date(neighbor.valid_from).toLocaleDateString()}`
+                    : neighbor.edge_type;
+                  const pillWidth = estimateTextWidth(pillLabel, 10) + 12;
                   const neighborColor = isNodeNeighbor(neighbor.neighbor)
                     ? nodeTypeColors(neighbor.neighbor.node_type)
                     : neighbor.neighbor
@@ -331,10 +340,16 @@ export default function GraphExplorer() {
                     : { bg: "#e9eaef", fg: "#9aa1ae" };
                   return (
                     <g key={neighbor.edge_id}>
-                      <line x1={CENTER} y1={CENTER} x2={x} y2={y} className="relationship-edge" />
+                      <line
+                        x1={CENTER}
+                        y1={CENTER}
+                        x2={x}
+                        y2={y}
+                        className={superseded ? "relationship-edge relationship-edge-superseded" : "relationship-edge"}
+                      />
                       <rect x={midX - pillWidth / 2} y={midY - 9} width={pillWidth} height={14} rx={7} className="relationship-edge-pill" />
                       <text x={midX} y={midY + 1} className="relationship-edge-label" textAnchor="middle">
-                        {neighbor.edge_type}
+                        {pillLabel}
                       </text>
                       <circle
                         cx={x}
@@ -392,6 +407,10 @@ export default function GraphExplorer() {
                   ))}
                 </select>
                 <input placeholder="Relationship (e.g. made, owns)" value={edgeType} onChange={(event) => setEdgeType(event.target.value)} />
+                <label className="supersede-checkbox">
+                  <input type="checkbox" checked={supersede} onChange={(event) => setSupersede(event.target.checked)} />
+                  Replace any current relationship of this type
+                </label>
                 <button type="submit" disabled={linking || !edgeTargetId || !edgeType.trim()}>
                   {linking ? "Linking…" : "Add relationship"}
                 </button>

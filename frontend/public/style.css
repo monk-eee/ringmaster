@@ -742,6 +742,12 @@ td.evidence-cell .no-evidence {
   stroke-width: 2;
 }
 
+.relationship-edge-superseded {
+  stroke: var(--muted);
+  stroke-dasharray: 4 3;
+  opacity: 0.6;
+}
+
 .relationship-edge-pill {
   fill: var(--accent-strong);
   opacity: 0.92;

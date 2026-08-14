@@ -19,6 +19,8 @@ pub struct Edge {
     pub to_id: Uuid,
     pub edge_type: String,
     pub confidence: Option<f32>,
+    pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -107,7 +109,8 @@ pub async fn update_node(
 
 /// Creates one edge between any two entity ids (ADR-0009). `from_id`/`to_id`
 /// may each be a `nodes.id` or an Obligation's `obligation_id`; nothing
-/// enforces that at the database level.
+/// enforces that at the database level. `valid_from`/`valid_to` are always
+/// NULL; use `create_edge_with_options` for temporal validity (ADR-0032).
 pub async fn create_edge(
     pool: &PgPool,
     from_id: Uuid,
@@ -127,8 +130,51 @@ pub async fn create_edge(
     Ok(id)
 }
 
+/// Creates one edge, optionally superseding a prior current edge of the same
+/// `(from_id, edge_type)` (ADR-0032). When `supersede` is false, behavior is
+/// byte-for-byte identical to `create_edge`: `valid_from`/`valid_to` stay
+/// NULL. When true, in one transaction: every existing edge sharing this
+/// `from_id`/`edge_type` with a NULL `valid_to` (still current) has its
+/// `valid_to` set to this new edge's `valid_from` (defaulting to `now()`),
+/// then the new edge is inserted current (NULL `valid_to`). Matching is
+/// deliberately on `(from_id, edge_type)` only, not `to_id` -- "this node
+/// has one current fact of this type," not "this exact link."
+pub async fn create_edge_with_options(
+    pool: &PgPool,
+    from_id: Uuid,
+    to_id: Uuid,
+    edge_type: &str,
+    confidence: Option<f32>,
+    valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    supersede: bool,
+) -> Result<Uuid, sqlx::Error> {
+    if !supersede {
+        return create_edge(pool, from_id, to_id, edge_type, confidence).await;
+    }
+    let valid_from = valid_from.unwrap_or_else(chrono::Utc::now);
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE edges SET valid_to = $1 WHERE from_id = $2 AND edge_type = $3 AND valid_to IS NULL")
+        .bind(valid_from)
+        .bind(from_id)
+        .bind(edge_type)
+        .execute(&mut *tx)
+        .await?;
+    let (id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO edges (from_id, to_id, edge_type, confidence, valid_from) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(from_id)
+    .bind(to_id)
+    .bind(edge_type)
+    .bind(confidence)
+    .bind(valid_from)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
 pub async fn get_edge(pool: &PgPool, id: Uuid) -> Result<Edge, sqlx::Error> {
-    sqlx::query_as("SELECT id, from_id, to_id, edge_type, confidence FROM edges WHERE id = $1")
+    sqlx::query_as("SELECT id, from_id, to_id, edge_type, confidence, valid_from, valid_to FROM edges WHERE id = $1")
         .bind(id)
         .fetch_one(pool)
         .await

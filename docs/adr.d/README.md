@@ -48,5 +48,5 @@ accepted and implemented.
 | [ADR-0028: Person relationship view — resolve linked Obligations into a per-person page](0028-person-relationship-view.md) | Accepted | [EV-0028](../evidence.d/0028-person-relationship-view.md) |
 | [ADR-0029: Time Horizon view — Obligations bucketed by due-date window](0029-time-horizon-view.md) | Accepted | [EV-0029](../evidence.d/0029-time-horizon-view.md) |
 | [ADR-0030: Human-readable titles and type iconography across the UI](0030-human-readable-titles-and-type-iconography.md) | Accepted | [EV-0030](../evidence.d/0030-human-readable-titles-and-type-iconography.md) |
-| [ADR-0031: Suggested Focus Blocks — group Obligations sharing a linked node](0031-suggested-focus-blocks.md) | Proposed | [EV-0031](../evidence.d/0031-suggested-focus-blocks.md) |
+| [ADR-0031: Suggested Focus Blocks — group Obligations sharing a linked node](0031-suggested-focus-blocks.md) | Accepted | [EV-0031](../evidence.d/0031-suggested-focus-blocks.md) |
 | [ADR-0032: Wire up edge temporal validity — supersede-on-write and relationship history in the Graph Explorer](0032-temporal-edge-validity-supersede-on-write.md) | Accepted | [EV-0032](../evidence.d/0032-temporal-edge-validity-supersede-on-write.md) |
