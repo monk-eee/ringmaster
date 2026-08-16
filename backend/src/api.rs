@@ -39,6 +39,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
+        .route("/api/candidates/:id/correct", post(correct_candidate))
         .route("/api/candidates/:id/promote", post(promote_candidate))
         .route("/api/source-fragments/:id/extract", post(extract_source_fragment))
         .route("/api/search", get(search))
@@ -138,12 +139,15 @@ const DATE_COMPRESSION_WINDOW_DAYS: i64 = 7;
 /// signals derivable today with zero schema change and zero fabricated
 /// data. Each signal is independent and additive -- no combined severity
 /// score is computed here, since weighting them together needs a model
-/// this ADR does not decide.
+/// this ADR does not decide. `has_owner` (ADR-0046) is computed by the
+/// caller from the existing `edges` table, not by this function -- it
+/// stays pure and directly unit-testable.
 fn risk_signals(
     hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
     soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
     updated_at: chrono::DateTime<chrono::Utc>,
     source_fragment_id: Option<Uuid>,
+    has_owner: bool,
 ) -> Vec<JsonValue> {
     let mut signals = Vec::new();
 
@@ -167,6 +171,10 @@ fn risk_signals(
         }));
     }
 
+    if !has_owner {
+        signals.push(json!({ "signal": "unowned", "explanation": "No owner linked." }));
+    }
+
     signals
 }
 
@@ -174,7 +182,7 @@ fn risk_signals(
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
 /// ORDER BY, not a scoring model. Joins read-only against `source_fragments`
-/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0041).
+/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0041/ADR-0046).
 async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -185,9 +193,14 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
         Option<chrono::DateTime<chrono::Utc>>,
         Option<uuid::Uuid>,
         Option<String>,
+        bool,
     )> = sqlx::query_as(
         "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
-                op.source_fragment_id, sf.text \
+                op.source_fragment_id, sf.text, \
+                EXISTS ( \
+                    SELECT 1 FROM edges e JOIN nodes n ON n.id = e.from_id \
+                    WHERE e.to_id = op.obligation_id AND e.edge_type = 'owns' AND n.node_type = 'person' \
+                ) AS has_owner \
          FROM obligation_projection op \
          LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
          WHERE op.status <> 'closed' \
@@ -200,7 +213,7 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
 
     let body = rows
         .into_iter()
-        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text)| {
+        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner)| {
             let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
             json!({
                 "obligation_id": obligation_id,
@@ -210,7 +223,7 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
                 "source_fragment_id": source_fragment_id,
                 "reason": reason,
-                "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id),
+                "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner),
             })
         })
         .collect::<Vec<_>>();
@@ -248,7 +261,7 @@ fn time_horizon_bucket(status: &str, hard_due_at: Option<chrono::DateTime<chrono
 /// evidence join and `daily_brief_reason` the Daily Brief already uses --
 /// this is a different lens (when it's due) on the same data, not a new
 /// scoring model. Soonest-due-first within each bucket; an empty bucket is
-/// simply omitted from the response. Also attaches `risk_signals` (ADR-0041).
+/// simply omitted from the response. Also attaches `risk_signals` (ADR-0041/ADR-0046).
 async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -259,9 +272,14 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
         Option<chrono::DateTime<chrono::Utc>>,
         Option<uuid::Uuid>,
         Option<String>,
+        bool,
     )> = sqlx::query_as(
         "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
-                op.source_fragment_id, sf.text \
+                op.source_fragment_id, sf.text, \
+                EXISTS ( \
+                    SELECT 1 FROM edges e JOIN nodes n ON n.id = e.from_id \
+                    WHERE e.to_id = op.obligation_id AND e.edge_type = 'owns' AND n.node_type = 'person' \
+                ) AS has_owner \
          FROM obligation_projection op \
          LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
          WHERE op.status <> 'closed' \
@@ -272,7 +290,7 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     let mut buckets: std::collections::HashMap<&'static str, Vec<JsonValue>> = std::collections::HashMap::new();
-    for (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text) in rows {
+    for (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner) in rows {
         let bucket = time_horizon_bucket(&status, hard_due_at, soft_due_at);
         let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
         buckets.entry(bucket).or_default().push(json!({
@@ -283,7 +301,7 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
             "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
             "source_fragment_id": source_fragment_id,
             "reason": reason,
-            "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id),
+            "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner),
         }));
     }
 
@@ -758,11 +776,112 @@ async fn reject_candidate(
     transition_candidate_route(&pool, id, "rejected").await
 }
 
-/// Promotes an `accepted` candidate into a new Obligation (ADR-0027).
-/// `409` unless the candidate is currently `accepted` -- promotion is
-/// one-way, matching accept/reject's own one-way 409 semantics. The new
-/// Obligation carries the candidate's `source_fragment_id` forward as its
-/// own evidence link (ADR-0023); no due date is implied by a candidate.
+#[derive(Debug, Deserialize)]
+struct CorrectCandidateRequest {
+    candidate_type: Option<String>,
+    statement: Option<String>,
+}
+
+/// Corrects a candidate still in the `candidate` state (ADR-0045): edits
+/// `candidate_type` and/or `statement` before transitioning to `corrected`,
+/// a distinct outcome from `accepted` (PRODUCT-SPEC.md §6.4) that still
+/// promotes exactly like `accepted` does. At least one field must actually
+/// change, or the request is rejected as a meaningless correction rather
+/// than a silent no-op event.
+async fn correct_candidate(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CorrectCandidateRequest>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let current: CandidateWithSource = sqlx::query_as(
+        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
+         FROM candidate_projection cp \
+         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+         WHERE cp.candidate_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "candidate not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+
+    if current.validation_state != "candidate" {
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            format!("candidate is already \"{}\", not \"candidate\"", current.validation_state),
+        ));
+    }
+
+    if let Some(candidate_type) = &body.candidate_type {
+        if !extraction::ALLOWED_CANDIDATE_TYPES.contains(&candidate_type.as_str()) {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("candidate_type must be one of {:?}, got {:?}", extraction::ALLOWED_CANDIDATE_TYPES, candidate_type),
+            ));
+        }
+    }
+
+    let type_changed = body.candidate_type.as_deref().is_some_and(|value| value != current.candidate_type);
+    let statement_changed = body.statement.as_deref().is_some_and(|value| !value.trim().is_empty() && value != current.statement);
+    if !type_changed && !statement_changed {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "a correction must actually change candidate_type or statement".to_string()));
+    }
+
+    let mut payload = serde_json::Map::new();
+    if type_changed {
+        payload.insert("candidate_type".to_string(), json!(body.candidate_type));
+    }
+    if statement_changed {
+        payload.insert("statement".to_string(), json!(body.statement));
+    }
+
+    // ADR-0038: the correction event and its audit row commit atomically.
+    let mut tx = pool.begin().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    extraction::transition_candidate(&mut *tx, id, "corrected", JsonValue::Object(payload.clone()))
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    audit::record(
+        &mut *tx,
+        "local-operator",
+        "candidate_corrected",
+        Some(json!({"candidate_type": current.candidate_type, "statement": current.statement})),
+        Some(JsonValue::Object(payload)),
+        "http_api",
+        "allowed",
+    )
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    tx.commit().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    extraction::rebuild_candidate_projection(&pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let updated: CandidateWithSource = sqlx::query_as(
+        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
+         FROM candidate_projection cp \
+         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+         WHERE cp.candidate_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok(Json(candidate_with_source_json(&updated)))
+}
+
+/// Promotes an `accepted` or `corrected` candidate into a new Obligation
+/// (ADR-0027, extended by ADR-0045 to also accept `corrected`). `409`
+/// unless the candidate is currently in one of those two states --
+/// promotion is one-way, matching accept/reject's own one-way 409
+/// semantics. The new Obligation carries the candidate's
+/// `source_fragment_id` forward as its own evidence link (ADR-0023); no
+/// due date is implied by a candidate.
 async fn promote_candidate(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
@@ -782,10 +901,10 @@ async fn promote_candidate(
         other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
     })?;
 
-    if current.validation_state != "accepted" {
+    if current.validation_state != "accepted" && current.validation_state != "corrected" {
         return Err((
             axum::http::StatusCode::CONFLICT,
-            format!("candidate is \"{}\", not \"accepted\"", current.validation_state),
+            format!("candidate is \"{}\", not \"accepted\" or \"corrected\"", current.validation_state),
         ));
     }
 
@@ -932,11 +1051,28 @@ async fn search(
 #[derive(Debug, Deserialize)]
 struct NodeQuery {
     node_type: Option<String>,
+    occurred_from: Option<String>,
+    occurred_to: Option<String>,
 }
 
-/// Lists nodes, optionally filtered by `?node_type=` (ADR-0025). Read-only.
+/// Parses an optional RFC3339 query param: absent/blank is `Ok(None)`, a
+/// present-but-unparseable value is a typed `400` (ADR-0042).
+fn parse_optional_rfc3339(label: &str, raw: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>, (axum::http::StatusCode, String)> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some(value) => chrono::DateTime::parse_from_rfc3339(value)
+            .map(|parsed| Some(parsed.with_timezone(&chrono::Utc)))
+            .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, format!("{label} must be a valid RFC3339 datetime"))),
+    }
+}
+
+/// Lists nodes, optionally filtered by `?node_type=` (ADR-0025) and/or an
+/// `occurred_at` range via `?occurred_from=`/`?occurred_to=` (ADR-0042).
+/// Omitting both date params preserves this route's exact prior behavior.
 async fn list_nodes_route(State(pool): State<PgPool>, Query(params): Query<NodeQuery>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
-    let nodes = graph::list_nodes(&pool, params.node_type.as_deref())
+    let occurred_from = parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref())?;
+    let occurred_to = parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref())?;
+    let nodes = graph::list_nodes(&pool, params.node_type.as_deref(), occurred_from, occurred_to)
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     Ok(Json(json!(nodes)))
@@ -1172,35 +1308,35 @@ mod tests {
     #[test]
     fn risk_signals_flags_date_compression_when_due_soon_with_no_evidence() {
         let due = chrono::Utc::now() + chrono::Duration::days(3);
-        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None, true);
         assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
     }
 
     #[test]
     fn risk_signals_does_not_flag_date_compression_when_evidence_is_linked() {
         let due = chrono::Utc::now() + chrono::Duration::days(3);
-        let signals = risk_signals(Some(due), None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()));
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true);
         assert!(signals.iter().all(|signal| signal["signal"] != "date_compression"));
     }
 
     #[test]
     fn risk_signals_does_not_flag_date_compression_when_due_date_is_far_out() {
         let due = chrono::Utc::now() + chrono::Duration::days(30);
-        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None, true);
         assert!(signals.is_empty());
     }
 
     #[test]
     fn risk_signals_flags_stale_when_untouched_past_threshold() {
         let updated_at = chrono::Utc::now() - chrono::Duration::days(20);
-        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()));
+        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()), true);
         assert!(signals.iter().any(|signal| signal["signal"] == "stale"));
     }
 
     #[test]
     fn risk_signals_does_not_flag_stale_within_threshold() {
         let updated_at = chrono::Utc::now() - chrono::Duration::days(2);
-        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()));
+        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()), true);
         assert!(signals.is_empty());
     }
 
@@ -1208,8 +1344,23 @@ mod tests {
     fn risk_signals_can_flag_both_signals_at_once() {
         let due = chrono::Utc::now() - chrono::Duration::days(1);
         let updated_at = chrono::Utc::now() - chrono::Duration::days(20);
-        let signals = risk_signals(Some(due), None, updated_at, None);
+        let signals = risk_signals(Some(due), None, updated_at, None, true);
         assert_eq!(signals.len(), 2);
+    }
+
+    /// ADR-0046: unowned is independent of date_compression/stale --
+    /// no due date, recently updated, evidence linked, just no owner.
+    #[test]
+    fn risk_signals_flags_unowned_when_has_owner_is_false() {
+        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), false);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["signal"], "unowned");
+    }
+
+    #[test]
+    fn risk_signals_does_not_flag_unowned_when_has_owner_is_true() {
+        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true);
+        assert!(signals.is_empty());
     }
 
     #[tokio::test]
@@ -1510,6 +1661,42 @@ mod tests {
         assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
     }
 
+    /// ADR-0046: an Obligation with an `owns` edge from a person is never
+    /// flagged unowned; one without any such edge is.
+    #[tokio::test]
+    async fn daily_brief_flags_an_obligation_with_no_owns_edge_as_unowned() {
+        let pool = test_pool().await;
+
+        let owned = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, owned, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append owned obligation");
+        let unowned = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, unowned, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append unowned obligation");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let person_id = graph::create_node(&pool, "person", "Owner Signal Test Person", json!({})).await.expect("create person");
+        graph::create_edge(&pool, person_id, owned, "owns", None).await.expect("link person as owner");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/daily-brief").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let rows = parsed.as_array().unwrap();
+
+        let owned_row = rows.iter().find(|row| row["obligation_id"] == owned.to_string()).expect("present");
+        let owned_signals = owned_row["risk_signals"].as_array().unwrap();
+        assert!(owned_signals.iter().all(|signal| signal["signal"] != "unowned"), "an owned obligation must not be flagged unowned");
+
+        let unowned_row = rows.iter().find(|row| row["obligation_id"] == unowned.to_string()).expect("present");
+        let unowned_signals = unowned_row["risk_signals"].as_array().unwrap();
+        assert!(unowned_signals.iter().any(|signal| signal["signal"] == "unowned"), "an obligation with no owns edge must be flagged unowned");
+    }
+
     #[tokio::test]
     async fn candidates_route_returns_json_array() {
         let pool = test_pool().await;
@@ -1761,6 +1948,221 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after, before + 1, "exactly one audit row must be written for this rejection");
+    }
+
+    /// ADR-0045: correcting the statement alone transitions to `corrected`
+    /// and applies exactly the changed field, leaving candidate_type as-is.
+    #[tokio::test]
+    async fn correct_route_changes_statement_and_transitions_to_corrected() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"statement": "the actual, corrected risk statement"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.get("validation_state").and_then(|v| v.as_str()), Some("corrected"));
+        assert_eq!(parsed.get("statement").and_then(|v| v.as_str()), Some("the actual, corrected risk statement"));
+        assert_eq!(parsed.get("candidate_type").and_then(|v| v.as_str()), Some("risk"), "an unchanged field must not be altered");
+    }
+
+    /// ADR-0045: correcting candidate_type alone leaves statement as-is.
+    #[tokio::test]
+    async fn correct_route_changes_candidate_type_and_transitions_to_corrected() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "actually a commitment", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"candidate_type": "commitment"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.get("validation_state").and_then(|v| v.as_str()), Some("corrected"));
+        assert_eq!(parsed.get("candidate_type").and_then(|v| v.as_str()), Some("commitment"));
+        assert_eq!(parsed.get("statement").and_then(|v| v.as_str()), Some("actually a commitment"), "an unchanged field must not be altered");
+    }
+
+    #[tokio::test]
+    async fn correct_route_rejects_a_no_op_change() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"candidate_type": "risk", "statement": "stated risk"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn correct_route_rejects_an_invalid_candidate_type() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"candidate_type": "not-a-real-type"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn correct_route_returns_409_for_an_already_transitioned_candidate() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({})).await.expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"statement": "too late to correct"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn correct_route_returns_404_for_an_unknown_candidate() {
+        let pool = test_pool().await;
+        let unknown_id = uuid::Uuid::new_v4();
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{unknown_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"statement": "irrelevant"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// ADR-0038: correcting writes an immutable audit row in the same
+    /// transaction as the state change.
+    #[tokio::test]
+    async fn correct_route_writes_an_audit_row() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let (before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_corrected'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"statement": "corrected via audited route"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let (after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_corrected'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before + 1, "exactly one audit row must be written for this correction");
+    }
+
+    /// ADR-0045: promotion accepts a corrected candidate exactly like an
+    /// accepted one -- both mean a human has validated it.
+    #[tokio::test]
+    async fn promote_route_accepts_a_corrected_candidate() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(&pool, uuid::Uuid::new_v4(), "We will migrate the pipeline by Q3.", "correct-then-promote-hash")
+            .await
+            .expect("create source fragment");
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "migrate the pipeline", fragment_id, Some(0.9), None)
+            .await
+            .expect("extract candidate");
+        extraction::transition_candidate(&pool, candidate_id, "corrected", json!({"candidate_type": "commitment"}))
+            .await
+            .expect("append corrected event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
     }
 
     #[tokio::test]
@@ -2075,6 +2477,48 @@ mod tests {
         assert!(detail["neighbors"].is_array(), "detail response must include a neighbors array");
     }
 
+    /// ADR-0042: occurred_at was write-only since ADR-0040 -- this proves
+    /// it round-trips through the read routes and can filter/exclude by
+    /// range, not just get silently dropped.
+    #[tokio::test]
+    async fn nodes_route_filters_by_occurred_at_range_and_rejects_an_unparseable_bound() {
+        let pool = test_pool().await;
+        let in_range = graph::create_node(&pool, "note", "In Range Note", json!({})).await.expect("create in-range node");
+        let out_of_range = graph::create_node(&pool, "note", "Out Of Range Note", json!({})).await.expect("create out-of-range node");
+        sqlx::query("UPDATE nodes SET occurred_at = $2 WHERE id = $1")
+            .bind(in_range)
+            .bind(chrono::Utc::now() - chrono::Duration::days(3))
+            .execute(&pool)
+            .await
+            .expect("set in-range occurred_at");
+        sqlx::query("UPDATE nodes SET occurred_at = $2 WHERE id = $1")
+            .bind(out_of_range)
+            .bind(chrono::Utc::now())
+            .execute(&pool)
+            .await
+            .expect("set out-of-range occurred_at");
+
+        let from = (chrono::Utc::now() - chrono::Duration::days(4)).to_rfc3339().replace('+', "%2B");
+        let to = (chrono::Utc::now() - chrono::Duration::days(2)).to_rfc3339().replace('+', "%2B");
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri(format!("/api/nodes?occurred_from={from}&occurred_to={to}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let listed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let ids: Vec<&str> = listed.as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&in_range.to_string().as_str()), "in-range node must be listed");
+        assert!(!ids.contains(&out_of_range.to_string().as_str()), "out-of-range node must be excluded");
+        assert!(listed.as_array().unwrap().iter().any(|row| !row["occurred_at"].is_null()), "occurred_at must round-trip through the response, not be dropped");
+
+        let bad_response = app(pool)
+            .oneshot(Request::builder().uri("/api/nodes?occurred_from=not-a-date").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(bad_response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
     #[tokio::test]
     async fn node_detail_route_returns_404_for_unknown_node() {
         let pool = test_pool().await;
@@ -2379,8 +2823,41 @@ mod tests {
         assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
     }
 
-    /// ADR-0031: two non-closed Obligations linked to the same node form a
-    /// block; the shared node's identity and both Obligations' reasons
+    /// ADR-0046: mirrors the Daily Brief's own unowned proof, scoped to the
+    /// Time Horizon's bucketed response shape.
+    #[tokio::test]
+    async fn time_horizon_flags_an_obligation_with_no_owns_edge_as_unowned() {
+        let pool = test_pool().await;
+
+        let owned = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, owned, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append owned obligation");
+        let unowned = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, unowned, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append unowned obligation");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let person_id = graph::create_node(&pool, "person", "Time Horizon Owner Signal Test Person", json!({})).await.expect("create person");
+        graph::create_edge(&pool, person_id, owned, "owns", None).await.expect("link person as owner");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/time-horizon").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let beyond = parsed["beyond"].as_array().expect("beyond bucket must be present -- no date recorded");
+
+        let owned_row = beyond.iter().find(|row| row["obligation_id"] == owned.to_string()).expect("present");
+        let owned_signals = owned_row["risk_signals"].as_array().unwrap();
+        assert!(owned_signals.iter().all(|signal| signal["signal"] != "unowned"), "an owned obligation must not be flagged unowned");
+
+        let unowned_row = beyond.iter().find(|row| row["obligation_id"] == unowned.to_string()).expect("present");
+        let unowned_signals = unowned_row["risk_signals"].as_array().unwrap();
+        assert!(unowned_signals.iter().any(|signal| signal["signal"] == "unowned"), "an obligation with no owns edge must be flagged unowned");
+    }
     /// (reusing daily_brief_reason verbatim) are present.
     #[tokio::test]
     async fn focus_blocks_route_groups_by_shared_node() {

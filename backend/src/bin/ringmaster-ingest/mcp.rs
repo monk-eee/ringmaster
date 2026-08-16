@@ -1,3 +1,4 @@
+use ringmaster_backend::graph;
 use ringmaster_backend::transcript::{ingest_source, SourceMetadata};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
@@ -21,15 +22,42 @@ pub struct IngestSourceParams {
     pub text: String,
 }
 
+/// ADR-0042: the same optional filters `GET /api/nodes` accepts, so this
+/// tool and that route share one underlying `list_nodes` call.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RecallSourcesParams {
+    /// Only return nodes of this free-text type, e.g. "meeting", "email", "note".
+    #[serde(default)]
+    pub node_type: Option<String>,
+    /// Only return nodes that occurred at or after this RFC3339 datetime.
+    #[serde(default)]
+    pub occurred_from: Option<String>,
+    /// Only return nodes that occurred at or before this RFC3339 datetime.
+    #[serde(default)]
+    pub occurred_to: Option<String>,
+}
+
 #[derive(Clone)]
 struct RingmasterIngestServer {
     pool: PgPool,
 }
 
+/// Parses an optional RFC3339 argument for an MCP tool: absent is `Ok(None)`,
+/// present-but-unparseable is `Err` with a human-readable message (ADR-0042).
+fn parse_optional_rfc3339(label: &str, raw: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some(value) => chrono::DateTime::parse_from_rfc3339(value)
+            .map(|parsed| Some(parsed.with_timezone(&chrono::Utc)))
+            .map_err(|_| format!("{label} must be a valid RFC3339 datetime, got: {value}")),
+    }
+}
+
 #[tool_router(server_handler)]
 impl RingmasterIngestServer {
-    /// The one tool this server exposes (ADR-0040): no resources, prompts,
-    /// or sampling -- ingestion only, matching what was actually asked for.
+    /// Ingestion (ADR-0040) and recall (ADR-0042): no resources, prompts,
+    /// or sampling -- getting dated sources in and back out, matching what
+    /// was actually asked for.
     #[tool(
         description = "Ingest a dated source (meeting, email, note, Teams message, ...) into Ringmaster's graph as a node with ordered, hashed, immutable evidence fragments. Never triggers extraction or embedding."
     )]
@@ -50,6 +78,25 @@ impl RingmasterIngestServer {
             Ok(ingested) => Ok(CallToolResult::success(vec![ContentBlock::text(
                 serde_json::json!({ "node_id": ingested.node_id, "fragment_ids": ingested.fragment_ids }).to_string(),
             )])),
+            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
+        }
+    }
+
+    #[tool(
+        description = "Recall previously-ingested dated sources (nodes), optionally filtered by node_type and/or an occurred_at range. Requires no embedding model -- a plain date-range/type read, not similarity search."
+    )]
+    async fn recall_sources(&self, Parameters(params): Parameters<RecallSourcesParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+        let occurred_from = match parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref()) {
+            Ok(value) => value,
+            Err(message) => return Ok(CallToolResult::error(vec![ContentBlock::text(message)])),
+        };
+        let occurred_to = match parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref()) {
+            Ok(value) => value,
+            Err(message) => return Ok(CallToolResult::error(vec![ContentBlock::text(message)])),
+        };
+
+        match graph::list_nodes(&self.pool, params.node_type.as_deref(), occurred_from, occurred_to).await {
+            Ok(nodes) => Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::json!(nodes).to_string())])),
             Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
         }
     }

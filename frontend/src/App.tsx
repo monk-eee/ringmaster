@@ -22,13 +22,14 @@ import GraphExplorer from "./components/GraphExplorer";
 import TimeHorizon from "./components/TimeHorizon";
 import People from "./components/People";
 import ComingSoonStrip from "./components/ComingSoonStrip";
+import MeetingReview from "./components/MeetingReview";
 
 // ADR-0039: four primary destinations answer a manager's actual questions
 // (what needs attention, what's coming, who do I owe, what's awaiting a
 // decision) instead of naming backend entities. Obligations/Search/Graph
 // remain fully functional, unchanged developer/diagnostic surfaces --
 // demoted in the tab bar, not deleted.
-type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph";
+type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph" | "meetings";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
@@ -39,10 +40,11 @@ const TAB_TITLES: Record<Tab, string> = {
   obligations: "Obligations",
   search: "Search",
   graph: "Graph",
+  meetings: "Meetings",
 };
 
 const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox"];
-const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph"];
+const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph", "meetings"];
 const TODAY_ITEM_CAP = 10;
 
 export default function App() {
@@ -156,6 +158,8 @@ export default function App() {
           <GraphExplorer />
         ) : tab === "people" ? (
           <People />
+        ) : tab === "meetings" ? (
+          <MeetingReview />
         ) : tab === "timeline" ? (
           <>
             <div className="toolbar">

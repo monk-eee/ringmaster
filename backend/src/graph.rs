@@ -10,6 +10,7 @@ pub struct Node {
     pub canonical_text: String,
     pub attributes: Json,
     pub lifecycle_state: String,
+    pub occurred_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow, serde::Serialize)]
@@ -52,30 +53,43 @@ pub async fn create_node(
 }
 
 pub async fn get_node(pool: &PgPool, id: Uuid) -> Result<Node, sqlx::Error> {
-    sqlx::query_as("SELECT id, node_type, canonical_text, attributes, lifecycle_state FROM nodes WHERE id = $1")
+    sqlx::query_as("SELECT id, node_type, canonical_text, attributes, lifecycle_state, occurred_at FROM nodes WHERE id = $1")
         .bind(id)
         .fetch_one(pool)
         .await
 }
 
-/// Lists nodes, optionally filtered by `node_type` (ADR-0025). Read-only.
-pub async fn list_nodes(pool: &PgPool, node_type: Option<&str>) -> Result<Vec<Node>, sqlx::Error> {
-    match node_type {
-        Some(node_type) => {
-            sqlx::query_as(
-                "SELECT id, node_type, canonical_text, attributes, lifecycle_state FROM nodes \
-                 WHERE node_type = $1 ORDER BY updated_at DESC",
-            )
-            .bind(node_type)
-            .fetch_all(pool)
-            .await
-        }
-        None => {
-            sqlx::query_as("SELECT id, node_type, canonical_text, attributes, lifecycle_state FROM nodes ORDER BY updated_at DESC")
-                .fetch_all(pool)
-                .await
-        }
-    }
+/// Lists nodes, optionally filtered by `node_type` and/or an `occurred_at`
+/// range (ADR-0025, ADR-0042). Read-only. A NULL filter argument is a
+/// no-op in SQL (`$n IS NULL OR ...`), so every combination of filters is
+/// one query, not eight branches. Ordering switches to `occurred_at DESC
+/// NULLS LAST` when either date bound is given -- sorting by write-time
+/// makes no sense once the caller is asking "what happened in this
+/// window"; otherwise unchanged (`updated_at DESC`).
+pub async fn list_nodes(
+    pool: &PgPool,
+    node_type: Option<&str>,
+    occurred_from: Option<chrono::DateTime<chrono::Utc>>,
+    occurred_to: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Vec<Node>, sqlx::Error> {
+    let order_by = if occurred_from.is_some() || occurred_to.is_some() {
+        "ORDER BY occurred_at DESC NULLS LAST"
+    } else {
+        "ORDER BY updated_at DESC"
+    };
+    let query = format!(
+        "SELECT id, node_type, canonical_text, attributes, lifecycle_state, occurred_at FROM nodes \
+         WHERE ($1::text IS NULL OR node_type = $1) \
+           AND ($2::timestamptz IS NULL OR occurred_at >= $2) \
+           AND ($3::timestamptz IS NULL OR occurred_at <= $3) \
+         {order_by}"
+    );
+    sqlx::query_as(&query)
+        .bind(node_type)
+        .bind(occurred_from)
+        .bind(occurred_to)
+        .fetch_all(pool)
+        .await
 }
 
 /// Enriches an existing node (ADR-0025). Any of `canonical_text`,
@@ -97,7 +111,7 @@ pub async fn update_node(
             attributes = attributes || COALESCE($4, '{}'::jsonb), \
             updated_at = now() \
          WHERE id = $1 \
-         RETURNING id, node_type, canonical_text, attributes, lifecycle_state",
+         RETURNING id, node_type, canonical_text, attributes, lifecycle_state, occurred_at",
     )
     .bind(id)
     .bind(canonical_text)
@@ -366,9 +380,35 @@ mod tests {
         let person_id = create_node(&pool, "person", "Filter Test Person", json!({})).await.expect("create person");
         create_node(&pool, "risk", "Filter Test Risk", json!({})).await.expect("create risk");
 
-        let people = list_nodes(&pool, Some("person")).await.expect("list people");
+        let people = list_nodes(&pool, Some("person"), None, None).await.expect("list people");
         assert!(people.iter().any(|node| node.id == person_id));
         assert!(people.iter().all(|node| node.node_type == "person"), "filter must exclude other node types");
+    }
+
+    #[tokio::test]
+    async fn list_nodes_filters_by_occurred_at_range_and_orders_by_it() {
+        let pool = test_pool().await;
+        let in_range = create_node(&pool, "note", "In Range Note", json!({})).await.expect("create in-range node");
+        let out_of_range = create_node(&pool, "note", "Out Of Range Note", json!({})).await.expect("create out-of-range node");
+
+        let from = chrono::Utc::now() - chrono::Duration::days(2);
+        let to = chrono::Utc::now() - chrono::Duration::days(1);
+        sqlx::query("UPDATE nodes SET occurred_at = $2 WHERE id = $1")
+            .bind(in_range)
+            .bind(from + chrono::Duration::hours(12))
+            .execute(&pool)
+            .await
+            .expect("set in-range occurred_at");
+        sqlx::query("UPDATE nodes SET occurred_at = $2 WHERE id = $1")
+            .bind(out_of_range)
+            .bind(chrono::Utc::now())
+            .execute(&pool)
+            .await
+            .expect("set out-of-range occurred_at");
+
+        let results = list_nodes(&pool, None, Some(from), Some(to)).await.expect("list nodes by range");
+        assert!(results.iter().any(|node| node.id == in_range), "in-range node must be present");
+        assert!(!results.iter().any(|node| node.id == out_of_range), "out-of-range node must be excluded");
     }
 
     #[tokio::test]

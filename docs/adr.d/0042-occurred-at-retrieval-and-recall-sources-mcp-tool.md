@@ -1,9 +1,9 @@
 # ADR-0042: Surface `occurred_at` on nodes, with date-range retrieval and a second MCP tool
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Explicitly accepted by monk-eee on 2026-08-17 ("accepted go ahead")
 - **Depends on:** [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md), [ADR-0019](0019-semantic-search-over-source-fragments.md), [ADR-0025](0025-node-edge-write-api-and-traversal.md), [ADR-0040](0040-dated-source-ingestion.md)
 - **Tags:** architecture, api, mcp, data-model
 

@@ -187,6 +187,14 @@ export function rejectCandidate(candidateId: string): Promise<Candidate> {
   return postJson<Candidate>(`/api/candidates/${encodeURIComponent(candidateId)}/reject`);
 }
 
+// ADR-0045: the six candidate_type values the backend's correct/extract
+// routes accept -- kept here so the correction form can't drift from them.
+export const CANDIDATE_TYPES = ["commitment", "request", "risk", "follow_up", "decision", "expectation"] as const;
+
+export function correctCandidate(candidateId: string, correction: { candidate_type?: string; statement?: string }): Promise<Candidate> {
+  return postJson<Candidate>(`/api/candidates/${encodeURIComponent(candidateId)}/correct`, correction);
+}
+
 export function promoteCandidate(candidateId: string): Promise<Obligation> {
   return postJson<Obligation>(`/api/candidates/${encodeURIComponent(candidateId)}/promote`);
 }
@@ -197,6 +205,76 @@ export function fetchNodes(nodeType?: string): Promise<GraphNode[]> {
 
 export function fetchNodeDetail(id: string): Promise<NodeDetail> {
   return getJson<NodeDetail>(`/api/nodes/${encodeURIComponent(id)}`);
+}
+
+export type MeetingFragment = {
+  id: string;
+  text: string;
+  speaker: string | null;
+  sequence: number | null;
+  created_at: string;
+};
+
+export type MeetingDetail = {
+  id: string;
+  canonical_text: string;
+  attributes: Record<string, unknown>;
+  fragments: MeetingFragment[];
+};
+
+export type MeetingCandidate = {
+  candidate_id: string;
+  candidate_type: string;
+  statement: string;
+  validation_state: string;
+  confidence: number;
+};
+
+export type MeetingCandidateFragment = {
+  fragment_id: string;
+  sequence: number | null;
+  speaker: string | null;
+  text: string;
+  candidates: MeetingCandidate[];
+};
+
+export type MeetingCandidates = {
+  meeting_id: string;
+  fragments: MeetingCandidateFragment[];
+  progress: {
+    fragment_count: number;
+    extracted_fragment_count: number;
+    pending_fragment_count: number;
+    by_validation_state: Record<string, number>;
+  };
+};
+
+export function fetchMeetingDetail(id: string): Promise<MeetingDetail> {
+  return getJson<MeetingDetail>(`/api/meetings/${encodeURIComponent(id)}`);
+}
+
+export function fetchMeetingCandidates(id: string): Promise<MeetingCandidates> {
+  return getJson<MeetingCandidates>(`/api/meetings/${encodeURIComponent(id)}/candidates`);
+}
+
+export type ExtractResult = { status: "created" } | { status: "empty" } | { status: "unavailable"; message: string };
+
+// ADR-0013's trigger route distinguishes created/empty/unavailable by status
+// code alone (201/204/503), so this reads the status directly rather than
+// reusing postJson, which assumes every ok response has a JSON body.
+export async function extractSourceFragment(fragmentId: string): Promise<ExtractResult> {
+  const response = await fetch(`/api/source-fragments/${encodeURIComponent(fragmentId)}/extract`, { method: "POST" });
+  if (response.status === 201) {
+    return { status: "created" };
+  }
+  if (response.status === 204) {
+    return { status: "empty" };
+  }
+  const text = await response.text().catch(() => "");
+  if (response.status === 503) {
+    return { status: "unavailable", message: text || "No model configured" };
+  }
+  throw new Error(text || `extract responded ${response.status}`);
 }
 
 export function createNode(nodeType: string, canonicalText: string, attributes?: Record<string, unknown>): Promise<GraphNode> {

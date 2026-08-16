@@ -301,3 +301,38 @@ test("time horizon buckets show risk-signal explanations when any obligation has
   const explanation = await page.locator(".risk-signals li").first().textContent();
   expect(explanation).toMatch(/no evidence linked|no update in \d+ day\(s\)/);
 });
+
+// ADR-0043: proves the Meeting Review page renders an ingested meeting's
+// transcript and can trigger extraction on a fragment with nothing
+// extracted yet. Ingests its own meeting via the existing atomic ingestion
+// route (ADR-0040) rather than the UI, since ingestion is deliberately an
+// API/CLI/MCP action, not a page in this app (ADR-0034/0043). Tolerant of
+// whether a model is configured in this environment -- either a real
+// candidate appears or an honest "nothing worth extracting"/"no model
+// configured" message renders, never a crash or a fabricated result.
+test("meeting review: viewing a meeting and triggering extraction on a fragment (ADR-0043)", async ({ page, request }) => {
+  const stamp = Date.now();
+  const title = `Meeting Review Test ${stamp}`;
+  const ingestResponse = await request.post("/api/sources/ingest", {
+    data: {
+      source_type: "meeting",
+      title,
+      occurred_at: new Date().toISOString(),
+      participants: ["Roopa"],
+      text: `Roopa: this is a unique test passage ${stamp} about a transition plan.`,
+    },
+  });
+  expect(ingestResponse.ok()).toBeTruthy();
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Meetings" }).click();
+  await expect(page.getByRole("tab", { name: "Meetings" })).toHaveAttribute("aria-selected", "true");
+
+  await page.locator(".node-list-button", { hasText: title }).click();
+  await expect(page.locator(".meeting-review-detail h3")).toHaveText(title);
+  await expect(page.locator(".meeting-fragment").first()).toContainText(`test passage ${stamp}`);
+
+  await page.locator(".meeting-fragment", { hasText: `test passage ${stamp}` }).getByRole("button", { name: "Extract" }).click();
+
+  await expect(page.locator(".meeting-candidate-row, .meeting-review-extract-message").first()).toBeVisible({ timeout: 15000 });
+});

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { acceptCandidate, promoteCandidate, rejectCandidate, type Candidate } from "../api";
+import { acceptCandidate, CANDIDATE_TYPES, correctCandidate, promoteCandidate, rejectCandidate, type Candidate } from "../api";
 import { typeIcon } from "../icons";
 
 type Props = { candidates: Candidate[]; onChanged: () => void };
@@ -7,12 +7,39 @@ type Props = { candidates: Candidate[]; onChanged: () => void };
 export default function CandidatesTable({ candidates, onChanged }: Props) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftType, setDraftType] = useState("");
+  const [draftStatement, setDraftStatement] = useState("");
 
   async function handle(action: (id: string) => Promise<unknown>, candidateId: string) {
     setPendingId(candidateId);
     setActionError(null);
     try {
       await action(candidateId);
+      onChanged();
+    } catch (cause) {
+      setActionError((cause as Error).message);
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  function startEditing(candidate: Candidate) {
+    setEditingId(candidate.candidate_id);
+    setDraftType(candidate.candidate_type);
+    setDraftStatement(candidate.statement);
+    setActionError(null);
+  }
+
+  async function saveCorrection(candidate: Candidate) {
+    const correction: { candidate_type?: string; statement?: string } = {};
+    if (draftType !== candidate.candidate_type) correction.candidate_type = draftType;
+    if (draftStatement !== candidate.statement) correction.statement = draftStatement;
+    setPendingId(candidate.candidate_id);
+    setActionError(null);
+    try {
+      await correctCandidate(candidate.candidate_id, correction);
+      setEditingId(null);
       onChanged();
     } catch (cause) {
       setActionError((cause as Error).message);
@@ -65,7 +92,34 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
                 )}
               </td>
               <td className="actions-cell">
-                {c.validation_state === "candidate" ? (
+                {editingId === c.candidate_id ? (
+                  <div className="correction-form">
+                    <select value={draftType} onChange={(event) => setDraftType(event.target.value)}>
+                      {CANDIDATE_TYPES.map((candidateType) => (
+                        <option key={candidateType} value={candidateType}>
+                          {candidateType}
+                        </option>
+                      ))}
+                    </select>
+                    <textarea value={draftStatement} onChange={(event) => setDraftStatement(event.target.value)} rows={2} />
+                    <div className="correction-form-actions">
+                      <button
+                        className="save-correction-button"
+                        disabled={pendingId === c.candidate_id}
+                        onClick={() => saveCorrection(c)}
+                      >
+                        {pendingId === c.candidate_id ? "…" : "Save Correction"}
+                      </button>
+                      <button
+                        className="cancel-correction-button"
+                        disabled={pendingId === c.candidate_id}
+                        onClick={() => setEditingId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : c.validation_state === "candidate" ? (
                   <>
                     <button
                       className="accept-button"
@@ -81,8 +135,15 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
                     >
                       {pendingId === c.candidate_id ? "…" : "Reject"}
                     </button>
+                    <button
+                      className="correct-button"
+                      disabled={pendingId === c.candidate_id}
+                      onClick={() => startEditing(c)}
+                    >
+                      Correct
+                    </button>
                   </>
-                ) : c.validation_state === "accepted" ? (
+                ) : c.validation_state === "accepted" || c.validation_state === "corrected" ? (
                   <button
                     className="promote-button"
                     disabled={pendingId === c.candidate_id}

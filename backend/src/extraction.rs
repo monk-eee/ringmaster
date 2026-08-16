@@ -3,7 +3,7 @@ use serde_json::{json, Value as Json};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-const ALLOWED_CANDIDATE_TYPES: [&str; 6] =
+pub const ALLOWED_CANDIDATE_TYPES: [&str; 6] =
     ["commitment", "request", "risk", "follow_up", "decision", "expectation"];
 
 /// Rejected before any row is written, so an invalid candidate never

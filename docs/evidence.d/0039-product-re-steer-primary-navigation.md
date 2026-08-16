@@ -17,9 +17,9 @@ paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "secondary-nav-group-exists"
-invariant = "Obligations/Graph/Search render as a visually distinct secondary/developer group, not deleted."
+invariant = "Obligations/Graph/Search render as a visually distinct secondary/developer group, not deleted (later ADRs, e.g. ADR-0043's Meetings tab, may append further secondary tabs without breaking this check)."
 type = "present"
-pattern = 'const SECONDARY_TABS: Tab\[\] = \["obligations", "search", "graph"\]'
+pattern = 'const SECONDARY_TABS: Tab\[\] = \["obligations", "search", "graph"'
 paths = ["frontend/src/App.tsx"]
 
 [[check]]
