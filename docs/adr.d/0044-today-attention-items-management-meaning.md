@@ -1,9 +1,9 @@
 # ADR-0044: Today attention items show management meaning, not identifiers — plain-language title, human date, and evidence status
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Direct instruction ("accept 44 and go"), 2026-08-17
 - **Depends on:** [ADR-0022](0022-daily-brief-endpoint.md), [ADR-0023](0023-evidence-backed-daily-brief-reasons.md), [ADR-0030](0030-human-readable-titles-and-type-iconography.md), [ADR-0039](0039-product-re-steer-primary-navigation.md), [ADR-0041](0041-risk-engine-v1-staleness-and-date-compression-signals.md)
 - **Amends:** [ADR-0039](0039-product-re-steer-primary-navigation.md)'s Today page, picking up part of the per-item detail it explicitly deferred ("Out of scope, named honestly"); does not amend any backend route's existing fields or the daily-brief ranking.
 - **Tags:** frontend, api, ux, information-architecture

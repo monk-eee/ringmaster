@@ -35,6 +35,7 @@ export type DailyBriefItem = {
   updated_at: string;
   reason: string;
   source_fragment_id: string | null;
+  source_text: string | null;
   risk_signals: RiskSignal[];
 };
 

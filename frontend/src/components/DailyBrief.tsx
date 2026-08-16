@@ -8,6 +8,27 @@ import { typeIcon } from "../icons";
 // silently truncating.
 type Props = { items: DailyBriefItem[]; totalCount?: number; onViewMore?: () => void };
 
+// ADR-0044: a Today row leads with management meaning, never a raw id. The
+// title is the evidence quote when one is linked, and an honest status label
+// otherwise -- never a fabricated sentence.
+function itemTitle(item: DailyBriefItem): string {
+  if (item.source_text) return item.source_text;
+  if (item.status === "at_risk") return "At-risk obligation";
+  if (item.status === "open") return "Open obligation";
+  return `${item.status} obligation`;
+}
+
+// ADR-0044: a plain human phrase from the effective due date, or an honest
+// "no date" state -- never a fabricated date.
+function duePhrase(hardDueAt: string | null, softDueAt: string | null): string {
+  const effective = hardDueAt ?? softDueAt;
+  if (!effective) return "No date recorded";
+  const days = Math.round((new Date(effective).getTime() - Date.now()) / 86_400_000);
+  if (days < 0) return `${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} overdue`;
+  if (days === 0) return "Due today";
+  return `Due in ${days} day${days === 1 ? "" : "s"}`;
+}
+
 export default function DailyBrief({ items, totalCount, onViewMore }: Props) {
   const total = totalCount ?? items.length;
 
@@ -32,10 +53,9 @@ export default function DailyBrief({ items, totalCount, onViewMore }: Props) {
                 {typeIcon("obligation")}
               </span>
               <StatusBadge value={item.status} />
-              <code className="id-marker" title={item.obligation_id}>
-                {item.obligation_id.slice(0, 8)}…
-              </code>
+              <span className="daily-brief-reason">{duePhrase(item.hard_due_at, item.soft_due_at)}</span>
             </div>
+            <p className="today-item-title">{itemTitle(item)}</p>
             <span className="daily-brief-reason">{item.reason}</span>
             {item.risk_signals.length > 0 && (
               <ul className="risk-signals">
@@ -44,6 +64,9 @@ export default function DailyBrief({ items, totalCount, onViewMore }: Props) {
                 ))}
               </ul>
             )}
+            <span className="daily-brief-reason">
+              {item.source_fragment_id ? "Evidence recorded" : "No evidence recorded"}
+            </span>
           </li>
         ))}
       </ol>
