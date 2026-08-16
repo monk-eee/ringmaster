@@ -1,3 +1,4 @@
+use crate::audit;
 use crate::embedding_adapter::EmbeddingConfig;
 use crate::extraction::{self, CandidateProjection, ModelExtractionError};
 use crate::graph;
@@ -22,7 +23,8 @@ use uuid::Uuid;
 /// route (ADR-0027), plus the Time Horizon route (ADR-0029), plus the
 /// Suggested Focus Blocks route (ADR-0031), plus the atomic meeting-ingestion
 /// route (ADR-0034), plus the meeting detail read (ADR-0036), plus the
-/// meeting-scoped candidate listing route (ADR-0037).
+/// meeting-scoped candidate listing route (ADR-0037), plus the dated,
+/// any-source-type ingestion route (ADR-0040).
 pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -33,6 +35,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/meetings/ingest", post(ingest_meeting))
         .route("/api/meetings/:id", get(get_meeting_detail))
         .route("/api/meetings/:id/candidates", get(get_meeting_candidates))
+        .route("/api/sources/ingest", post(ingest_source_route))
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
@@ -131,13 +134,11 @@ fn daily_brief_reason(
 const STALE_THRESHOLD_DAYS: i64 = 14;
 const DATE_COMPRESSION_WINDOW_DAYS: i64 = 7;
 
-/// Risk Engine v1 (governing ADR still owed -- this landed inside the
-/// ADR-0036 commit referencing a since-reassigned "ADR-0039"; that number
-/// now belongs to the navigation re-steer instead): the two of
-/// PRODUCT-SPEC.md §7.1's nine signals derivable today with zero schema
-/// change and zero fabricated data. Each signal is independent and
-/// additive -- no combined severity score is computed here, since
-/// weighting them together needs a model this ADR does not decide.
+/// Risk Engine v1 (ADR-0041): the two of PRODUCT-SPEC.md §7.1's nine
+/// signals derivable today with zero schema change and zero fabricated
+/// data. Each signal is independent and additive -- no combined severity
+/// score is computed here, since weighting them together needs a model
+/// this ADR does not decide.
 fn risk_signals(
     hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
     soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -173,8 +174,7 @@ fn risk_signals(
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
 /// ORDER BY, not a scoring model. Joins read-only against `source_fragments`
-/// for evidence (ADR-0023). Also attaches `risk_signals` (see risk_signals()
-/// doc comment -- governing ADR still owed).
+/// for evidence (ADR-0023). Also attaches `risk_signals` (ADR-0041).
 async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -248,7 +248,7 @@ fn time_horizon_bucket(status: &str, hard_due_at: Option<chrono::DateTime<chrono
 /// evidence join and `daily_brief_reason` the Daily Brief already uses --
 /// this is a different lens (when it's due) on the same data, not a new
 /// scoring model. Soonest-due-first within each bucket; an empty bucket is
-/// simply omitted from the response. Also attaches `risk_signals` (ADR-0039).
+/// simply omitted from the response. Also attaches `risk_signals` (ADR-0041).
 async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
@@ -376,7 +376,7 @@ async fn focus_blocks(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
 #[derive(Debug, Deserialize)]
 struct IngestMeetingRequest {
     title: String,
-    date: Option<String>,
+    occurred_at: Option<String>,
     organiser: Option<String>,
     #[serde(default)]
     participants: Vec<String>,
@@ -389,7 +389,9 @@ struct IngestMeetingRequest {
 /// fragment in one transaction -- a storage failure partway through can
 /// never leave partial meeting memory. Never invokes a model, extraction,
 /// or embedding; evidence capture stays available even when none is
-/// configured (ADR-0011/ADR-0013's posture).
+/// configured (ADR-0011/ADR-0013's posture). Requires a structured
+/// `occurred_at` (ADR-0040), the real-world event time, distinct from
+/// when Ringmaster stored it.
 async fn ingest_meeting(State(pool): State<PgPool>, Json(body): Json<IngestMeetingRequest>) -> Result<Response, (axum::http::StatusCode, String)> {
     if body.title.trim().is_empty() {
         return Err((axum::http::StatusCode::BAD_REQUEST, "title must not be blank".to_string()));
@@ -397,10 +399,19 @@ async fn ingest_meeting(State(pool): State<PgPool>, Json(body): Json<IngestMeeti
     if body.transcript.trim().is_empty() {
         return Err((axum::http::StatusCode::BAD_REQUEST, "transcript must not be blank".to_string()));
     }
+    let occurred_at = body
+        .occurred_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or((axum::http::StatusCode::BAD_REQUEST, "occurred_at must not be blank".to_string()))?;
+    let occurred_at = chrono::DateTime::parse_from_rfc3339(occurred_at)
+        .map(|value| value.with_timezone(&chrono::Utc))
+        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "occurred_at must be a valid RFC3339 datetime".to_string()))?;
 
     let metadata = crate::transcript::MeetingMetadata {
         title: body.title,
-        date: body.date,
+        occurred_at: Some(occurred_at),
         organiser: body.organiser,
         participants: body.participants,
     };
@@ -413,6 +424,62 @@ async fn ingest_meeting(State(pool): State<PgPool>, Json(body): Json<IngestMeeti
         axum::http::StatusCode::CREATED,
         Json(json!({
             "meeting_id": ingested.meeting_id,
+            "fragment_ids": ingested.fragment_ids,
+        })),
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestSourceRequest {
+    source_type: String,
+    title: String,
+    occurred_at: Option<String>,
+    #[serde(default)]
+    participants: Vec<String>,
+    text: String,
+}
+
+/// Ingests one dated source of any kind atomically via the shared
+/// `ingest_source` function (ADR-0040) -- the general-purpose sibling of
+/// `POST /api/meetings/ingest`, for email/note/Teams-message/etc. text that
+/// doesn't carry a transcript's speaker-turn shape. Never invokes a model,
+/// extraction, or embedding.
+async fn ingest_source_route(State(pool): State<PgPool>, Json(body): Json<IngestSourceRequest>) -> Result<Response, (axum::http::StatusCode, String)> {
+    if body.source_type.trim().is_empty() {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "source_type must not be blank".to_string()));
+    }
+    if body.title.trim().is_empty() {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "title must not be blank".to_string()));
+    }
+    if body.text.trim().is_empty() {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "text must not be blank".to_string()));
+    }
+    let occurred_at = body
+        .occurred_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or((axum::http::StatusCode::BAD_REQUEST, "occurred_at must not be blank".to_string()))?;
+    let occurred_at = chrono::DateTime::parse_from_rfc3339(occurred_at)
+        .map(|value| value.with_timezone(&chrono::Utc))
+        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "occurred_at must be a valid RFC3339 datetime".to_string()))?;
+
+    let metadata = crate::transcript::SourceMetadata {
+        source_type: body.source_type,
+        title: body.title,
+        occurred_at,
+        participants: body.participants,
+    };
+
+    let ingested = crate::transcript::ingest_source(&pool, &metadata, &body.text)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(json!({
+            "node_id": ingested.node_id,
             "fragment_ids": ingested.fragment_ids,
         })),
     )
@@ -635,9 +702,26 @@ async fn transition_candidate_route(
         ));
     }
 
-    extraction::transition_candidate(pool, id, event_type, json!({}))
+    // ADR-0038: the state-change event and its audit row commit atomically --
+    // a failure between the two can never leave the action un-audited.
+    let action = if event_type == "accepted" { "candidate_accepted" } else { "candidate_rejected" };
+    let mut tx = pool.begin().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    extraction::transition_candidate(&mut *tx, id, event_type, json!({}))
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    audit::record(
+        &mut *tx,
+        "local-operator",
+        action,
+        Some(json!({"validation_state": current.validation_state})),
+        Some(json!({"validation_state": event_type})),
+        "http_api",
+        "allowed",
+    )
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    tx.commit().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
     extraction::rebuild_candidate_projection(pool)
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -706,8 +790,11 @@ async fn promote_candidate(
     }
 
     let obligation_id = Uuid::new_v4();
+    // ADR-0038: the Obligation creation, the candidate's own promoted
+    // transition, and the audit row all commit atomically.
+    let mut tx = pool.begin().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     obligation::append_event(
-        &pool,
+        &mut *tx,
         obligation_id,
         obligation::ObligationEventType::Created,
         json!({"status": "open", "source_fragment_id": current.source_fragment_id}),
@@ -715,9 +802,22 @@ async fn promote_candidate(
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
-    extraction::transition_candidate(&pool, id, "promoted", json!({"obligation_id": obligation_id}))
+    extraction::transition_candidate(&mut *tx, id, "promoted", json!({"obligation_id": obligation_id}))
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    audit::record(
+        &mut *tx,
+        "local-operator",
+        "candidate_promoted",
+        Some(json!({"validation_state": current.validation_state})),
+        Some(json!({"validation_state": "promoted", "obligation_id": obligation_id})),
+        "http_api",
+        "allowed",
+    )
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    tx.commit().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     obligation::rebuild_projection(&pool)
         .await
@@ -1067,7 +1167,7 @@ mod tests {
             .expect("connect to test database")
     }
 
-    /// ADR-0039: risk_signals is a pure function -- no database, no
+    /// ADR-0041: risk_signals is a pure function -- no database, no
     /// flakiness -- covering both signals independently and together.
     #[test]
     fn risk_signals_flags_date_compression_when_due_soon_with_no_evidence() {
@@ -1376,7 +1476,7 @@ mod tests {
         assert!(unevidenced_row["source_fragment_id"].is_null());
     }
 
-    /// ADR-0039: the Daily Brief attaches risk_signals to each row, computed
+    /// ADR-0041: the Daily Brief attaches risk_signals to each row, computed
     /// from the same fields the reason string already uses.
     #[tokio::test]
     async fn daily_brief_route_attaches_risk_signals() {
@@ -1497,7 +1597,7 @@ mod tests {
             &pool,
             &crate::transcript::MeetingMetadata {
                 title: "api-test meeting".to_string(),
-                date: None,
+                occurred_at: None,
                 organiser: None,
                 participants: vec![],
             },
@@ -1583,6 +1683,84 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
         assert_eq!(parsed.get("validation_state").and_then(|v| v.as_str()), Some("rejected"));
+    }
+
+    /// ADR-0038: accepting writes an immutable audit row in the same
+    /// transaction as the state change, with the honestly-labeled
+    /// single-user placeholder actor -- never a fabricated identity.
+    #[tokio::test]
+    async fn accept_route_writes_an_audit_row_with_the_honest_placeholder_actor() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let (before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_accepted'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/accept"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let (after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_accepted'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before + 1, "exactly one audit row must be written for this acceptance");
+
+        let (actor,): (String,) =
+            sqlx::query_as("SELECT actor FROM audit_events WHERE action = 'candidate_accepted' ORDER BY recorded_at DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .expect("an audit row must exist for this acceptance");
+        assert_eq!(actor, "local-operator", "actor must be the honest single-user placeholder, not a fabricated identity");
+    }
+
+    /// ADR-0038: rejecting writes an immutable audit row in the same
+    /// transaction as the state change.
+    #[tokio::test]
+    async fn reject_route_writes_an_audit_row() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let (before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_rejected'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/reject"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let (after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_rejected'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before + 1, "exactly one audit row must be written for this rejection");
     }
 
     #[tokio::test]
@@ -1698,6 +1876,44 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    }
+
+    /// ADR-0038: promoting writes an immutable audit row in the same
+    /// transaction as the Obligation creation and candidate transition.
+    #[tokio::test]
+    async fn promote_route_writes_an_audit_row() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "commitment", "will migrate the pipeline", uuid::Uuid::new_v4(), Some(0.8), None)
+            .await
+            .expect("extract candidate");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let (before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_promoted'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let (after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'candidate_promoted'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before + 1, "exactly one audit row must be written for this promotion");
     }
 
     #[tokio::test]
@@ -2130,7 +2346,7 @@ mod tests {
         }
     }
 
-    /// ADR-0039: the Time Horizon route attaches the same risk_signals field.
+    /// ADR-0041: the Time Horizon route attaches the same risk_signals field.
     #[tokio::test]
     async fn time_horizon_route_attaches_risk_signals() {
         let pool = test_pool().await;
@@ -2279,7 +2495,7 @@ mod tests {
         let pool = test_pool().await;
         let request_body = json!({
             "title": "Weekly 1:1",
-            "date": "2026-08-14",
+            "occurred_at": "2026-08-14T00:00:00Z",
             "organiser": "Lyndon",
             "participants": ["Lyndon", "Roopa Venkat"],
             "transcript": "Roopa: Please bring me a transition plan.\nLyndon: I will have it by Friday.",
@@ -2369,6 +2585,135 @@ mod tests {
         assert_eq!(count, 0, "a blank transcript must perform zero writes, including zero Meeting nodes");
     }
 
+    /// ADR-0040: occurred_at is the one new hard requirement; missing or
+    /// blank must reject with 400 and perform zero writes, matching the
+    /// title/transcript blank-check posture exactly.
+    #[tokio::test]
+    async fn ingest_meeting_route_rejects_a_missing_occurred_at_with_no_writes() {
+        let pool = test_pool().await;
+        let marker = format!("missing-occurred-at-marker-{}", uuid::Uuid::new_v4());
+        let request_body = json!({"title": "Missing Occurred At Test", "transcript": format!("Roopa: {marker}")});
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/meetings/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM source_fragments WHERE text = $1")
+            .bind(&marker)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a missing occurred_at must perform zero writes, including zero fragments");
+    }
+
+    /// ADR-0040: proves the general-purpose route creates a node of the
+    /// given source_type with the paragraph-based split (not the meeting
+    /// speaker-turn split), and stores occurred_at as a real column.
+    #[tokio::test]
+    async fn ingest_source_route_creates_a_node_and_ordered_paragraph_fragments() {
+        let pool = test_pool().await;
+        let request_body = json!({
+            "source_type": "email",
+            "title": "Re: transition plan",
+            "occurred_at": "2026-08-01T09:00:00Z",
+            "participants": ["Roopa"],
+            "text": "First paragraph of the email.\n\nSecond paragraph.",
+        });
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sources/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let node_id = parsed["node_id"].as_str().expect("node_id present").to_string();
+        let fragment_ids = parsed["fragment_ids"].as_array().expect("fragment_ids is an array");
+        assert_eq!(fragment_ids.len(), 2, "one fragment per paragraph");
+
+        let node = graph::get_node(&pool, uuid::Uuid::parse_str(&node_id).unwrap()).await.expect("node exists");
+        assert_eq!(node.node_type, "email");
+        assert_eq!(node.canonical_text, "Re: transition plan");
+
+        let (stored_occurred_at,): (Option<chrono::DateTime<chrono::Utc>>,) =
+            sqlx::query_as("SELECT occurred_at FROM nodes WHERE id = $1").bind(uuid::Uuid::parse_str(&node_id).unwrap()).fetch_one(&pool).await.unwrap();
+        assert_eq!(stored_occurred_at, Some(chrono::DateTime::parse_from_rfc3339("2026-08-01T09:00:00Z").unwrap().with_timezone(&chrono::Utc)));
+    }
+
+    #[tokio::test]
+    async fn ingest_source_route_rejects_a_missing_occurred_at_with_no_writes() {
+        let pool = test_pool().await;
+        let marker = format!("source-missing-occurred-at-{}", uuid::Uuid::new_v4());
+        let request_body = json!({"source_type": "note", "title": "Missing Occurred At Test", "text": marker});
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sources/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM source_fragments WHERE text = $1")
+            .bind(&marker)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a missing occurred_at must perform zero writes, including zero fragments");
+    }
+
+    /// ADR-0040: this route must never trigger extraction or embedding
+    /// implicitly, matching every other ingestion surface's posture.
+    #[tokio::test]
+    async fn ingest_source_route_never_creates_a_candidate_implicitly() {
+        let pool = test_pool().await;
+        let marker = format!("source-no-implicit-extraction-{}", uuid::Uuid::new_v4());
+        let request_body = json!({"source_type": "note", "title": "No Implicit Extraction", "occurred_at": "2026-08-01T09:00:00Z", "text": marker});
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sources/ingest")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM candidate_projection cp \
+             JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+             WHERE sf.text = $1",
+        )
+        .bind(&marker)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "ingestion must never create a candidate on its own");
+    }
+
     /// ADR-0034: ingestion never invokes extraction, even implicitly --
     /// the new fragments never gain a candidate unless something separately
     /// calls the existing explicit extraction route.
@@ -2376,7 +2721,7 @@ mod tests {
     async fn ingest_meeting_route_never_creates_a_candidate_implicitly() {
         let pool = test_pool().await;
         let marker = format!("no-implicit-extraction-marker-{}", uuid::Uuid::new_v4());
-        let request_body = json!({"title": "No Implicit Extraction Test", "transcript": format!("Roopa: {marker}")});
+        let request_body = json!({"title": "No Implicit Extraction Test", "occurred_at": "2026-08-14T00:00:00Z", "transcript": format!("Roopa: {marker}")});
         let response = app(pool.clone())
             .oneshot(
                 Request::builder()
@@ -2410,6 +2755,7 @@ mod tests {
         let pool = test_pool().await;
         let request_body = json!({
             "title": "Ordered Fragments Test",
+            "occurred_at": "2026-08-14T00:00:00Z",
             "transcript": "Roopa: first turn.\nLyndon: second turn.\nRoopa: third turn.",
         });
         let ingest_response = app(pool.clone())
@@ -2477,7 +2823,7 @@ mod tests {
         let pool = test_pool().await;
         let ingested = crate::transcript::ingest_transcript(
             &pool,
-            &crate::transcript::MeetingMetadata { title: "Candidates Progress Test".to_string(), date: None, organiser: None, participants: vec![] },
+            &crate::transcript::MeetingMetadata { title: "Candidates Progress Test".to_string(), occurred_at: None, organiser: None, participants: vec![] },
             "Roopa: please send me a transition plan.\nLyndon: sure, by Friday.",
         )
         .await
@@ -2540,7 +2886,7 @@ mod tests {
         let pool = test_pool().await;
         let ingested = crate::transcript::ingest_transcript(
             &pool,
-            &crate::transcript::MeetingMetadata { title: "No Extraction Test".to_string(), date: None, organiser: None, participants: vec![] },
+            &crate::transcript::MeetingMetadata { title: "No Extraction Test".to_string(), occurred_at: None, organiser: None, participants: vec![] },
             "Roopa: an unextracted turn.",
         )
         .await

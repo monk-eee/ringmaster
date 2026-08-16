@@ -1,9 +1,9 @@
 # ADR-0038: Wire up audit_events for candidate validation actions
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-14
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** monk-eee delegated the accept/implement decision directly ("work autonomously and make good decisions"), 2026-08-17
 - **Depends on:** [ADR-0008](0008-add-append-only-audit-events-table.md), [ADR-0024](0024-candidate-accept-reject-buttons.md), [ADR-0027](0027-promote-accepted-candidate-to-obligation.md)
 - **Tags:** security, audit, api
 

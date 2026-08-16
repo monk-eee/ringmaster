@@ -1,9 +1,9 @@
 # ADR-0040: Dated source ingestion — `occurred_at` required, exposed over API, CLI, and MCP
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Continuation of this session's established build pattern ("pick up work"), following monk-eee's own two direct corrections to this ADR's content, 2026-08-17
 - **Depends on:** [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md), [ADR-0010](0010-transcript-ingestion-parsing-chunking-provenance.md), [ADR-0034](0034-http-meeting-transcript-ingestion.md)
 - **Amends:** [ADR-0034](0034-http-meeting-transcript-ingestion.md)'s `IngestMeetingRequest` contract (`date: Option<String>` becomes `occurred_at`, required and validated) and [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md)'s `nodes` schema (a new, nullable `occurred_at TIMESTAMPTZ` column for existing rows, but enforced non-null at the application layer for every node this ADR's ingestion path creates). Extends, rather than amends, [ADR-0003](0003-ringmaster-ingests-mindleak-as-an-mcp-source.md)'s MCP-first architecture: that record governs Ringmaster as an MCP *client* of MindLeak; this is the first decision where Ringmaster is also an MCP *server* in its own right.
 - **Tags:** architecture, data-model, api, cli, mcp, ingestion

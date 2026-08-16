@@ -10,52 +10,70 @@ adr = "0040-dated-source-ingestion"
 
 [[check]]
 id = "nodes-have-occurred-at-column"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once a migration adds a nullable occurred_at TIMESTAMPTZ column to nodes."
+invariant = "nodes has a nullable occurred_at column."
+type = "present"
+pattern = 'ALTER TABLE nodes ADD COLUMN occurred_at TIMESTAMPTZ'
+paths = ["backend/migrations/0013_source_occurred_at.sql"]
 
 [[check]]
 id = "ingest-source-function-requires-occurred-at"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the shared ingest_source function (transcript.rs) creates a node + ordered fragments, splits non-meeting text by paragraph, and rejects a missing occurred_at."
+invariant = "The shared ingest_source function creates a node + ordered fragments, splitting non-meeting text by paragraph, and requires occurred_at."
+type = "present"
+pattern = 'pub async fn ingest_source\(pool: &PgPool, metadata: &SourceMetadata'
+paths = ["backend/src/transcript.rs"]
 
 [[check]]
 id = "sources-ingest-route-exists"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once POST /api/sources/ingest calls the shared ingest_source function and rejects a missing/blank occurred_at with 400."
+invariant = "POST /api/sources/ingest calls the shared function, rejecting a missing/blank occurred_at with 400."
+type = "present"
+pattern = '"/api/sources/ingest"'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "meeting-ingest-requires-occurred-at"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once POST /api/meetings/ingest requires occurred_at and rejects its absence with 400, with every other field/response shape unchanged."
+invariant = "POST /api/meetings/ingest now requires occurred_at and rejects its absence with 400, all other behavior unchanged."
+type = "present"
+pattern = 'ingest_meeting_route_rejects_a_missing_occurred_at_with_no_writes'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "cli-binary-ingests-via-shared-function"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the ringmaster-ingest CLI binary (backend/src/bin/) connects directly to DATABASE_URL and calls ingest_source, with no HTTP server required."
+invariant = "The ringmaster-ingest CLI binary ingests a source by calling the same shared function, with no HTTP server required."
+type = "present"
+pattern = 'ingest_source\(&pool, &metadata, &text\)'
+paths = ["backend/src/bin/ringmaster-ingest/main.rs"]
 
 [[check]]
 id = "mcp-tool-exposes-ingest-source"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once the mcp-serve subcommand starts a stdio MCP server (rmcp) exposing exactly one tool, ingest_source, which calls the shared ingest_source function."
+invariant = "The mcp-serve subcommand exposes exactly one MCP tool, ingest_source, over stdio, calling the same shared function."
+type = "present"
+pattern = 'async fn ingest_source\(&self, Parameters\(params\): Parameters<IngestSourceParams>\)'
+paths = ["backend/src/bin/ringmaster-ingest/mcp.rs"]
 
 [[check]]
 id = "ingestion-never-triggers-extraction-or-embedding"
-invariant = "Not yet implemented -- awaiting acceptance."
-type = "manual"
-notes = "Will become a present-type check once none of the three surfaces (API, CLI, MCP) is confirmed to call extraction or embedding implicitly."
+invariant = "None of the three surfaces (API, CLI, MCP) triggers extraction or embedding implicitly."
+type = "present"
+pattern = 'ingest_source_route_never_creates_a_candidate_implicitly'
+paths = ["backend/src/api.rs"]
 ```
 
 ## Notes
 
-Pre-implementation: all seven checks are deliberately `manual`/unproven,
-per this repo's own convention (evidence stays honest about intent vs.
-proof until the ADR is accepted and implemented). Do not implement before
-[ADR-0040](../adr.d/0040-dated-source-ingestion.md)'s Status flips to
-Accepted.
+Implemented and verified live, not just by unit test: `cargo test` (89/89
+backend tests pass, including new `ingest_source`/`split_paragraphs`/
+`ingest_source_route`/`ingest_meeting_route_rejects_a_missing_occurred_at`
+cases). Live end-to-end checks against the running dev stack: `POST
+/api/sources/ingest` and the amended `POST /api/meetings/ingest` (both the
+400-without-occurred_at and 201-with-occurred_at paths) via curl; the
+`ringmaster-ingest` CLI binary run directly against `DATABASE_URL` with no
+server, ingesting real stdin text into a node + ordered fragments; the
+`mcp-serve` subcommand driven by hand over stdio through a real
+`initialize` → `notifications/initialized` → `tools/list` → `tools/call`
+sequence, confirming `tools/list` returns exactly the one `ingest_source`
+tool with the correct JSON Schema, and `tools/call` genuinely creates a
+node and fragment. `rmcp` (the one new dependency, scoped to this binary)
+resolved cleanly from crates.io with the `server`/`schemars`/`transport-io`
+features. All seven checks are automated `present` matches; no check in
+this ADR is a negative/absent claim, so none needs to stay `manual`.
 

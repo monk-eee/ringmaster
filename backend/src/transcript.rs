@@ -6,7 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct MeetingMetadata {
     pub title: String,
-    pub date: Option<String>,
+    pub occurred_at: Option<chrono::DateTime<chrono::Utc>>,
     pub organiser: Option<String>,
     pub participants: Vec<String>,
 }
@@ -44,6 +44,29 @@ fn sha256_hex(text: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Splits raw text into blank-line-separated paragraphs (ADR-0040), for any
+/// source that doesn't carry a transcript's speaker-turn shape (email,
+/// note, Teams message, ...). A single-paragraph submission becomes
+/// exactly one fragment; consecutive blank lines never produce an empty one.
+pub fn split_paragraphs(raw_text: &str) -> Vec<String> {
+    let mut paragraphs = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for line in raw_text.lines() {
+        if line.trim().is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(current.join(" ").trim().to_string());
+                current.clear();
+            }
+        } else {
+            current.push(line.trim());
+        }
+    }
+    if !current.is_empty() {
+        paragraphs.push(current.join(" ").trim().to_string());
+    }
+    paragraphs
+}
+
 #[derive(Debug, Clone)]
 pub struct IngestedTranscript {
     pub meeting_id: Uuid,
@@ -63,7 +86,7 @@ pub async fn ingest_transcript(
     raw_text: &str,
 ) -> Result<IngestedTranscript, sqlx::Error> {
     let attributes: Json = json!({
-        "date": metadata.date,
+        "occurred_at": metadata.occurred_at.map(|value| value.to_rfc3339()),
         "organiser": metadata.organiser,
         "participants": metadata.participants,
         "raw_transcript_hash": sha256_hex(raw_text),
@@ -72,11 +95,12 @@ pub async fn ingest_transcript(
     let mut tx = pool.begin().await?;
 
     let (meeting_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO nodes (node_type, canonical_text, attributes) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO nodes (node_type, canonical_text, attributes, occurred_at) VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind("meeting")
     .bind(&metadata.title)
     .bind(&attributes)
+    .bind(metadata.occurred_at)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -100,6 +124,87 @@ pub async fn ingest_transcript(
     tx.commit().await?;
 
     Ok(IngestedTranscript { meeting_id, fragment_ids })
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceMetadata {
+    pub source_type: String,
+    pub title: String,
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub participants: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IngestedSource {
+    pub node_id: Uuid,
+    pub fragment_ids: Vec<Uuid>,
+}
+
+/// Ingests one dated source of any kind (meeting, email, note, Teams
+/// message, ...) into one node plus its ordered, immutable, hashed
+/// fragments (ADR-0040) -- the one function every ingestion surface (API,
+/// CLI, MCP) calls, so none re-implements validation, splitting, or the
+/// transaction. `source_type: "meeting"` keeps ingest_transcript's
+/// per-speaker-turn split; anything else splits by paragraph, no speaker
+/// field. Atomic, matching ADR-0034's posture exactly: one transaction,
+/// never triggers extraction or embedding.
+pub async fn ingest_source(pool: &PgPool, metadata: &SourceMetadata, raw_text: &str) -> Result<IngestedSource, sqlx::Error> {
+    let attributes: Json = json!({
+        "occurred_at": metadata.occurred_at.to_rfc3339(),
+        "participants": metadata.participants,
+        "raw_source_hash": sha256_hex(raw_text),
+    });
+
+    let mut tx = pool.begin().await?;
+
+    let (node_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO nodes (node_type, canonical_text, attributes, occurred_at) VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(&metadata.source_type)
+    .bind(&metadata.title)
+    .bind(&attributes)
+    .bind(metadata.occurred_at)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let mut fragment_ids = Vec::new();
+
+    if metadata.source_type == "meeting" {
+        for (sequence, turn) in parse_transcript(raw_text).into_iter().enumerate() {
+            let hash = sha256_hex(&turn.text);
+            let (fragment_id,): (Uuid,) = sqlx::query_as(
+                "INSERT INTO source_fragments (source_id, text, speaker, hash, sequence) \
+                 VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            )
+            .bind(node_id)
+            .bind(&turn.text)
+            .bind(&turn.speaker)
+            .bind(&hash)
+            .bind(sequence as i32)
+            .fetch_one(&mut *tx)
+            .await?;
+            fragment_ids.push(fragment_id);
+        }
+    } else {
+        for (sequence, paragraph) in split_paragraphs(raw_text).into_iter().enumerate() {
+            let hash = sha256_hex(&paragraph);
+            let (fragment_id,): (Uuid,) = sqlx::query_as(
+                "INSERT INTO source_fragments (source_id, text, speaker, hash, sequence) \
+                 VALUES ($1, $2, NULL, $3, $4) RETURNING id",
+            )
+            .bind(node_id)
+            .bind(&paragraph)
+            .bind(&hash)
+            .bind(sequence as i32)
+            .fetch_one(&mut *tx)
+            .await?;
+            fragment_ids.push(fragment_id);
+        }
+    }
+
+    tx.commit().await?;
+
+    Ok(IngestedSource { node_id, fragment_ids })
 }
 
 #[cfg(test)]
@@ -133,7 +238,7 @@ mod tests {
         let pool = test_pool().await;
         let metadata = MeetingMetadata {
             title: "Weekly 1:1".to_string(),
-            date: Some("2026-08-14".to_string()),
+            occurred_at: Some(chrono::DateTime::parse_from_rfc3339("2026-08-14T00:00:00Z").unwrap().with_timezone(&chrono::Utc)),
             organiser: Some("Lyndon".to_string()),
             participants: vec!["Lyndon".to_string(), "Roopa".to_string()],
         };
@@ -159,7 +264,7 @@ mod tests {
         let pool = test_pool().await;
         let metadata = MeetingMetadata {
             title: "Test meeting".to_string(),
-            date: None,
+            occurred_at: None,
             organiser: None,
             participants: vec![],
         };
@@ -179,5 +284,64 @@ mod tests {
             .execute(&pool)
             .await;
         assert!(delete_result.is_err(), "DELETE must be rejected by the append-only trigger");
+    }
+
+    #[test]
+    fn split_paragraphs_groups_lines_by_blank_line_separator() {
+        let raw = "First paragraph,\nstill first.\n\nSecond paragraph.\n\n\nThird, after extra blank lines.";
+        let paragraphs = split_paragraphs(raw);
+        assert_eq!(paragraphs, vec!["First paragraph, still first.", "Second paragraph.", "Third, after extra blank lines."]);
+    }
+
+    #[test]
+    fn split_paragraphs_of_a_single_paragraph_is_exactly_one_fragment() {
+        assert_eq!(split_paragraphs("Just one paragraph, no blank lines at all."), vec!["Just one paragraph, no blank lines at all."]);
+    }
+
+    #[tokio::test]
+    async fn ingest_source_creates_a_node_with_occurred_at_and_paragraph_fragments_for_a_non_meeting_type() {
+        let pool = test_pool().await;
+        let occurred_at = chrono::DateTime::parse_from_rfc3339("2026-08-01T09:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let metadata = SourceMetadata {
+            source_type: "email".to_string(),
+            title: "Re: transition plan".to_string(),
+            occurred_at,
+            participants: vec!["Roopa".to_string()],
+        };
+        let raw = "First paragraph of the email.\n\nSecond paragraph.";
+
+        let ingested = ingest_source(&pool, &metadata, raw).await.expect("ingest source");
+        assert_eq!(ingested.fragment_ids.len(), 2);
+
+        let node = crate::graph::get_node(&pool, ingested.node_id).await.expect("read node");
+        assert_eq!(node.node_type, "email");
+        assert_eq!(node.canonical_text, "Re: transition plan");
+
+        let (stored_occurred_at,): (Option<chrono::DateTime<chrono::Utc>>,) =
+            sqlx::query_as("SELECT occurred_at FROM nodes WHERE id = $1").bind(ingested.node_id).fetch_one(&pool).await.unwrap();
+        assert_eq!(stored_occurred_at, Some(occurred_at));
+
+        let (speaker,): (Option<String>,) =
+            sqlx::query_as("SELECT speaker FROM source_fragments WHERE id = $1").bind(ingested.fragment_ids[0]).fetch_one(&pool).await.unwrap();
+        assert_eq!(speaker, None, "a non-meeting fragment carries no speaker");
+    }
+
+    #[tokio::test]
+    async fn ingest_source_of_a_meeting_type_keeps_the_per_speaker_turn_split() {
+        let pool = test_pool().await;
+        let metadata = SourceMetadata {
+            source_type: "meeting".to_string(),
+            title: "Ingest source meeting test".to_string(),
+            occurred_at: chrono::Utc::now(),
+            participants: vec![],
+        };
+        let raw = "Roopa: We have a two-week transition.\nJohn: I need to follow up.";
+
+        let ingested = ingest_source(&pool, &metadata, raw).await.expect("ingest source");
+        assert_eq!(ingested.fragment_ids.len(), 2);
+
+        let (speaker,): (Option<String>,) =
+            sqlx::query_as("SELECT speaker FROM source_fragments WHERE id = $1").bind(ingested.fragment_ids[0]).fetch_one(&pool).await.unwrap();
+        assert_eq!(speaker.as_deref(), Some("Roopa"));
     }
 }

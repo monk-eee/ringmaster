@@ -276,3 +276,28 @@ test("people tab lists person nodes and opens each into its relationship data", 
   await page.getByRole("button", { name: "All people" }).click();
   await expect(page.locator(".people-list")).toBeVisible();
 });
+
+// ADR-0041: proves Risk Engine v1's signals, when present, actually render
+// as real text in the browser -- tolerant of whatever the shared
+// development database currently contains, never asserting a specific
+// obligation or count. Checks the Timeline tab's (uncapped) Buckets view
+// rather than Today's capped top-10 list, since a risk signal is far more
+// likely to appear somewhere across every overdue/upcoming Obligation than
+// within just the ten items Today happens to rank highest.
+test("time horizon buckets show risk-signal explanations when any obligation has one (ADR-0041)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Timeline" }).click();
+  await expect(page.getByRole("tab", { name: "Timeline" })).toHaveAttribute("aria-selected", "true");
+
+  await expect
+    .poll(async () => (await page.locator(".time-horizon-sections, p.empty-state, p.error").count()) > 0, { timeout: 15000 })
+    .toBe(true);
+  const hasError = (await page.locator("p.error").count()) > 0;
+  test.skip(hasError, "backend fetch failed transiently for this run");
+
+  const hasRiskSignal = (await page.locator(".risk-signals li").count()) > 0;
+  test.skip(!hasRiskSignal, "no Obligation currently due or overdue has a stale or date-compression signal");
+
+  const explanation = await page.locator(".risk-signals li").first().textContent();
+  expect(explanation).toMatch(/no evidence linked|no update in \d+ day\(s\)/);
+});

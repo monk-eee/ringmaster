@@ -3,17 +3,22 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Appends one immutable audit row (ADR-0008). The database rejects any
-/// later mutation or deletion of the returned row. No application feature
-/// calls this yet; wiring real call sites in is future, ADR-governed work.
-pub async fn record(
-    pool: &PgPool,
+/// later mutation or deletion of the returned row. Generic over the SQL
+/// executor (ADR-0038) so a caller can record an audit row in the same
+/// transaction as the state change it documents -- `&PgPool` still works
+/// unchanged for any caller outside a transaction.
+pub async fn record<'e, E>(
+    executor: E,
     actor: &str,
     action: &str,
     previous_state: Option<Json>,
     new_state: Option<Json>,
     source: &str,
     policy_outcome: &str,
-) -> Result<Uuid, sqlx::Error> {
+) -> Result<Uuid, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let (id,): (Uuid,) = sqlx::query_as(
         "INSERT INTO audit_events (actor, action, previous_state, new_state, source, policy_outcome) \
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
@@ -24,7 +29,7 @@ pub async fn record(
     .bind(&new_state)
     .bind(source)
     .bind(policy_outcome)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(id)
 }

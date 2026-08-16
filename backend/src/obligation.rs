@@ -126,13 +126,18 @@ pub struct ObligationProjection {
 /// Appends one immutable event (ADR-0005/ADR-0007). The database rejects any
 /// later mutation or deletion of the returned row. A `created` or
 /// `status_changed` event without a recognized `status` payload is rejected
-/// here, before it ever reaches the append-only log.
-pub async fn append_event(
-    pool: &PgPool,
+/// here, before it ever reaches the append-only log. Generic over the SQL
+/// executor (ADR-0038) so a caller can append this event in the same
+/// transaction as an audit row -- `&PgPool` still works unchanged.
+pub async fn append_event<'e, E>(
+    executor: E,
     obligation_id: Uuid,
     event_type: ObligationEventType,
     payload: Json,
-) -> Result<Uuid, AppendEventError> {
+) -> Result<Uuid, AppendEventError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let requires_status = matches!(
         event_type,
         ObligationEventType::Created | ObligationEventType::StatusChanged
@@ -151,7 +156,7 @@ pub async fn append_event(
     .bind(obligation_id)
     .bind(event_type.as_str())
     .bind(&payload)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(id)
 }

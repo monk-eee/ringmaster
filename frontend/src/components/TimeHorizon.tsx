@@ -31,6 +31,13 @@ function BucketSection({ label, accent, items }: { label: string; accent: string
               <StatusBadge value={item.status} />
             </div>
             <span className="daily-brief-reason">{item.reason}</span>
+            {item.risk_signals.length > 0 && (
+              <ul className="risk-signals">
+                {item.risk_signals.map((signal) => (
+                  <li key={signal.signal}>{signal.explanation}</li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ol>

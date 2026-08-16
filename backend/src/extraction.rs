@@ -101,20 +101,25 @@ pub async fn extract_candidate(
 /// Appends a SS6.4 lifecycle transition (accepted/corrected/rejected/
 /// superseded/observed_complete/closed) for an existing candidate. `payload`
 /// carries whatever changed; this is how corrections preserve previous
-/// values and provenance instead of overwriting them.
-pub async fn transition_candidate(
-    pool: &PgPool,
+/// values and provenance instead of overwriting them. Generic over the SQL
+/// executor (ADR-0038) so a caller can append this event in the same
+/// transaction as an audit row -- `&PgPool` still works unchanged.
+pub async fn transition_candidate<'e, E>(
+    executor: E,
     candidate_id: Uuid,
     event_type: &str,
     payload: Json,
-) -> Result<Uuid, ExtractionError> {
+) -> Result<Uuid, ExtractionError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let (id,): (Uuid,) = sqlx::query_as(
         "INSERT INTO candidate_events (candidate_id, event_type, payload) VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(candidate_id)
     .bind(event_type)
     .bind(&payload)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(id)
 }
