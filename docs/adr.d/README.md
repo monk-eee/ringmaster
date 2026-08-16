@@ -59,4 +59,3 @@ accepted and implemented.
 | [ADR-0039: Product re-steer — Today/Timeline/People/Inbox as primary navigation](0039-product-re-steer-primary-navigation.md) | Accepted | [EV-0039](../evidence.d/0039-product-re-steer-primary-navigation.md) |
 | [ADR-0040: Dated source ingestion — occurred_at becomes a required, structured field across every ingested source](0040-dated-source-ingestion.md) | Accepted | [EV-0040](../evidence.d/0040-dated-source-ingestion.md) |
 | [ADR-0041: Risk Engine v1 — staleness and date-compression signals](0041-risk-engine-v1-staleness-and-date-compression-signals.md) | Accepted | [EV-0041](../evidence.d/0041-risk-engine-v1-staleness-and-date-compression-signals.md) |
-| [ADR-0041: Risk Engine v1 — staleness and date-compression signals](0041-risk-engine-v1-staleness-and-date-compression-signals.md) | Accepted | [EV-0041](../evidence.d/0041-risk-engine-v1-staleness-and-date-compression-signals.md) |
