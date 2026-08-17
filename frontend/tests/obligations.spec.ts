@@ -1,4 +1,22 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
+
+// ADR-0059: People's "show everyone" view is now paginated (50 rows per
+// page), so a single freshly-created test fixture can land past page one
+// under concurrent load (other tests/sessions creating newer rows in the
+// same shared database). Clicks "Load more" until the target is visible or
+// no further pages remain, waiting for each page's fetch to actually land
+// (not just the click) before deciding whether to click again.
+async function revealByClickingLoadMore(page: Page, target: Locator): Promise<void> {
+  const loadMore = page.getByRole("button", { name: "Load more", exact: true });
+  const cards = page.locator(".people-card");
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (await target.isVisible()) return;
+    if (!(await loadMore.isVisible())) break;
+    const countBefore = await cards.count();
+    await loadMore.click();
+    await expect.poll(async () => cards.count()).toBeGreaterThan(countBefore);
+  }
+}
 
 // ADR-0014: asserts real client-side rendering and interaction (tab
 // switching, filtering), never specific row counts or content — the shared
@@ -279,6 +297,14 @@ test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Grap
 // (GET /api/nodes?node_type=person, GET /api/nodes/:id) -- not a new route.
 // ADR-0051: People defaults to who-needs-attention; a bare person with no
 // linked Obligations only appears after switching to "Show everyone".
+// ADR-0059: grouped as `serial` -- the "Load more" test below seeds 51 new
+// person nodes, and under this suite's default `fullyParallel` execution
+// that insert burst can race the other two tests' single-fixture lookups
+// (offset pagination ordered by updated_at can skip a row while concurrent
+// writes keep shifting the ranking, an accepted trade-off named in
+// ADR-0059 itself). Serial execution removes the temporal overlap instead
+// of just retrying harder.
+test.describe.serial("People tab", () => {
 test("people tab lists person nodes and opens each into its relationship data", async ({ page, request, baseURL }) => {
   const unique = Date.now();
   const response = await request.post(`${baseURL}/api/nodes`, {
@@ -292,7 +318,9 @@ test("people tab lists person nodes and opens each into its relationship data", 
   await expect(page.locator("h1")).toHaveText("People");
 
   await page.getByRole("button", { name: "Show everyone" }).click();
-  await page.getByRole("button", { name: new RegExp(`People Tab Test ${unique}`) }).click();
+  const target = page.getByRole("button", { name: new RegExp(`People Tab Test ${unique}`) });
+  await revealByClickingLoadMore(page, target);
+  await target.click();
   await expect(page.locator(".people-detail h3")).toContainText(`People Tab Test ${unique}`);
   await expect(page.locator(".relationship-obligations")).toBeVisible();
 
@@ -316,7 +344,9 @@ test("people tab defaults to who-needs-attention, excluding a person with no ope
   await expect(page.getByRole("button", { name: new RegExp(bareName) })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Show everyone" }).click();
-  await expect(page.getByRole("button", { name: new RegExp(bareName) })).toBeVisible();
+  const bareTarget = page.getByRole("button", { name: new RegExp(bareName) });
+  await revealByClickingLoadMore(page, bareTarget);
+  await expect(bareTarget).toBeVisible();
 });
 
 // ADR-0059: proves "Load more" actually fetches and appends a further page
@@ -348,6 +378,8 @@ test("people tab: Load more appends a further page (ADR-0059)", async ({ page, r
 
   await expect.poll(async () => cards.count()).toBeGreaterThan(countBeforeLoadMore);
 });
+
+}); // end test.describe.serial("People tab")
 
 // ADR-0041: proves Risk Engine v1's signals, when present, actually render
 // as real text in the browser -- tolerant of whatever the shared

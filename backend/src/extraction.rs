@@ -85,14 +85,15 @@ pub async fn extract_candidate(
         confidence,
         extraction_model,
         None,
+        None,
     )
     .await
 }
 
 /// Like `extract_candidate`, but also records an optional model-inferred
-/// `due_at` (ADR-0058) into the `extracted` event payload. Kept as a
-/// separate entry point so the many existing callers that imply no due date
-/// stay unchanged.
+/// `due_at` (ADR-0058) and `owner_name` (ADR-0060) into the `extracted`
+/// event payload. Kept as a separate entry point so the many existing
+/// callers that imply neither stay unchanged.
 #[allow(clippy::too_many_arguments)]
 pub async fn extract_candidate_with_due_at(
     pool: &PgPool,
@@ -103,6 +104,7 @@ pub async fn extract_candidate_with_due_at(
     confidence: Option<f32>,
     extraction_model: Option<&str>,
     due_at: Option<chrono::DateTime<chrono::Utc>>,
+    owner_name: Option<&str>,
 ) -> Result<Uuid, ExtractionError> {
     validate_candidate_payload(candidate_type, confidence)?;
 
@@ -113,6 +115,7 @@ pub async fn extract_candidate_with_due_at(
         "confidence": confidence,
         "extraction_model": extraction_model,
         "due_at": due_at.map(|value| value.to_rfc3339()),
+        "owner_name": owner_name,
         "requires_validation": true,
     });
 
@@ -170,11 +173,13 @@ from one meeting transcript fragment. Decide whether the fragment contains a \
 commitment, request, risk, follow_up, decision, or expectation. Respond with \
 ONLY one JSON object and no other text, matching exactly this shape: \
 {\"candidate_type\": \"commitment|request|risk|follow_up|decision|expectation\", \
-\"statement\": \"...\", \"confidence\": 0.0-1.0, \"due_at\": \"RFC3339 datetime or null\"}. \
+"statement": "...", "confidence": 0.0-1.0, "due_at": "RFC3339 datetime or null", \
+"owner_name": "name explicitly stated as responsible, or null"}. \
 Set due_at only when the fragment states a deadline; resolve relative dates \
-(\"by Friday\", \"next week\") against the reference date provided, and use null \
-when no deadline is stated. If the fragment contains nothing worth extracting, \
-respond with exactly {\"candidate_type\": null}.";
+("by Friday", "next week") against the reference date provided, and use null \
+when no deadline is stated. Set owner_name only when the fragment explicitly \
+names who is responsible, and use null otherwise. If the fragment contains \
+nothing worth extracting, respond with exactly {"candidate_type": null}.";
 
 #[derive(Debug)]
 pub enum ModelExtractionError {
@@ -235,9 +240,11 @@ pub async fn extract_candidate_via_model(
         .and_then(|value| value.as_str())
         .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
         .map(|value| value.with_timezone(&chrono::Utc));
+    // ADR-0060: a malformed or absent owner_name degrades to None, never an error.
+    let owner_name = parsed.get("owner_name").and_then(|value| value.as_str());
 
     let candidate_id = Uuid::new_v4();
-    extract_candidate_with_due_at(pool, candidate_id, candidate_type, &statement, source_fragment_id, confidence, Some(&config.model), due_at)
+    extract_candidate_with_due_at(pool, candidate_id, candidate_type, &statement, source_fragment_id, confidence, Some(&config.model), due_at, owner_name)
         .await
         .map_err(ModelExtractionError::Persist)?;
     Ok(Some(candidate_id))
@@ -262,6 +269,21 @@ pub async fn candidate_extracted_due_at(
         .and_then(|(payload,)| payload.get("due_at").and_then(|v| v.as_str()).map(str::to_string))
         .and_then(|text| chrono::DateTime::parse_from_rfc3339(&text).ok())
         .map(|value| value.with_timezone(&chrono::Utc)))
+}
+
+/// Reads the model-inferred `owner_name` (ADR-0060) from a candidate's
+/// original `extracted` event, if any. Returns `None` when the candidate has
+/// no stated owner or no extracted event. Used at promotion to resolve an
+/// `owns` edge from the source's stated responsible party.
+pub async fn candidate_extracted_owner_name(pool: &PgPool, candidate_id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(Json,)> = sqlx::query_as(
+        "SELECT payload FROM candidate_events WHERE candidate_id = $1 AND event_type = 'extracted' \
+         ORDER BY recorded_at, id LIMIT 1",
+    )
+    .bind(candidate_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(payload,)| payload.get("owner_name").and_then(|v| v.as_str()).map(str::to_string)))
 }
 
 /// Derives current candidate state from the full event log alone

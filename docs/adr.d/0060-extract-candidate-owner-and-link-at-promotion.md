@@ -1,9 +1,8 @@
 # ADR-0060: Extract an owner name from a candidate and link it at promotion
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
 - **Amends:** [ADR-0027](0027-promote-accepted-candidate-to-obligation.md)'s promotion (carries an owner name forward, when resolvable, as an `owns` edge)
 - **Depends on:** [ADR-0011](0011-extraction-pipeline-candidate-schema-and-model-adapter.md), [ADR-0046](0046-unowned-obligation-risk-signal.md), [ADR-0058](0058-extract-candidate-due-date-to-obligation.md)
 - **Tags:** extraction, obligations, product

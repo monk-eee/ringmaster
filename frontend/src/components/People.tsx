@@ -29,15 +29,26 @@ export default function People() {
   const [detailError, setDetailError] = useState<string | null>(null);
 
   useEffect(() => {
+    let stale = false;
     setLoading(true);
     setError(null);
     fetchNodes("person", needsAttentionOnly, LIST_PAGE_SIZE, 0)
       .then((nodes) => {
+        if (stale) return;
         setPeople(nodes as PersonListNode[]);
         setHasMore(nodes.length === LIST_PAGE_SIZE);
       })
-      .catch((cause) => setError((cause as Error).message))
-      .finally(() => setLoading(false));
+      .catch((cause) => {
+        if (!stale) setError((cause as Error).message);
+      })
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    // Toggling needsAttentionOnly mid-flight must not let an older,
+    // slower-to-resolve request clobber a newer one's result.
+    return () => {
+      stale = true;
+    };
   }, [needsAttentionOnly]);
 
   // ADR-0059: appends the next page rather than re-fetching everything.

@@ -1081,6 +1081,20 @@ async fn promote_candidate(
     let due_at = extraction::candidate_extracted_due_at(&pool, id)
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    // ADR-0060: a candidate extracted with a stated owner resolves, by exact
+    // case-insensitive name match only, against an existing Person node.
+    // No match (including no owner_name at all) creates nothing extra.
+    let owner_name = extraction::candidate_extracted_owner_name(&pool, id)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let owner_person_id: Option<Uuid> = match &owner_name {
+        Some(name) => sqlx::query_scalar("SELECT id FROM nodes WHERE node_type = 'person' AND lower(canonical_text) = lower($1) LIMIT 1")
+            .bind(name)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?,
+        None => None,
+    };
     let mut created_payload = serde_json::Map::new();
     created_payload.insert("status".to_string(), json!("open"));
     created_payload.insert("source_fragment_id".to_string(), json!(current.source_fragment_id));
@@ -1098,6 +1112,14 @@ async fn promote_candidate(
     )
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    // ADR-0060: the owns edge commits in the same transaction as the
+    // Obligation it names an owner for.
+    if let Some(person_id) = owner_person_id {
+        graph::create_edge(&mut *tx, person_id, obligation_id, "owns", None)
+            .await
+            .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    }
 
     extraction::transition_candidate(&mut *tx, id, "promoted", json!({"obligation_id": obligation_id}))
         .await
@@ -2739,7 +2761,7 @@ mod tests {
         let due = chrono::DateTime::parse_from_rfc3339("2026-08-21T17:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        extraction::extract_candidate_with_due_at(&pool, candidate_id, "request", "send the transition plan", fragment_id, Some(0.8), None, Some(due))
+        extraction::extract_candidate_with_due_at(&pool, candidate_id, "request", "send the transition plan", fragment_id, Some(0.8), None, Some(due), None)
             .await
             .expect("extract candidate with a due date");
         extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
@@ -2896,7 +2918,14 @@ mod tests {
 
     /// Exercises a real, live round-trip when RINGMASTER_EMBEDDING_URL is
     /// configured (ADR-0019); otherwise reports and passes trivially, same
-    /// posture as the extraction route's own live-model test.
+    /// posture as the extraction route's own live-model test. Embeds a
+    /// unique marker word alongside the semantic content and searches for
+    /// both -- this repository's shared test database accumulates one
+    /// embedding per run of this exact test (worse since ADR-0062 auto-
+    /// embeds on ingestion too), so a fixed query would eventually rank the
+    /// newest row outside the default limit once enough near-duplicates
+    /// exist; a marker only this run's fragment contains cannot lose that
+    /// race no matter how many prior runs already accumulated.
     #[tokio::test]
     async fn search_route_ranks_results_when_a_model_is_configured() {
         if EmbeddingConfig::from_env().is_none() {
@@ -2904,10 +2933,11 @@ mod tests {
             return;
         }
         let pool = test_pool().await;
+        let marker = format!("marker{}", uuid::Uuid::new_v4().simple());
         let fragment_id = graph::create_source_fragment(
             &pool,
             uuid::Uuid::new_v4(),
-            "Roopa: please send me a transition plan by Friday.",
+            &format!("Roopa: please send me a transition plan by Friday. Reference {marker}."),
             "search-api-test-hash",
         )
         .await
@@ -2917,7 +2947,7 @@ mod tests {
             .expect("embed source fragment");
 
         let response = app(pool)
-            .oneshot(Request::builder().uri("/api/search?q=transition+plan").body(Body::empty()).unwrap())
+            .oneshot(Request::builder().uri(format!("/api/search?q=transition+plan+{marker}")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::OK);

@@ -1,9 +1,8 @@
 # ADR-0061: A derived Obligation health label — composing existing status and signals, not a new score
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
 - **Depends on:** [ADR-0041](0041-risk-engine-v1-staleness-and-date-compression-signals.md), [ADR-0046](0046-unowned-obligation-risk-signal.md), [ADR-0054](0054-congruence-engine-v1-isolated-commitment-signal.md)
 - **Tags:** api, frontend, product
 

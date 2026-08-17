@@ -141,13 +141,19 @@ pub async fn update_node(
 /// may each be a `nodes.id` or an Obligation's `obligation_id`; nothing
 /// enforces that at the database level. `valid_from`/`valid_to` are always
 /// NULL; use `create_edge_with_options` for temporal validity (ADR-0032).
-pub async fn create_edge(
-    pool: &PgPool,
+/// Generic over the SQL executor (ADR-0038's pattern) so a caller can
+/// create an edge in the same transaction as another write -- `&PgPool`
+/// still works unchanged.
+pub async fn create_edge<'e, E>(
+    executor: E,
     from_id: Uuid,
     to_id: Uuid,
     edge_type: &str,
     confidence: Option<f32>,
-) -> Result<Uuid, sqlx::Error> {
+) -> Result<Uuid, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let (id,): (Uuid,) = sqlx::query_as(
         "INSERT INTO edges (from_id, to_id, edge_type, confidence) VALUES ($1, $2, $3, $4) RETURNING id",
     )
@@ -155,7 +161,7 @@ pub async fn create_edge(
     .bind(to_id)
     .bind(edge_type)
     .bind(confidence)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(id)
 }
