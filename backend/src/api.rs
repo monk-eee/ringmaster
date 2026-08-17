@@ -1052,6 +1052,18 @@ async fn promote_candidate(
     }
 
     let obligation_id = Uuid::new_v4();
+    // ADR-0058: a candidate extracted with a stated deadline seeds the new
+    // Obligation's soft (advisory) due date; absent one, this is None and the
+    // Obligation is dateless exactly as before.
+    let due_at = extraction::candidate_extracted_due_at(&pool, id)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut created_payload = serde_json::Map::new();
+    created_payload.insert("status".to_string(), json!("open"));
+    created_payload.insert("source_fragment_id".to_string(), json!(current.source_fragment_id));
+    if let Some(due_at) = due_at {
+        created_payload.insert("soft_due_at".to_string(), json!(due_at.to_rfc3339()));
+    }
     // ADR-0038: the Obligation creation, the candidate's own promoted
     // transition, and the audit row all commit atomically.
     let mut tx = pool.begin().await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -1059,7 +1071,7 @@ async fn promote_candidate(
         &mut *tx,
         obligation_id,
         obligation::ObligationEventType::Created,
-        json!({"status": "open", "source_fragment_id": current.source_fragment_id}),
+        JsonValue::Object(created_payload),
     )
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -1140,7 +1152,7 @@ async fn extract_source_fragment(
         return Err((axum::http::StatusCode::SERVICE_UNAVAILABLE, "RINGMASTER_LLM_URL is not set; extraction is disabled".to_string()));
     };
 
-    match extraction::extract_candidate_via_model(&pool, &config, fragment.id, &fragment.text).await {
+    match extraction::extract_candidate_via_model(&pool, &config, fragment.id, &fragment.text, chrono::Utc::now()).await {
         Ok(Some(candidate_id)) => {
             extraction::rebuild_candidate_projection(&pool)
                 .await
@@ -2628,6 +2640,50 @@ mod tests {
             .expect("the promoted candidate must still be present");
         assert_eq!(candidate_row.get("validation_state").and_then(|v| v.as_str()), Some("promoted"));
         assert_eq!(candidate_row.get("promoted_obligation_id").and_then(|v| v.as_str()), Some(obligation_id.as_str()));
+    }
+
+    /// ADR-0058: a candidate extracted with a due date carries that date into
+    /// the promoted Obligation as its soft (advisory) due date, so Today can
+    /// rank it by real urgency instead of "No due date recorded".
+    #[tokio::test]
+    async fn promote_carries_extracted_due_date_into_soft_due_at() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(&pool, uuid::Uuid::new_v4(), "Send the transition plan by Friday.", "due-date-carry-hash")
+            .await
+            .expect("create source fragment");
+        let candidate_id = uuid::Uuid::new_v4();
+        let due = chrono::DateTime::parse_from_rfc3339("2026-08-21T17:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        extraction::extract_candidate_with_due_at(&pool, candidate_id, "request", "send the transition plan", fragment_id, Some(0.8), None, Some(due))
+            .await
+            .expect("extract candidate with a due date");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let got = created
+            .get("soft_due_at")
+            .and_then(|v| v.as_str())
+            .expect("promoted obligation must carry the extracted due date as soft_due_at");
+        let got = chrono::DateTime::parse_from_rfc3339(got).unwrap().with_timezone(&chrono::Utc);
+        assert_eq!(got, due, "the soft due date must equal the candidate's extracted due_at");
+        assert!(created.get("hard_due_at").map(|v| v.is_null()).unwrap_or(true), "a model-inferred date must not become a hard due date");
     }
 
     #[tokio::test]

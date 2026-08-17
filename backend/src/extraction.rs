@@ -76,6 +76,34 @@ pub async fn extract_candidate(
     confidence: Option<f32>,
     extraction_model: Option<&str>,
 ) -> Result<Uuid, ExtractionError> {
+    extract_candidate_with_due_at(
+        pool,
+        candidate_id,
+        candidate_type,
+        statement,
+        source_fragment_id,
+        confidence,
+        extraction_model,
+        None,
+    )
+    .await
+}
+
+/// Like `extract_candidate`, but also records an optional model-inferred
+/// `due_at` (ADR-0058) into the `extracted` event payload. Kept as a
+/// separate entry point so the many existing callers that imply no due date
+/// stay unchanged.
+#[allow(clippy::too_many_arguments)]
+pub async fn extract_candidate_with_due_at(
+    pool: &PgPool,
+    candidate_id: Uuid,
+    candidate_type: &str,
+    statement: &str,
+    source_fragment_id: Uuid,
+    confidence: Option<f32>,
+    extraction_model: Option<&str>,
+    due_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<Uuid, ExtractionError> {
     validate_candidate_payload(candidate_type, confidence)?;
 
     let payload = json!({
@@ -84,6 +112,7 @@ pub async fn extract_candidate(
         "source_fragment_id": source_fragment_id,
         "confidence": confidence,
         "extraction_model": extraction_model,
+        "due_at": due_at.map(|value| value.to_rfc3339()),
         "requires_validation": true,
     });
 
@@ -141,8 +170,11 @@ from one meeting transcript fragment. Decide whether the fragment contains a \
 commitment, request, risk, follow_up, decision, or expectation. Respond with \
 ONLY one JSON object and no other text, matching exactly this shape: \
 {\"candidate_type\": \"commitment|request|risk|follow_up|decision|expectation\", \
-\"statement\": \"...\", \"confidence\": 0.0-1.0}. If the fragment contains \
-nothing worth extracting, respond with exactly {\"candidate_type\": null}.";
+\"statement\": \"...\", \"confidence\": 0.0-1.0, \"due_at\": \"RFC3339 datetime or null\"}. \
+Set due_at only when the fragment states a deadline; resolve relative dates \
+(\"by Friday\", \"next week\") against the reference date provided, and use null \
+when no deadline is stated. If the fragment contains nothing worth extracting, \
+respond with exactly {\"candidate_type\": null}.";
 
 #[derive(Debug)]
 pub enum ModelExtractionError {
@@ -179,8 +211,12 @@ pub async fn extract_candidate_via_model(
     config: &ModelConfig,
     source_fragment_id: Uuid,
     fragment_text: &str,
+    reference_date: chrono::DateTime<chrono::Utc>,
 ) -> Result<Option<Uuid>, ModelExtractionError> {
-    let prompt = format!("{EXTRACTION_PROMPT_PREAMBLE}\n\nFragment: {fragment_text}");
+    let prompt = format!(
+        "{EXTRACTION_PROMPT_PREAMBLE}\n\nReference date: {}\n\nFragment: {fragment_text}",
+        reference_date.to_rfc3339()
+    );
     let raw_response = model_adapter::complete(config, &prompt).await.map_err(ModelExtractionError::Model)?;
 
     let json_text = extract_json_object(&raw_response)
@@ -193,12 +229,39 @@ pub async fn extract_candidate_via_model(
     };
     let statement = parsed.get("statement").and_then(|value| value.as_str()).unwrap_or("").to_string();
     let confidence = parsed.get("confidence").and_then(|value| value.as_f64()).map(|value| value as f32);
+    // ADR-0058: a malformed or absent due_at degrades to None, never an error.
+    let due_at = parsed
+        .get("due_at")
+        .and_then(|value| value.as_str())
+        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+        .map(|value| value.with_timezone(&chrono::Utc));
 
     let candidate_id = Uuid::new_v4();
-    extract_candidate(pool, candidate_id, candidate_type, &statement, source_fragment_id, confidence, Some(&config.model))
+    extract_candidate_with_due_at(pool, candidate_id, candidate_type, &statement, source_fragment_id, confidence, Some(&config.model), due_at)
         .await
         .map_err(ModelExtractionError::Persist)?;
     Ok(Some(candidate_id))
+}
+
+/// Reads the model-inferred `due_at` (ADR-0058) from a candidate's original
+/// `extracted` event, if any. Returns `None` when the candidate has no due
+/// date or no extracted event. Used at promotion to seed the Obligation's
+/// soft due date from the source's stated deadline.
+pub async fn candidate_extracted_due_at(
+    pool: &PgPool,
+    candidate_id: Uuid,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+    let row: Option<(Json,)> = sqlx::query_as(
+        "SELECT payload FROM candidate_events WHERE candidate_id = $1 AND event_type = 'extracted' \
+         ORDER BY recorded_at, id LIMIT 1",
+    )
+    .bind(candidate_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row
+        .and_then(|(payload,)| payload.get("due_at").and_then(|v| v.as_str()).map(str::to_string))
+        .and_then(|text| chrono::DateTime::parse_from_rfc3339(&text).ok())
+        .map(|value| value.with_timezone(&chrono::Utc)))
 }
 
 /// Derives current candidate state from the full event log alone
@@ -322,6 +385,7 @@ mod tests {
             &config,
             source_fragment_id,
             "Roopa: please send me a transition plan by Friday.",
+            chrono::Utc::now(),
         )
         .await;
 
