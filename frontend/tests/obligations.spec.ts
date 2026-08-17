@@ -243,16 +243,17 @@ test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (AD
 });
 
 // ADR-0039: proves the primary/secondary tab regrouping is real (Today,
-// Timeline, People, Inbox as primary; Obligations, Search, Graph still
-// present, just visually demoted) -- not that the old tabs were deleted.
+// Timeline, People, Inbox as primary; Obligations, Search, Graph, Meetings
+// still present, just visually demoted) -- not that the old tabs were
+// deleted. Meetings joined the secondary group later (ADR-0043).
 test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Graph remain as secondary tabs", async ({ page }) => {
   await page.goto("/");
 
   const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Obligations", "Search", "Graph"]);
+  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Obligations", "Search", "Graph", "Meetings"]);
 
   const secondaryTabs = page.locator(".tab-secondary");
-  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph"]);
+  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph", "Meetings"]);
 });
 
 // ADR-0039: People is a first-class primary tab over already-existing data
@@ -334,5 +335,31 @@ test("meeting review: viewing a meeting and triggering extraction on a fragment 
 
   await page.locator(".meeting-fragment", { hasText: `test passage ${stamp}` }).getByRole("button", { name: "Extract" }).click();
 
-  await expect(page.locator(".meeting-candidate-row, .meeting-review-extract-message").first()).toBeVisible({ timeout: 15000 });
+  // A real LLM call, not a fixed computation -- generous timeout, especially
+  // under concurrent multi-agent load against the same local model server.
+  await expect(page.locator(".meeting-candidate-row, .meeting-review-extract-message").first()).toBeVisible({ timeout: 45000 });
+});
+
+// ADR-0045: proves the Correct control genuinely edits a candidate's type
+// and/or statement and transitions it to "corrected" -- tolerant of
+// whatever the shared development database currently contains, never
+// asserting a specific candidate or count.
+test("inbox tab: correcting a candidate edits its statement and shows Corrected (ADR-0045)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Inbox" }).click();
+  await expect(page.getByRole("tab", { name: "Inbox" })).toHaveAttribute("aria-selected", "true");
+
+  const correctButton = page.locator(".correct-button").first();
+  test.skip((await correctButton.count()) === 0, "no candidate is currently in the candidate state to correct");
+
+  await correctButton.click();
+  const stamp = Date.now();
+  const correctedStatement = `corrected via Playwright ${stamp}`;
+  await page.locator(".correction-form textarea").fill(correctedStatement);
+  await page.locator(".save-correction-button").click();
+
+  const row = page.locator("tr", { has: page.getByText(correctedStatement) });
+  await expect(row).toBeVisible();
+  await expect(row.locator("td").nth(2)).toHaveText("corrected");
+  await expect(row.getByRole("button", { name: "Promote to Obligation" })).toBeVisible();
 });

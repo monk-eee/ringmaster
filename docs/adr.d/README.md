@@ -61,6 +61,6 @@ accepted and implemented.
 | [ADR-0041: Risk Engine v1 — staleness and date-compression signals](0041-risk-engine-v1-staleness-and-date-compression-signals.md) | Accepted | [EV-0041](../evidence.d/0041-risk-engine-v1-staleness-and-date-compression-signals.md) |
 | [ADR-0042: Surface occurred_at on nodes, with date-range retrieval and a second MCP tool](0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md) | Accepted | [EV-0042](../evidence.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md) |
 | [ADR-0043: Meeting Review page — transcript fragments with inline extracted candidates](0043-meeting-review-page.md) | Accepted | [EV-0043](../evidence.d/0043-meeting-review-page.md) |
-| [ADR-0044: Today attention items show management meaning, not identifiers](0044-today-attention-items-management-meaning.md) | Proposed | [EV-0044](../evidence.d/0044-today-attention-items-management-meaning.md) |
+| [ADR-0044: Today attention items show management meaning, not identifiers](0044-today-attention-items-management-meaning.md) | Accepted | [EV-0044](../evidence.d/0044-today-attention-items-management-meaning.md) |
 | [ADR-0045: Correct a candidate before accepting it](0045-correct-candidate-before-accepting.md) | Accepted | [EV-0045](../evidence.d/0045-correct-candidate-before-accepting.md) |
 | [ADR-0046: Unowned-obligation risk signal via existing owns edges](0046-unowned-obligation-risk-signal.md) | Accepted | [EV-0046](../evidence.d/0046-unowned-obligation-risk-signal.md) |

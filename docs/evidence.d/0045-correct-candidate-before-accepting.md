@@ -42,6 +42,13 @@ invariant = "CandidatesTable.tsx offers a Correct control with an editable type/
 type = "present"
 pattern = "Save Correction"
 paths = ["frontend/src/components/CandidatesTable.tsx"]
+
+[[check]]
+id = "playwright-proves-correction-workflow"
+invariant = "Focused browser coverage proves correcting a candidate edits its statement and shows Corrected."
+type = "present"
+pattern = 'ADR-0045'
+paths = ["frontend/tests/obligations.spec.ts"]
 ```
 
 ## Notes
