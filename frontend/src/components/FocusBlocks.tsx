@@ -2,8 +2,16 @@ import { useState } from "react";
 import type { FocusBlock, FocusBlockObligation } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
+import { BUCKETS } from "./TimeHorizon";
 
 type Props = { blocks: FocusBlock[] };
+
+// ADR-0052: names the bucket a block's Obligations actually share, reusing
+// Time Horizon's own labels -- "these belong together" states why, not
+// just that they do.
+function bucketLabel(bucket: string): string {
+  return BUCKETS.find((entry) => entry.key === bucket)?.label ?? bucket;
+}
 
 // ADR-0050: Today shows a few focus groups by default, ordered by urgency,
 // with an honest "show all" -- not a 110-item dump that destroys the
@@ -39,12 +47,12 @@ export default function FocusBlocks({ blocks }: Props) {
   return (
     <div className="focus-blocks">
       {shown.map((block) => (
-        <div className="card focus-block" key={block.node_id}>
+        <div className="card focus-block" key={`${block.node_id}-${block.time_horizon_bucket}`}>
           <p className="daily-brief-summary">
             <span className="type-icon" aria-hidden="true">
               {typeIcon(block.node_type)}
             </span>{" "}
-            {block.canonical_text} — {block.obligations.length} things belong together
+            {block.canonical_text} — {bucketLabel(block.time_horizon_bucket)} ({block.obligations.length} things belong together)
           </p>
           <ol className="daily-brief-list">
             {block.obligations.map((item) => (
