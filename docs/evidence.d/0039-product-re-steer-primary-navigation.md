@@ -33,7 +33,7 @@ paths = ["frontend/src/App.tsx"]
 id = "people-tab-lists-and-opens-relationship-data"
 invariant = "The People tab lists person nodes and opens each into its existing relationship data, with no new backend route."
 type = "present"
-pattern = 'fetchNodes\("person"\)[\s\S]*fetchNodeDetail'
+pattern = 'fetchNodes\("person"[\s\S]*fetchNodeDetail'
 paths = ["frontend/src/components/People.tsx"]
 
 [[check]]
