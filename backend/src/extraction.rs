@@ -290,6 +290,7 @@ mod tests {
     async fn test_pool() -> PgPool {
         let database_url =
             std::env::var("DATABASE_URL").expect("DATABASE_URL must be set to run extraction tests");
+        crate::guard_test_database(&database_url);
         PgPoolOptions::new()
             .max_connections(2)
             .connect(&database_url)

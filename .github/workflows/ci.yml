@@ -15,7 +15,7 @@ jobs:
         env:
           POSTGRES_USER: ringmaster
           POSTGRES_PASSWORD: ringmaster-ci
-          POSTGRES_DB: ringmaster
+          POSTGRES_DB: ringmaster_test
         ports:
           - 5432:5432
         options: >-
@@ -24,7 +24,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://ringmaster:ringmaster-ci@localhost:5432/ringmaster
+      DATABASE_URL: postgres://ringmaster:ringmaster-ci@localhost:5432/ringmaster_test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
