@@ -75,3 +75,6 @@ accepted and implemented.
 | [ADR-0057: Enforce test-database isolation with a runtime guard](0057-enforce-test-database-isolation-with-a-runtime-guard.md) | Accepted | [EV-0057](../evidence.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md) |
 | [ADR-0058: Extract a due date from a candidate and carry it to the promoted obligation](0058-extract-candidate-due-date-to-obligation.md) | Accepted | [EV-0058](../evidence.d/0058-extract-candidate-due-date-to-obligation.md) |
 | [ADR-0059: List-view pagination for Obligations, Candidates, and People](0059-list-view-pagination.md) | Accepted | [EV-0059](../evidence.d/0059-list-view-pagination.md) |
+| [ADR-0060: Extract an owner name from a candidate and link it at promotion](0060-extract-candidate-owner-and-link-at-promotion.md) | Accepted | [EV-0060](../evidence.d/0060-extract-candidate-owner-and-link-at-promotion.md) |
+| [ADR-0061: A derived Obligation health label — composing existing status and signals, not a new score](0061-obligation-health-label.md) | Accepted | [EV-0061](../evidence.d/0061-obligation-health-label.md) |
+| [ADR-0062: Auto-embed fragments on ingest (best-effort), so search has data](0062-auto-embed-fragments-on-ingest.md) | Accepted | [EV-0062](../evidence.d/0062-auto-embed-fragments-on-ingest.md) |

@@ -191,15 +191,17 @@ async fn get_obligation_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>)
         })
         .collect();
 
+    let signals = risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges);
     Ok(Json(json!({
         "obligation_id": id,
-        "status": status,
+        "status": &status,
         "updated_at": updated_at.to_rfc3339(),
         "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
         "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
         "source_fragment_id": source_fragment_id,
         "source_text": source_text,
-        "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges),
+        "health": obligation_health(&status, hard_due_at, &signals),
+        "risk_signals": signals,
         "linked_nodes": linked_nodes,
     })))
 }
@@ -292,6 +294,27 @@ fn risk_signals(
     signals
 }
 
+/// A derived, five-value Obligation health label (ADR-0061): a
+/// deterministic lookup over already-computed fields, not a new signal or
+/// a score. `risk_signals` is the same slice this function's caller
+/// already computed via `risk_signals()` above -- never recomputed here.
+fn obligation_health(status: &str, hard_due_at: Option<chrono::DateTime<chrono::Utc>>, risk_signals: &[JsonValue]) -> &'static str {
+    if status == "closed" {
+        return "Completed";
+    }
+    if status == "at_risk" {
+        return "At Risk";
+    }
+    if hard_due_at.is_some_and(|due| due < chrono::Utc::now()) {
+        return "Broken";
+    }
+    let is_stale = risk_signals.iter().any(|signal| signal["signal"] == "stale");
+    if is_stale {
+        return "Stalled";
+    }
+    "Healthy"
+}
+
 /// Ranks non-closed obligations by urgency and states a plain, deterministic
 /// reason for each (ADR-0022): at-risk first, then soonest hard_due_at, then
 /// soonest soft_due_at, then most-recently-updated. Read-only; a plain SQL
@@ -333,16 +356,18 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
         .into_iter()
         .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner, has_edges)| {
             let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
+            let signals = risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges);
             json!({
                 "obligation_id": obligation_id,
-                "status": status,
+                "status": &status,
                 "updated_at": updated_at.to_rfc3339(),
                 "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
                 "source_fragment_id": source_fragment_id,
                 "source_text": source_text,
                 "reason": reason,
-                "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges),
+                "health": obligation_health(&status, hard_due_at, &signals),
+                "risk_signals": signals,
             })
         })
         .collect::<Vec<_>>();
@@ -416,15 +441,17 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
     for (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner, has_edges) in rows {
         let bucket = time_horizon_bucket(&status, hard_due_at, soft_due_at);
         let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
+        let signals = risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges);
         buckets.entry(bucket).or_default().push(json!({
             "obligation_id": obligation_id,
-            "status": status,
+            "status": &status,
             "updated_at": updated_at.to_rfc3339(),
             "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
             "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
             "source_fragment_id": source_fragment_id,
             "reason": reason,
-            "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges),
+            "health": obligation_health(&status, hard_due_at, &signals),
+            "risk_signals": signals,
         }));
     }
 
@@ -1731,6 +1758,42 @@ mod tests {
         assert!(signals.is_empty());
     }
 
+    /// ADR-0061: closed always reads Completed, regardless of dates or signals.
+    #[test]
+    fn obligation_health_returns_completed_for_closed_status() {
+        let due = chrono::Utc::now() - chrono::Duration::days(30);
+        assert_eq!(obligation_health("closed", Some(due), &[]), "Completed");
+    }
+
+    /// ADR-0061: at_risk always reads At Risk, taking priority over a
+    /// stale signal that might otherwise read as Stalled.
+    #[test]
+    fn obligation_health_returns_at_risk_for_at_risk_status() {
+        let signals = vec![json!({ "signal": "stale", "explanation": "..." })];
+        assert_eq!(obligation_health("at_risk", None, &signals), "At Risk");
+    }
+
+    /// ADR-0061's own named distinction: an overdue, still-open Obligation
+    /// with no stale signal is Broken, not Stalled -- the two must not be
+    /// conflated even though both are "open and unhealthy".
+    #[test]
+    fn obligation_health_distinguishes_broken_from_stalled() {
+        let overdue = chrono::Utc::now() - chrono::Duration::days(1);
+        assert_eq!(obligation_health("open", Some(overdue), &[]), "Broken");
+
+        let stale_signals = vec![json!({ "signal": "stale", "explanation": "..." })];
+        assert_eq!(obligation_health("open", None, &stale_signals), "Stalled");
+    }
+
+    /// ADR-0061: open, not overdue, not stale reads Healthy -- the only
+    /// remaining case of the five fixed values.
+    #[test]
+    fn obligation_health_returns_healthy_for_an_ordinary_open_obligation() {
+        let future = chrono::Utc::now() + chrono::Duration::days(30);
+        assert_eq!(obligation_health("open", Some(future), &[]), "Healthy");
+        assert_eq!(obligation_health("open", None, &[]), "Healthy");
+    }
+
     #[tokio::test]
     async fn health_route_returns_ok() {
         let pool = test_pool().await;
@@ -1966,6 +2029,9 @@ mod tests {
             "at_risk must outrank an open obligation with a due date, however distant"
         );
         assert_eq!(rows[at_risk_index.unwrap()]["reason"], "Marked at risk. No evidence recorded.");
+        // ADR-0061: health is attached alongside risk_signals on this same route.
+        assert_eq!(rows[at_risk_index.unwrap()]["health"], "At Risk");
+        assert_eq!(rows[far_future_index.unwrap()]["health"], "Healthy");
     }
 
     /// ADR-0023: the reason cites the linked source fragment's text, or
@@ -2792,6 +2858,103 @@ mod tests {
         assert!(created.get("hard_due_at").map(|v| v.is_null()).unwrap_or(true), "a model-inferred date must not become a hard due date");
     }
 
+    /// ADR-0060: a candidate extracted with an owner_name that exactly
+    /// (case-insensitively) matches an existing Person node's
+    /// canonical_text creates an owns edge in the same transaction as
+    /// promotion.
+    #[tokio::test]
+    async fn promotion_creates_owns_edge_on_exact_owner_match() {
+        let pool = test_pool().await;
+        // A unique-per-run name: this database is long-lived across many test
+        // runs, so a fixed literal name would eventually collide with an
+        // older run's own person node and the unordered `LIMIT 1` lookup
+        // could resolve to that one instead of this run's.
+        let unique_name = format!("Owner Match Test Person {}", uuid::Uuid::new_v4());
+        let person_id = graph::create_node(&pool, "person", &unique_name, json!({})).await.expect("create person");
+        let fragment_id = graph::create_source_fragment(&pool, uuid::Uuid::new_v4(), "a stated commitment", "owner-match-hash")
+            .await
+            .expect("create source fragment");
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate_with_due_at(&pool, candidate_id, "commitment", "send the plan", fragment_id, Some(0.8), None, None, Some(&unique_name.to_lowercase()))
+            .await
+            .expect("extract candidate with a stated owner");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let obligation_id: uuid::Uuid = created.get("obligation_id").and_then(|v| v.as_str()).unwrap().parse().unwrap();
+
+        let detail_response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/obligations/{obligation_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let detail_body = axum::body::to_bytes(detail_response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&detail_body).expect("valid json body");
+        let linked = detail.get("linked_nodes").and_then(|v| v.as_array()).expect("linked_nodes present");
+        assert!(
+            linked.iter().any(|node| node["edge_type"] == "owns" && node["node_id"] == person_id.to_string()),
+            "an owns edge from the exactly-matched person must exist: {linked:?}"
+        );
+        // ADR-0061: health is attached alongside risk_signals on this route too.
+        assert_eq!(detail["health"], "Healthy");
+    }
+
+    /// ADR-0060: no owner_name, or one matching no existing Person, promotes
+    /// exactly as before -- no edge, no fabricated Person node.
+    #[tokio::test]
+    async fn promotion_creates_no_owns_edge_without_an_exact_match() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(&pool, uuid::Uuid::new_v4(), "Someone unnamed will send the plan.", "owner-no-match-hash")
+            .await
+            .expect("create source fragment");
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate_with_due_at(&pool, candidate_id, "commitment", "send the plan", fragment_id, Some(0.8), None, None, Some("Nobody Registered"))
+            .await
+            .expect("extract candidate with an unresolvable owner");
+        extraction::transition_candidate(&pool, candidate_id, "accepted", json!({}))
+            .await
+            .expect("append accepted event");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/promote"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let obligation_id: uuid::Uuid = created.get("obligation_id").and_then(|v| v.as_str()).unwrap().parse().unwrap();
+
+        let detail_response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/obligations/{obligation_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let detail_body = axum::body::to_bytes(detail_response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&detail_body).expect("valid json body");
+        let linked = detail.get("linked_nodes").and_then(|v| v.as_array()).expect("linked_nodes present");
+        assert!(linked.is_empty(), "no owns edge (or any edge) must exist without an exact owner match: {linked:?}");
+    }
+
     #[tokio::test]
     async fn promote_route_returns_409_for_a_candidate_not_yet_accepted() {
         let pool = test_pool().await;
@@ -3572,6 +3735,9 @@ mod tests {
             .expect("the just-created obligation must be present in overdue");
         let signals = row["risk_signals"].as_array().expect("risk_signals must be an array");
         assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
+        // ADR-0061: health is attached alongside risk_signals here too --
+        // overdue, open, freshly-created (not stale) reads Broken.
+        assert_eq!(row["health"], "Broken");
     }
 
     /// ADR-0046: mirrors the Daily Brief's own unowned proof, scoped to the

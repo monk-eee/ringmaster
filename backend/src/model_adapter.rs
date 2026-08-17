@@ -25,16 +25,22 @@ impl std::error::Error for ModelAdapterError {}
 pub struct ModelConfig {
     pub url: String,
     pub model: String,
+    /// ADR-0065: bearer token for hosted OpenAI-compatible providers. `None`
+    /// for keyless endpoints (Ollama), which send no `Authorization` header.
+    pub api_key: Option<String>,
 }
 
 impl ModelConfig {
-    /// Reads RINGMASTER_LLM_URL / RINGMASTER_MODEL (ADR-0011). Returns None
-    /// when unconfigured; callers must treat that as "extraction disabled",
-    /// never as an error that blocks ingestion or storage.
+    /// Reads RINGMASTER_LLM_URL / RINGMASTER_MODEL / RINGMASTER_LLM_API_KEY
+    /// (ADR-0011, ADR-0065). Returns None when the URL is unset; callers must
+    /// treat that as "extraction disabled", never as an error that blocks
+    /// ingestion or storage. The API key is optional -- a URL with no key is
+    /// valid (Ollama), a URL with a key is valid (hosted).
     pub fn from_env() -> Option<Self> {
         let url = env::var("RINGMASTER_LLM_URL").ok()?;
         let model = env::var("RINGMASTER_MODEL").unwrap_or_else(|_| "default".to_string());
-        Some(Self { url, model })
+        let api_key = env::var("RINGMASTER_LLM_API_KEY").ok().filter(|key| !key.trim().is_empty());
+        Some(Self { url, model, api_key })
     }
 }
 
@@ -76,12 +82,11 @@ pub async fn complete(config: &ModelConfig, prompt: &str) -> Result<String, Mode
         model: &config.model,
         messages: vec![ChatMessage { role: "user", content: prompt }],
     };
-    let response = client
-        .post(format!("{}/chat/completions", config.url.trim_end_matches('/')))
-        .json(&request)
-        .send()
-        .await
-        .map_err(ModelAdapterError::Request)?;
+    let mut request_builder = client.post(format!("{}/chat/completions", config.url.trim_end_matches('/'))).json(&request);
+    if let Some(api_key) = &config.api_key {
+        request_builder = request_builder.bearer_auth(api_key);
+    }
+    let response = request_builder.send().await.map_err(ModelAdapterError::Request)?;
     let parsed: ChatResponse = response.json().await.map_err(ModelAdapterError::Request)?;
     parsed
         .choices
@@ -100,6 +105,7 @@ mod tests {
         let config = ModelConfig {
             url: "http://127.0.0.1:1".to_string(), // unroutable port: connection refused
             model: "test-model".to_string(),
+            api_key: None,
         };
         let result = complete(&config, "extract obligations from: hello").await;
         assert!(
