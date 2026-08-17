@@ -61,6 +61,19 @@ fixed and verified live:
   `governance` job (not backend/frontend — a `check-evidence.mjs`/
   `git diff --check` gate, not a logic bug) during the ADR-0056 rollout,
   now resolved as of the latest commit.
+- **Stale containers, found and fixed this pass**: the running
+  `ringmaster-backend-1`/`ringmaster-frontend-1` containers were still
+  serving an image built *before* the latest commit landed (confirmed via
+  `podman inspect --format '{{.Created}}'` on both the image and the
+  commit timestamp) — Today briefly rendered "120 things need your
+  attention" with mostly generic, evidence-less text, which looked like a
+  capping regression but wasn't one. `podman compose build backend
+  frontend && podman compose up -d --force-recreate backend frontend`
+  fixed it; reloading afterward showed the true, small, evidence-backed
+  list. Matches a gotcha already in repo memory ("running compose
+  containers go stale silently") — worth checking *first*, before
+  assuming a code regression, whenever the live app disagrees with what
+  the source/evidence says it should do.
 
 ## What's actually real and working
 
@@ -97,7 +110,8 @@ fixed and verified live:
   new since the last audit — clicking any Today row now opens a full
   detail view (confirmed: rows render as real `<button>` elements, not
   static text).
-- **Governance**: 56 ADRs, 54 `PROVEN`, 1 `ASSERTED`, 0 broken. CI green.
+- **Governance**: 55 ADRs, 54 `PROVEN`, 1 `ASSERTED` (ADR-0004,
+  policy-only by design), 0 broken. CI green.
 
 ## The frontend, tab by tab (what I actually saw, this pass)
 
@@ -128,15 +142,17 @@ Primary nav: `Today / Timeline / People / Inbox`, secondary/"Developer":
 ## The database, right now (a snapshot that's already changing)
 
 At the moment of writing: single-digit-to-thirties counts across
-obligations/people/candidates — down from the ~2,025/1,007/1,008 the first
-audit found. The reduction is real and the isolation mechanism
-(`ringmaster_test`) genuinely exists on the running Postgres. What's
-*not* fully solved: nothing stops a stray local `cargo test` run (mine
-included, this session) from still writing to the dev database if the
-caller doesn't deliberately point `DATABASE_URL` at `ringmaster_test` —
-this is a convention, not an enforced boundary. A few of the "real"-
-looking people/obligations currently visible on the live Today page are
-confirmed test-fixture residue from this exact session's own test runs.
+obligations/people/candidates (9 obligations / 21 nodes / 24 candidates
+on this pass) — down from the ~2,025/1,007/1,008 the first audit found,
+and now staying down. The reduction is real, the isolation mechanism
+(`ringmaster_test`) genuinely exists on the running Postgres, and as of
+[ADR-0057](adr.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md)
+it is now *enforced*, not merely documented: every backend `test_pool()`
+calls a runtime guard (`backend/src/lib.rs`) that panics unless
+`DATABASE_URL` targets `ringmaster_test`, so a stray `cargo test` against
+the long-lived `ringmaster` database a person reads at `localhost:3000`
+now fails loudly instead of silently polluting it. The residue the first
+audit found has been cleared and the guard stops it recurring.
 
 ## Why it's built this way
 
@@ -164,8 +180,6 @@ mid-audit HEAD movements are just the latest instance of that.
   Engine — [ADR-0054](adr.d/0054-congruence-engine-v1-isolated-commitment-signal.md)
   only ships the narrow, honest slice (zero linked edges at all); checking
   against real delivery work needs ADO ingestion that doesn't exist yet.
-- Enforcement (vs. documentation) of the `ringmaster_test` convention —
-  the gap this pass surfaced.
 - A pagination/cap policy for the People/Obligations/Candidates *list*
   views (as opposed to Today's sections, which are now all capped) —
   still fetch-all, per the first audit's finding.
