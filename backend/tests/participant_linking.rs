@@ -131,13 +131,12 @@ async fn ingest_non_meeting_source_links_matching_participants_without_speakers(
         .await
         .expect("ingest email source");
     let edges = participated_in_edges(&pool, ingested.node_id).await;
-    let (speaker,): (Option<String>,) = sqlx::query_as(
-        "SELECT speaker FROM source_fragments WHERE id = $1",
-    )
-    .bind(ingested.fragment_ids[0])
-    .fetch_one(&pool)
-    .await
-    .expect("read email fragment speaker");
+    let (speaker,): (Option<String>,) =
+        sqlx::query_as("SELECT speaker FROM source_fragments WHERE id = $1")
+            .bind(ingested.fragment_ids[0])
+            .fetch_one(&pool)
+            .await
+            .expect("read email fragment speaker");
 
     assert_eq!(edges, vec![(person_id, Some(1.0))]);
     assert_eq!(speaker, None);

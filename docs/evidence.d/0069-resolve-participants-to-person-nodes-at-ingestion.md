@@ -19,7 +19,7 @@ paths = ["backend/src/transcript.rs"]
 id = "ingestion-creates-participated-in-edge-on-exact-match"
 invariant = "A matched name creates a participated_in edge from the person node to the new source node, in the same transaction as fragment creation."
 type = "present"
-pattern = "create_edge\\(&mut \\*tx, person_id, source_node_id, \"participated_in\""
+pattern = 'graph::create_edge\([\s\S]*?&mut \*tx,[\s\S]*?person_id,[\s\S]*?source_node_id,[\s\S]*?"participated_in",[\s\S]*?Some\(1\.0\)'
 paths = ["backend/src/transcript.rs"]
 
 [[check]]
@@ -34,7 +34,7 @@ id = "backend-suite-passes-with-participant-linking"
 invariant = "The full backend suite passes against ringmaster_test with participant resolution in place."
 type = "manual"
 last_verified = "2026-08-17"
-rationale = "Ran the full backend suite (`cargo test -- --test-threads=1`) against ringmaster_test: 147 passed, 0 failed across every binary, including the three inline transcript.rs unit tests and the three backend/tests/participant_linking.rs integration tests (exact participant and speaker matches each link once and deduplicate, the legacy ingest_transcript path also links, and unmatched names create neither a Person node nor an edge)."
+rationale = "The full serial backend suite passed through Unit Test MCP against ringmaster_test with participant resolution in place. The focused participant_linking target also passed and covers SourceMetadata meeting ingestion, legacy MeetingMetadata transcript ingestion, exact case-insensitive resolution, deduplication, and unmatched-name behavior."
 ```
 
 ## Notes
