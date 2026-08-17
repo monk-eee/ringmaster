@@ -174,9 +174,10 @@ mid-audit HEAD movements are just the latest instance of that.
   ([VISION.md](VISION.md#open-questions-for-future-adrs)).
 - Participant/speaker names now resolve to existing Person nodes by exact,
   case-insensitive name during new ingestion and create `participated_in`
-  edges. Fuzzy matching, Person-node creation for unknown names, backfill of
-  older sources, and changing `last_interaction_at` remain deliberately out
-  of scope.
+  edges. `last_interaction_at` now uses those identity edges while retaining
+  the legacy speaker fallback for older sources. Fuzzy matching, Person-node
+  creation for unknown names, backfill of older sources, and a readable Past
+  interaction list remain deliberately out of scope.
 - Natural-language date parsing ("last week") anywhere — every date
   boundary is RFC3339, supplied by the caller.
 - "Upcoming conversation" on a person's page — no calendar/future-meeting

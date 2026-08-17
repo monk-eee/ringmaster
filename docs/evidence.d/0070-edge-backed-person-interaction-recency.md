@@ -20,7 +20,14 @@ paths = ["backend/src/api.rs"]
 id = "person-list-batches-edge-backed-interactions"
 invariant = "The People list derives interaction dates for all returned people in one batched edge-plus-fallback query."
 type = "present"
-pattern = "edge_interactions: Vec<EdgeInteractionRow>"
+pattern = 'let interactions: Vec<InteractionRow> = sqlx::query_as\([\s\S]*?UNION ALL[\s\S]*?GROUP BY evidence\.person_id'
+paths = ["backend/src/api.rs"]
+
+[[check]]
+id = "person-list-has-no-second-interaction-query"
+invariant = "The People list does not retain a second edge_interactions query alongside the combined batched query."
+type = "absent"
+pattern = "EdgeInteractionRow|edge_interactions"
 paths = ["backend/src/api.rs"]
 
 [[check]]
@@ -34,7 +41,7 @@ paths = ["backend/src/api.rs"]
 id = "newest-interaction-wins-across-paths"
 invariant = "The newest occurred_at value wins when both edge-backed and legacy speaker evidence exist."
 type = "present"
-pattern = 'fn newest_interaction_wins_between_edge_and_legacy_paths'
+pattern = 'fn newest_interaction_wins_between_edge_and_legacy_paths[\s\S]*?newer legacy-path date must win[\s\S]*?newer edge-path date must win'
 paths = ["backend/src/api.rs"]
 
 [[check]]
@@ -42,20 +49,17 @@ id = "backend-suite-passes-with-edge-backed-recency"
 invariant = "The backend suite passes with edge-backed Person interaction recency."
 type = "manual"
 last_verified = "2026-08-17"
-rationale = "A live test run is not a file-content regex. Ran the full backend suite via the Unit Test MCP custom command (cargo test -- --test-threads=1) against ringmaster_test with the edge-backed derivation in place, including person_detail_uses_participation_edge_for_last_interaction_at, person_list_uses_participation_edge_for_last_interaction_at, person_list_uses_legacy_speaker_fallback_with_no_participation_edge, and newest_interaction_wins_between_edge_and_legacy_paths; two consecutive runs reported PASSED with zero failures."
+rationale = "After the single-query conformance refactor, the full backend suite passed through Unit Test MCP against ringmaster_test, and the focused newest_interaction_wins_between_edge_and_legacy_paths run also passed. The custom Rust runner reports process status but does not emit parsed test counts or a coverage artifact."
 ```
 
 ## Notes
 
-Implemented in `backend/src/api.rs`: `list_nodes_route` (the People list) adds
-a third batched query, `edge_interactions`, joining `participated_in` edges
-to their target source nodes' `occurred_at` and grouping by person id; the
-exposed `last_interaction_at` is the max of that edge-backed value and the
-existing legacy speaker-match value. `get_node_detail` mirrors this with a
-single `GREATEST(edge_path.last_interaction_at, legacy_path.last_interaction_at)`
-query over two subqueries. Both routes keep exactly one query per evidence
-path (no per-row queries). Four new tests cover: edge-only derivation on
-detail and on the list route, legacy-only fallback on the list route
-(reusing the existing detail-side coverage), and that the newer of the two
-paths wins on both routes when both exist.
+Implemented in `backend/src/api.rs`: `list_nodes_route` (the People list) uses
+one batched `UNION ALL` aggregate query for both `participated_in` edge-backed
+dates and legacy speaker-match dates, grouped by person id; no per-row or
+second interaction query remains. `get_node_detail` uses one bounded
+`GREATEST(edge_path.last_interaction_at, legacy_path.last_interaction_at)`
+query over two subqueries. Four tests cover edge-only derivation on detail and
+on the list route, legacy-only fallback on the list route (reusing existing
+detail-side coverage), and both newest-wins orderings on both routes.
 

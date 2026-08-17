@@ -116,10 +116,20 @@ export type RelationshipObligation = {
   risk_signals: RiskSignal[];
 };
 
+export type RecentInteraction = {
+  source_id: string;
+  source_type: string;
+  title: string;
+  occurred_at: string;
+  evidence_mode: "participated_in" | "legacy_speaker";
+};
+
 export type NodeDetail = GraphNode & {
   neighbors: NodeNeighbor[];
   relationship: { at_risk: RelationshipObligation[]; open: RelationshipObligation[] } | null;
   last_interaction_at: string | null;
+  recent_interactions: RecentInteraction[];
+  recent_interactions_total: number;
 };
 
 export type Edge = {

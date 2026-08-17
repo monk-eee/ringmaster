@@ -943,6 +943,48 @@ td.evidence-cell .no-evidence {
   overflow: hidden;
 }
 
+.recent-interactions {
+  margin: 1rem 0;
+}
+
+.recent-interactions h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.recent-interactions-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-interactions-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.recent-interaction-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-interaction-meta,
+.recent-interactions-cap {
+  flex: none;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 /* ADR-0033: progressive graph traversal trail */
 .graph-trail {
   display: flex;

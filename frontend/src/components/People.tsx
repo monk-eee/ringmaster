@@ -89,6 +89,34 @@ export default function People() {
                 </div>
               ))}
             </dl>
+            {(() => {
+              const recentInteractions = detail.recent_interactions ?? [];
+              const recentInteractionsTotal = detail.recent_interactions_total ?? 0;
+              return <section className="recent-interactions" aria-labelledby="recent-interactions-heading">
+              <h4 id="recent-interactions-heading">Recent interactions</h4>
+              {recentInteractions.length === 0 ? (
+                <p className="empty-state">No recorded interactions.</p>
+              ) : (
+                <>
+                  <ol className="recent-interactions-list">
+                    {recentInteractions.map((interaction) => (
+                      <li key={interaction.source_id}>
+                        <span className="recent-interaction-title">{interaction.title}</span>
+                        <span className="recent-interaction-meta">
+                          {interaction.source_type} · {new Date(interaction.occurred_at).toLocaleDateString()}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                  {recentInteractionsTotal > recentInteractions.length && (
+                    <p className="recent-interactions-cap">
+                      Showing the latest {recentInteractions.length} of {recentInteractionsTotal}.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>;
+            })()}
             <div className="relationship-obligations">
               <h4>Relationship</h4>
               {!detail.relationship || (detail.relationship.at_risk.length === 0 && detail.relationship.open.length === 0) ? (

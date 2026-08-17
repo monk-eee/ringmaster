@@ -1383,34 +1383,26 @@ async fn list_nodes_route(State(pool): State<PgPool>, Query(params): Query<NodeQ
 
     #[derive(Debug, FromRow)]
     struct InteractionRow {
-        speaker: String,
-        last_interaction_at: Option<chrono::DateTime<chrono::Utc>>,
-    }
-    let names: Vec<String> = nodes.iter().map(|node| node.canonical_text.clone()).collect();
-    let interactions: Vec<InteractionRow> = sqlx::query_as(
-        "SELECT sf.speaker, MAX(n.occurred_at) AS last_interaction_at \
-         FROM source_fragments sf JOIN nodes n ON n.id = sf.source_id \
-         WHERE sf.speaker = ANY($1) \
-         GROUP BY sf.speaker",
-    )
-    .bind(&names)
-    .fetch_all(&pool)
-    .await
-    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-
-    // ADR-0070: participated_in edges are authoritative identity evidence and
-    // cover every source type; the legacy speaker match above remains a
-    // fallback for pre-ADR-0069 sources that were never backfilled.
-    #[derive(Debug, FromRow)]
-    struct EdgeInteractionRow {
         person_id: Uuid,
         last_interaction_at: Option<chrono::DateTime<chrono::Utc>>,
     }
-    let edge_interactions: Vec<EdgeInteractionRow> = sqlx::query_as(
-        "SELECT e.from_id AS person_id, MAX(source.occurred_at) AS last_interaction_at \
-         FROM edges e JOIN nodes source ON source.id = e.to_id \
-         WHERE e.from_id = ANY($1) AND e.edge_type = 'participated_in' \
-         GROUP BY e.from_id",
+
+    // ADR-0070: one batched query combines authoritative participated_in
+    // edges with the legacy speaker fallback for every listed Person id.
+    let interactions: Vec<InteractionRow> = sqlx::query_as(
+        "SELECT evidence.person_id, MAX(evidence.occurred_at) AS last_interaction_at \
+         FROM ( \
+             SELECT e.from_id AS person_id, source.occurred_at \
+             FROM edges e JOIN nodes source ON source.id = e.to_id \
+             WHERE e.from_id = ANY($1) AND e.edge_type = 'participated_in' \
+             UNION ALL \
+             SELECT person.id AS person_id, source.occurred_at \
+             FROM nodes person \
+             JOIN source_fragments sf ON sf.speaker = person.canonical_text \
+             JOIN nodes source ON source.id = sf.source_id \
+             WHERE person.id = ANY($1) \
+         ) evidence \
+         GROUP BY evidence.person_id",
     )
     .bind(&ids)
     .fetch_all(&pool)
@@ -1421,15 +1413,11 @@ async fn list_nodes_route(State(pool): State<PgPool>, Query(params): Query<NodeQ
         .into_iter()
         .map(|node| {
             let counts = counts.iter().find(|row| row.node_id == node.id);
-            let legacy_interaction_at = interactions
-                .iter()
-                .find(|row| row.speaker == node.canonical_text)
-                .and_then(|row| row.last_interaction_at);
-            let edge_interaction_at = edge_interactions
+            let last_interaction_at = interactions
                 .iter()
                 .find(|row| row.person_id == node.id)
-                .and_then(|row| row.last_interaction_at);
-            let last_interaction_at = edge_interaction_at.into_iter().chain(legacy_interaction_at).max().map(|value| value.to_rfc3339());
+                .and_then(|row| row.last_interaction_at)
+                .map(|value| value.to_rfc3339());
             json!({
                 "id": node.id,
                 "node_type": node.node_type,
@@ -1640,6 +1628,64 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
         None
     };
 
+    // ADR-0071: a bounded, source-cited Past section. One evidence union
+    // covers both participated_in and legacy speaker paths, deduplicated by
+    // source id with participated_in taking precedence, newest-first, capped
+    // at 10 with an honest total -- non-person nodes get an empty collection.
+    #[derive(Debug, FromRow)]
+    struct RecentInteractionRow {
+        source_id: Uuid,
+        source_type: String,
+        title: String,
+        occurred_at: chrono::DateTime<chrono::Utc>,
+        evidence_mode: String,
+        total_count: i64,
+    }
+    let (recent_interactions, recent_interactions_total) = if node.node_type == "person" {
+        let rows: Vec<RecentInteractionRow> = sqlx::query_as(
+            "WITH evidence AS ( \
+                 SELECT source.id AS source_id, source.node_type AS source_type, source.canonical_text AS title, \
+                        source.occurred_at, 'participated_in' AS evidence_mode, 1 AS precedence \
+                 FROM edges e JOIN nodes source ON source.id = e.to_id \
+                 WHERE e.from_id = $1 AND e.edge_type = 'participated_in' AND source.occurred_at IS NOT NULL \
+                 UNION ALL \
+                 SELECT source.id, source.node_type, source.canonical_text, \
+                        source.occurred_at, 'legacy_speaker', 2 \
+                 FROM source_fragments sf JOIN nodes source ON source.id = sf.source_id \
+                 WHERE sf.speaker = $2 AND source.occurred_at IS NOT NULL \
+             ), \
+             deduped AS ( \
+                 SELECT DISTINCT ON (source_id) source_id, source_type, title, occurred_at, evidence_mode \
+                 FROM evidence \
+                 ORDER BY source_id, precedence \
+             ) \
+             SELECT source_id, source_type, title, occurred_at, evidence_mode, COUNT(*) OVER() AS total_count \
+             FROM deduped ORDER BY occurred_at DESC, source_id LIMIT 10",
+        )
+        .bind(node.id)
+        .bind(&node.canonical_text)
+        .fetch_all(&pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+        let total = rows.first().map(|row| row.total_count).unwrap_or(0);
+        let capped: Vec<JsonValue> = rows
+            .into_iter()
+            .map(|row| {
+                json!({
+                    "source_id": row.source_id,
+                    "source_type": row.source_type,
+                    "title": row.title,
+                    "occurred_at": row.occurred_at.to_rfc3339(),
+                    "evidence_mode": row.evidence_mode,
+                })
+            })
+            .collect();
+        (capped, total)
+    } else {
+        (Vec::new(), 0)
+    };
+
     Ok(Json(json!({
         "id": node.id,
         "node_type": node.node_type,
@@ -1649,6 +1695,8 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
         "neighbors": neighbors_json,
         "relationship": relationship,
         "last_interaction_at": last_interaction_at,
+        "recent_interactions": recent_interactions,
+        "recent_interactions_total": recent_interactions_total,
     })))
 }
 
@@ -3655,7 +3703,7 @@ mod tests {
             "the newer legacy-path date must win over the older edge-path date"
         );
 
-        let list_response = app(pool)
+        let list_response = app(pool.clone())
             .oneshot(Request::builder().uri("/api/nodes?node_type=person").body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -3668,9 +3716,187 @@ mod tests {
             (row_parsed.timestamp() - newer_at.timestamp()).abs() < 2,
             "the batched list route must also prefer the newer date across both paths"
         );
+
+        let newest_edge_source = uuid::Uuid::new_v4();
+        let newest_edge_at = chrono::Utc::now();
+        sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'note', 'Newest Edge Source', '{}'::jsonb, $2)")
+            .bind(newest_edge_source)
+            .bind(newest_edge_at)
+            .execute(&pool)
+            .await
+            .expect("create newest edge-linked source");
+        graph::create_edge(&pool, person_id, newest_edge_source, "participated_in", Some(1.0)).await.expect("link newest edge source");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let last_interaction_at = detail["last_interaction_at"].as_str().expect("last_interaction_at must be present");
+        let parsed = chrono::DateTime::parse_from_rfc3339(last_interaction_at).expect("valid RFC3339");
+        assert!(
+            (parsed.timestamp() - newest_edge_at.timestamp()).abs() < 2,
+            "the newer edge-path date must win over the older legacy-path date"
+        );
+
+        let list_response = app(pool)
+            .oneshot(Request::builder().uri("/api/nodes?node_type=person").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let list_body = axum::body::to_bytes(list_response.into_body(), usize::MAX).await.unwrap();
+        let listed: JsonValue = serde_json::from_slice(&list_body).expect("valid json body");
+        let row = listed.as_array().unwrap().iter().find(|row| row["id"] == person_id.to_string()).expect("the person must be present");
+        let row_last_interaction_at = row["last_interaction_at"].as_str().expect("last_interaction_at must be present");
+        let row_parsed = chrono::DateTime::parse_from_rfc3339(row_last_interaction_at).expect("valid RFC3339");
+        assert!(
+            (row_parsed.timestamp() - newest_edge_at.timestamp()).abs() < 2,
+            "the batched list route must prefer the newer edge date across both paths"
+        );
     }
 
-    /// ADR-0028: only person nodes get a `relationship` grouping.
+    /// ADR-0071: Person detail's Past section returns deduplicated interaction
+    /// sources newest-first, drawing on both the participated_in edge path
+    /// and the legacy speaker path.
+    #[tokio::test]
+    async fn person_detail_returns_recent_interactions_newest_first_across_both_paths() {
+        let pool = test_pool().await;
+        let marker = uuid::Uuid::new_v4();
+        let person_name = format!("Recent Interactions Person {marker}");
+        let person_id = graph::create_node(&pool, "person", &person_name, json!({})).await.expect("create person");
+
+        let edge_source = uuid::Uuid::new_v4();
+        let edge_at = chrono::Utc::now() - chrono::Duration::days(2);
+        sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'note', 'Edge Interaction Source', '{}'::jsonb, $2)")
+            .bind(edge_source)
+            .bind(edge_at)
+            .execute(&pool)
+            .await
+            .expect("create edge-linked source");
+        graph::create_edge(&pool, person_id, edge_source, "participated_in", Some(1.0)).await.expect("link edge source");
+
+        let legacy_source = uuid::Uuid::new_v4();
+        let legacy_at = chrono::Utc::now() - chrono::Duration::days(5);
+        sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'meeting', 'Legacy Interaction Source', '{}'::jsonb, $2)")
+            .bind(legacy_source)
+            .bind(legacy_at)
+            .execute(&pool)
+            .await
+            .expect("create legacy-matched source");
+        sqlx::query("INSERT INTO source_fragments (source_id, text, speaker, hash) VALUES ($1, 'hello', $2, 'recent-interactions-legacy-hash')")
+            .bind(legacy_source)
+            .bind(&person_name)
+            .execute(&pool)
+            .await
+            .expect("create a fragment spoken by this person");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let interactions = detail["recent_interactions"].as_array().expect("recent_interactions is an array");
+        assert_eq!(interactions.len(), 2, "both evidence paths must contribute an interaction");
+        assert_eq!(detail["recent_interactions_total"], 2);
+        assert_eq!(interactions[0]["source_id"], edge_source.to_string(), "the newer edge-path source must come first");
+        assert_eq!(interactions[0]["evidence_mode"], "participated_in");
+        assert_eq!(interactions[1]["source_id"], legacy_source.to_string());
+        assert_eq!(interactions[1]["evidence_mode"], "legacy_speaker");
+    }
+
+    /// ADR-0071: when one source is reachable by both a participated_in edge
+    /// and a legacy speaker match, it must appear exactly once, with
+    /// participated_in as the reported evidence mode.
+    #[tokio::test]
+    async fn recent_interactions_deduplicate_a_source_with_edge_precedence() {
+        let pool = test_pool().await;
+        let marker = uuid::Uuid::new_v4();
+        let person_name = format!("Dedup Interactions Person {marker}");
+        let person_id = graph::create_node(&pool, "person", &person_name, json!({})).await.expect("create person");
+
+        let source_id = uuid::Uuid::new_v4();
+        let occurred_at = chrono::Utc::now() - chrono::Duration::days(1);
+        sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'meeting', 'Dual Evidence Source', '{}'::jsonb, $2)")
+            .bind(source_id)
+            .bind(occurred_at)
+            .execute(&pool)
+            .await
+            .expect("create a source reachable by both paths");
+        graph::create_edge(&pool, person_id, source_id, "participated_in", Some(1.0)).await.expect("link source by edge");
+        sqlx::query("INSERT INTO source_fragments (source_id, text, speaker, hash) VALUES ($1, 'hello', $2, 'dedup-interactions-hash')")
+            .bind(source_id)
+            .bind(&person_name)
+            .execute(&pool)
+            .await
+            .expect("create a fragment spoken by this person for the same source");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let interactions = detail["recent_interactions"].as_array().expect("recent_interactions is an array");
+        assert_eq!(interactions.len(), 1, "one source reachable by both paths must appear exactly once");
+        assert_eq!(detail["recent_interactions_total"], 1);
+        assert_eq!(interactions[0]["source_id"], source_id.to_string());
+        assert_eq!(interactions[0]["evidence_mode"], "participated_in", "edge evidence must take precedence over the legacy match");
+    }
+
+    /// ADR-0071: more than 10 distinct interaction sources are capped at 10,
+    /// newest-first, with an honest total reflecting every deduplicated source.
+    #[tokio::test]
+    async fn recent_interactions_are_capped_at_ten_with_an_honest_total() {
+        let pool = test_pool().await;
+        let marker = uuid::Uuid::new_v4();
+        let person_id = graph::create_node(&pool, "person", &format!("Capped Interactions Person {marker}"), json!({})).await.expect("create person");
+
+        for offset in 0..12i64 {
+            let source_id = uuid::Uuid::new_v4();
+            let occurred_at = chrono::Utc::now() - chrono::Duration::days(offset);
+            sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'note', 'Capped Source', '{}'::jsonb, $2)")
+                .bind(source_id)
+                .bind(occurred_at)
+                .execute(&pool)
+                .await
+                .expect("create a dated source");
+            graph::create_edge(&pool, person_id, source_id, "participated_in", Some(1.0)).await.expect("link source by edge");
+        }
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let interactions = detail["recent_interactions"].as_array().expect("recent_interactions is an array");
+        assert_eq!(interactions.len(), 10, "the response must cap at 10 interactions");
+        assert_eq!(detail["recent_interactions_total"], 12, "the total must honestly reflect every deduplicated source");
+    }
+
+    /// ADR-0071: non-person nodes always get an empty collection and a zero
+    /// total, preserving one stable response shape across node types.
+    #[tokio::test]
+    async fn recent_interactions_are_empty_for_non_person_nodes() {
+        let pool = test_pool().await;
+        let risk_id = graph::create_node(&pool, "risk", "Recent Interactions Non-Person Test", json!({})).await.expect("create risk node");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{risk_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        assert_eq!(detail["recent_interactions"].as_array().unwrap().len(), 0);
+        assert_eq!(detail["recent_interactions_total"], 0);
+    }
+
+
     #[tokio::test]
     async fn node_detail_omits_relationship_grouping_for_non_person_nodes() {
         let pool = test_pool().await;
