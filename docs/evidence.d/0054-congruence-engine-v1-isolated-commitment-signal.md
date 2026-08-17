@@ -42,4 +42,3 @@ candidate-type distinction once promoted, and requiring one would need an
 extra join against `candidate_projection` for uncertain benefit; flagging
 any zero-edge Obligation is the honest, simpler generalization of the
 same principle the ADR names.
-
