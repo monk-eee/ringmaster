@@ -261,17 +261,18 @@ test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (AD
 });
 
 // ADR-0039: proves the primary/secondary tab regrouping is real (Today,
-// Timeline, People, Inbox as primary; Obligations, Search, Graph, Meetings
-// still present, just visually demoted) -- not that the old tabs were
-// deleted. Meetings joined the secondary group later (ADR-0043).
+// Timeline, People, Inbox as primary; Obligations, Search, Graph, Meetings,
+// Activity still present, just visually demoted) -- not that the old tabs
+// were deleted. Meetings joined the secondary group later (ADR-0043),
+// Activity later still (ADR-0049).
 test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Graph remain as secondary tabs", async ({ page }) => {
   await page.goto("/");
 
   const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Obligations", "Search", "Graph", "Meetings"]);
+  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Obligations", "Search", "Graph", "Meetings", "Activity"]);
 
   const secondaryTabs = page.locator(".tab-secondary");
-  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph", "Meetings"]);
+  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph", "Meetings", "Activity"]);
 });
 
 // ADR-0039: People is a first-class primary tab over already-existing data

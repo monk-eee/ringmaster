@@ -74,6 +74,7 @@ export type FocusBlock = {
   node_id: string;
   node_type: string;
   canonical_text: string;
+  time_horizon_bucket: string;
   obligations: FocusBlockObligation[];
 };
 

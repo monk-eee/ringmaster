@@ -432,13 +432,19 @@ struct FocusBlockRow {
     source_text: Option<String>,
 }
 
-/// Groups non-closed Obligations that share a linked node into a Suggested
-/// Focus Block (ADR-0031): reuses `daily_brief_reason` verbatim -- no new
-/// reasoning logic, no schema change. A node linked to fewer than two
-/// non-closed Obligations forms no block; a closed Obligation is never
-/// counted. Blocks are ordered by Obligation count descending, the closest
-/// thing to "significance" this data can honestly support. No estimated
-/// time, no "Start Focus Session" -- neither has real backing data.
+/// Groups non-closed Obligations that share both a linked node *and* a Time
+/// Horizon bucket into a Suggested Focus Block (ADR-0031, amended by
+/// ADR-0052): a node linked to Obligations spanning several buckets now
+/// forms one block per bucket, not one block spanning all of them --
+/// "these belong together" is true in both the graph and the calendar
+/// sense. Reuses `time_horizon_bucket`/`daily_brief_reason` verbatim -- no
+/// new bucketing or reasoning logic, no schema change. A (node, bucket)
+/// pair linked to fewer than two non-closed Obligations forms no block; a
+/// closed Obligation is never counted. Blocks are ordered by urgency
+/// (ADR-0050): any block containing an at_risk Obligation sorts first,
+/// then soonest effective due date among its Obligations, then Obligation
+/// count descending as a final tiebreak. No estimated time, no "Start
+/// Focus Session" -- neither has real backing data.
 async fn focus_blocks(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     let rows: Vec<FocusBlockRow> = sqlx::query_as(
         "SELECT n.id AS node_id, n.node_type, n.canonical_text, \
@@ -456,17 +462,31 @@ async fn focus_blocks(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
     struct Block {
         node_type: String,
         canonical_text: String,
+        bucket: &'static str,
         obligations: std::collections::HashMap<Uuid, JsonValue>,
+        has_at_risk: bool,
+        soonest_due: Option<chrono::DateTime<chrono::Utc>>,
     }
 
-    let mut blocks: std::collections::HashMap<Uuid, Block> = std::collections::HashMap::new();
+    let mut blocks: std::collections::HashMap<(Uuid, &'static str), Block> = std::collections::HashMap::new();
     for row in rows {
+        let bucket = time_horizon_bucket(&row.status, row.hard_due_at, row.soft_due_at);
         let reason = daily_brief_reason(&row.status, row.hard_due_at, row.soft_due_at, row.source_text.as_deref());
-        let entry = blocks.entry(row.node_id).or_insert_with(|| Block {
+        let effective_due = row.hard_due_at.or(row.soft_due_at);
+        let entry = blocks.entry((row.node_id, bucket)).or_insert_with(|| Block {
             node_type: row.node_type.clone(),
             canonical_text: row.canonical_text.clone(),
+            bucket,
             obligations: std::collections::HashMap::new(),
+            has_at_risk: false,
+            soonest_due: None,
         });
+        entry.has_at_risk = entry.has_at_risk || row.status == "at_risk";
+        entry.soonest_due = match (entry.soonest_due, effective_due) {
+            (Some(current), Some(candidate)) => Some(current.min(candidate)),
+            (None, Some(candidate)) => Some(candidate),
+            (current, None) => current,
+        };
         entry.obligations.insert(
             row.obligation_id,
             json!({
@@ -479,23 +499,40 @@ async fn focus_blocks(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
         );
     }
 
-    let mut result: Vec<JsonValue> = blocks
+    let mut result: Vec<(bool, Option<chrono::DateTime<chrono::Utc>>, usize, JsonValue)> = blocks
         .into_iter()
         .filter(|(_, block)| block.obligations.len() >= 2)
-        .map(|(node_id, block)| {
-            json!({
-                "node_id": node_id,
-                "node_type": block.node_type,
-                "canonical_text": block.canonical_text,
-                "obligations": block.obligations.into_values().collect::<Vec<_>>(),
-            })
+        .map(|((node_id, _), block)| {
+            let count = block.obligations.len();
+            (
+                block.has_at_risk,
+                block.soonest_due,
+                count,
+                json!({
+                    "node_id": node_id,
+                    "node_type": block.node_type,
+                    "canonical_text": block.canonical_text,
+                    "time_horizon_bucket": block.bucket,
+                    "obligations": block.obligations.into_values().collect::<Vec<_>>(),
+                }),
+            )
         })
         .collect();
 
-    result.sort_by_key(|block| std::cmp::Reverse(block["obligations"].as_array().map(|list| list.len()).unwrap_or(0)));
+    result.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| match (a.1, b.1) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| b.2.cmp(&a.2))
+    });
 
-    Ok(Json(json!(result)))
+    Ok(Json(json!(result.into_iter().map(|(_, _, _, value)| value).collect::<Vec<_>>())))
 }
+
 
 #[derive(Debug, Deserialize)]
 struct IngestMeetingRequest {
@@ -3149,13 +3186,14 @@ mod tests {
     async fn focus_blocks_route_groups_by_shared_node() {
         let pool = test_pool().await;
         let person_id = graph::create_node(&pool, "person", "Roopa", json!({})).await.expect("create person node");
+        let due_soon = (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339();
 
         let obligation_a = uuid::Uuid::new_v4();
-        crate::obligation::append_event(&pool, obligation_a, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+        crate::obligation::append_event(&pool, obligation_a, crate::obligation::ObligationEventType::Created, json!({"status": "open", "hard_due_at": due_soon}))
             .await
             .expect("append obligation a");
         let obligation_b = uuid::Uuid::new_v4();
-        crate::obligation::append_event(&pool, obligation_b, crate::obligation::ObligationEventType::Created, json!({"status": "at_risk"}))
+        crate::obligation::append_event(&pool, obligation_b, crate::obligation::ObligationEventType::Created, json!({"status": "at_risk", "hard_due_at": due_soon}))
             .await
             .expect("append obligation b");
         crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
@@ -3175,13 +3213,63 @@ mod tests {
         let block = blocks
             .iter()
             .find(|block| block["node_id"] == person_id.to_string())
-            .expect("a block for the shared person node must exist");
+            .expect("a block for the shared person node and shared bucket must exist");
         assert_eq!(block["node_type"], "person");
         assert_eq!(block["canonical_text"], "Roopa");
+        assert_eq!(block["time_horizon_bucket"], "next_7_days");
         let obligations = block["obligations"].as_array().expect("obligations is an array");
         assert_eq!(obligations.len(), 2);
         assert!(obligations.iter().any(|o| o["obligation_id"] == obligation_a.to_string()));
         assert!(obligations.iter().any(|o| o["obligation_id"] == obligation_b.to_string() && o["reason"] == "Marked at risk. No evidence recorded."));
+    }
+
+    /// ADR-0052: a shared node whose Obligations span two Time Horizon
+    /// buckets forms one block per bucket, not one block spanning both.
+    #[tokio::test]
+    async fn focus_blocks_route_splits_by_time_horizon_bucket() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Bucket Split Test Person", json!({})).await.expect("create person node");
+        let due_soon = (chrono::Utc::now() + chrono::Duration::days(2)).to_rfc3339();
+        let due_later = (chrono::Utc::now() + chrono::Duration::days(60)).to_rfc3339();
+
+        let mut soon_ids = Vec::new();
+        for _ in 0..2 {
+            let id = uuid::Uuid::new_v4();
+            crate::obligation::append_event(&pool, id, crate::obligation::ObligationEventType::Created, json!({"status": "open", "hard_due_at": due_soon}))
+                .await
+                .expect("append due-soon obligation");
+            graph::create_edge(&pool, person_id, id, "owns", None).await.expect("link due-soon obligation");
+            soon_ids.push(id);
+        }
+        let mut later_ids = Vec::new();
+        for _ in 0..2 {
+            let id = uuid::Uuid::new_v4();
+            crate::obligation::append_event(&pool, id, crate::obligation::ObligationEventType::Created, json!({"status": "open", "hard_due_at": due_later}))
+                .await
+                .expect("append due-later obligation");
+            graph::create_edge(&pool, person_id, id, "owns", None).await.expect("link due-later obligation");
+            later_ids.push(id);
+        }
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri("/api/focus-blocks").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let blocks: Vec<&JsonValue> = parsed.as_array().expect("response is a json array").iter().filter(|block| block["node_id"] == person_id.to_string()).collect();
+        assert_eq!(blocks.len(), 2, "the shared node's Obligations must form two blocks, one per bucket");
+
+        let soon_block = blocks.iter().find(|block| block["time_horizon_bucket"] == "next_7_days").expect("a next_7_days block must exist");
+        let soon_obligations = soon_block["obligations"].as_array().unwrap();
+        assert_eq!(soon_obligations.len(), 2);
+        assert!(soon_ids.iter().all(|id| soon_obligations.iter().any(|o| o["obligation_id"] == id.to_string())));
+
+        let later_block = blocks.iter().find(|block| block["time_horizon_bucket"] == "next_90_days").expect("a next_90_days block must exist");
+        let later_obligations = later_block["obligations"].as_array().unwrap();
+        assert_eq!(later_obligations.len(), 2);
+        assert!(later_ids.iter().all(|id| later_obligations.iter().any(|o| o["obligation_id"] == id.to_string())));
     }
 
     #[tokio::test]
