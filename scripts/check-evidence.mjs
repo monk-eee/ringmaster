@@ -103,10 +103,23 @@ function wildcardExpression(pattern) {
   return new RegExp(`${expression}$`);
 }
 
+// Directories that are gitignored build/dependency output (see .gitignore):
+// never a legitimate source for an evidence pattern, and -- for target/ in
+// particular -- subject to concurrent mutation by a running cargo build,
+// which can otherwise crash this scan mid-walk with an ENOENT race.
+const IGNORED_DIRECTORY_NAMES = new Set([".git", ".mindleak", ".lodestar", "target", "node_modules", "test-results", "playwright-report", "dist"]);
+
 function allFiles(directory) {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  let entries;
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries.flatMap((entry) => {
     const entryPath = path.join(directory, entry.name);
-    if (entry.name === ".git" || entry.name === ".mindleak") return [];
+    if (IGNORED_DIRECTORY_NAMES.has(entry.name)) return [];
     return entry.isDirectory() ? allFiles(entryPath) : [entryPath];
   });
 }

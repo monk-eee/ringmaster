@@ -19,7 +19,7 @@ paths = ["backend/migrations/0013_source_occurred_at.sql"]
 id = "ingest-source-function-requires-occurred-at"
 invariant = "The shared ingest_source function creates a node + ordered fragments, splitting non-meeting text by paragraph, and requires occurred_at."
 type = "present"
-pattern = 'pub async fn ingest_source\(pool: &PgPool, metadata: &SourceMetadata'
+pattern = 'pub async fn ingest_source\([\s\S]*?pool: &PgPool,[\s\S]*?metadata: &SourceMetadata'
 paths = ["backend/src/transcript.rs"]
 
 [[check]]

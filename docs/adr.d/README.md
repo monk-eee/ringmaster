@@ -82,3 +82,4 @@ accepted and implemented.
 | [ADR-0067: Pin the local frontend to port 3001](0067-pin-local-frontend-to-port-3001.md) | Accepted | [EV-0067](../evidence.d/0067-pin-local-frontend-to-port-3001.md) |
 | [ADR-0068: Add an optional API key to the embedding adapter](0068-embedding-adapter-optional-api-key.md) | Accepted | [EV-0068](../evidence.d/0068-embedding-adapter-optional-api-key.md) |
 | [ADR-0069: Resolve participant/speaker names to existing Person nodes at ingestion](0069-resolve-participants-to-person-nodes-at-ingestion.md) | Accepted | [EV-0069](../evidence.d/0069-resolve-participants-to-person-nodes-at-ingestion.md) |
+| [ADR-0070: Derive Person interaction recency from identity edges with a legacy fallback](0070-edge-backed-person-interaction-recency.md) | Accepted | [EV-0070](../evidence.d/0070-edge-backed-person-interaction-recency.md) |
