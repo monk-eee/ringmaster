@@ -78,3 +78,6 @@ accepted and implemented.
 | [ADR-0060: Extract an owner name from a candidate and link it at promotion](0060-extract-candidate-owner-and-link-at-promotion.md) | Accepted | [EV-0060](../evidence.d/0060-extract-candidate-owner-and-link-at-promotion.md) |
 | [ADR-0061: A derived Obligation health label — composing existing status and signals, not a new score](0061-obligation-health-label.md) | Accepted | [EV-0061](../evidence.d/0061-obligation-health-label.md) |
 | [ADR-0062: Auto-embed fragments on ingest (best-effort), so search has data](0062-auto-embed-fragments-on-ingest.md) | Accepted | [EV-0062](../evidence.d/0062-auto-embed-fragments-on-ingest.md) |
+| [ADR-0066: Expose non-destructive graph management over MCP](0066-non-destructive-graph-management-over-mcp.md) | Accepted | [EV-0066](../evidence.d/0066-non-destructive-graph-management-over-mcp.md) |
+| [ADR-0067: Pin the local frontend to port 3001](0067-pin-local-frontend-to-port-3001.md) | Accepted | [EV-0067](../evidence.d/0067-pin-local-frontend-to-port-3001.md) |
+| [ADR-0069: Resolve participant/speaker names to existing Person nodes at ingestion](0069-resolve-participants-to-person-nodes-at-ingestion.md) | Proposed | [EV-0069](../evidence.d/0069-resolve-participants-to-person-nodes-at-ingestion.md) |
