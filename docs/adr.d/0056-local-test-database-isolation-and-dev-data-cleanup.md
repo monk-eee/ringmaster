@@ -1,6 +1,6 @@
 # ADR-0056: Local test-database isolation, plus a reviewable (not auto-run) dev-data cleanup
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
 - **Depends on:** [ADR-0006](0006-local-development-stack-runs-via-podman-compose.md), [ADR-0040](0040-dated-source-ingestion.md)

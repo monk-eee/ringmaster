@@ -1,0 +1,13 @@
+-- ADR-0056: local test-database isolation.
+--
+-- The postgres image runs every *.sql/*.sh file in
+-- /docker-entrypoint-initdb.d/ exactly once, only when the data directory
+-- is empty (a brand-new volume). It never re-runs against an
+-- already-initialized volume, so this only provisions `ringmaster_test`
+-- for a fresh `podman compose up` -- an already-initialized environment
+-- creates it once by hand instead (see repo memory's documented
+-- "how to run backend tests" convention).
+--
+-- Purely additive: creates a second, empty database on the same server.
+-- Never reads, locks, or modifies the primary `ringmaster` database.
+CREATE DATABASE ringmaster_test;
