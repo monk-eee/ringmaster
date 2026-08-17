@@ -12,10 +12,10 @@ mod mcp;
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let result = if args.first().map(String::as_str) == Some("mcp-serve") {
-        run_mcp_serve().await
-    } else {
-        run_ingest(args).await
+    let result = match args.first().map(String::as_str) {
+        Some("mcp-serve") => run_mcp_serve().await,
+        Some("reindex-embeddings") => run_reindex_embeddings().await,
+        _ => run_ingest(args).await,
     };
 
     if let Err(message) = result {
@@ -32,6 +32,21 @@ async fn connect_pool() -> Result<sqlx::PgPool, String> {
 async fn run_mcp_serve() -> Result<(), String> {
     let pool = connect_pool().await?;
     mcp::run(pool).await
+}
+
+/// ADR-0063: backfills embeddings for every source fragment that has none yet,
+/// so the existing corpus becomes searchable without re-ingesting it.
+async fn run_reindex_embeddings() -> Result<(), String> {
+    let pool = connect_pool().await?;
+    let Some(config) = ringmaster_backend::embedding_adapter::EmbeddingConfig::from_env() else {
+        return Err("RINGMASTER_EMBEDDING_URL must be set to reindex embeddings".to_string());
+    };
+    let (unembedded_before, embedded) =
+        ringmaster_backend::transcript::reindex_unembedded_fragments(&pool, &config)
+            .await
+            .map_err(|error| error.to_string())?;
+    println!("{}", serde_json::json!({ "unembedded_before": unembedded_before, "embedded": embedded }));
+    Ok(())
 }
 
 async fn run_ingest(args: Vec<String>) -> Result<(), String> {

@@ -225,6 +225,33 @@ async fn embed_fragments_best_effort(pool: &PgPool, fragment_ids: &[Uuid]) {
     }
 }
 
+/// ADR-0063: backfills embeddings for every source fragment that has none yet
+/// (fragments ingested before ADR-0062's auto-embed, or while no model was
+/// configured). Best-effort per fragment: a failed embed is logged and
+/// skipped. Only appends to the embeddings table; never touches an immutable
+/// fragment (ADR-0010). Returns (candidates_found, embedded_ok).
+pub async fn reindex_unembedded_fragments(
+    pool: &PgPool,
+    config: &crate::embedding_adapter::EmbeddingConfig,
+) -> Result<(usize, usize), sqlx::Error> {
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT sf.id FROM source_fragments sf \
+         LEFT JOIN embeddings e ON e.entity_id = sf.id AND e.entity_type = 'source_fragment' \
+         WHERE e.id IS NULL ORDER BY sf.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let candidates = rows.len();
+    let mut embedded = 0usize;
+    for (fragment_id,) in rows {
+        match crate::graph::embed_source_fragment(pool, config, fragment_id).await {
+            Ok(_) => embedded += 1,
+            Err(error) => eprintln!("reindex skipped fragment {fragment_id}: {error}"),
+        }
+    }
+    Ok((candidates, embedded))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +294,34 @@ mod tests {
         } else {
             eprintln!("skipped embedding assertion: RINGMASTER_EMBEDDING_URL is not set");
         }
+    }
+
+    #[tokio::test]
+    async fn reindex_embeds_previously_unembedded_fragments_when_a_model_is_configured() {
+        let pool = test_pool().await;
+        // Created directly (not via ingest), so it starts with no embedding.
+        let fragment_id = crate::graph::create_source_fragment(
+            &pool,
+            Uuid::new_v4(),
+            &format!("reindex backfill marker {}", Uuid::new_v4()),
+            &format!("reindex-hash-{}", Uuid::new_v4()),
+        )
+        .await
+        .expect("create source fragment");
+
+        let Some(config) = crate::embedding_adapter::EmbeddingConfig::from_env() else {
+            eprintln!("skipped reindex assertion: RINGMASTER_EMBEDDING_URL is not set");
+            return;
+        };
+        let (candidates, embedded) = reindex_unembedded_fragments(&pool, &config).await.expect("reindex");
+        assert!(candidates >= 1 && embedded >= 1, "reindex must find and embed at least our fragment");
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM embeddings WHERE entity_id = $1")
+            .bind(fragment_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count embeddings for the fragment");
+        assert!(count > 0, "the previously unembedded fragment must have an embedding after reindex");
     }
 
     #[test]
