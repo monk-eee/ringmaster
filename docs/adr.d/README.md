@@ -68,4 +68,7 @@ accepted and implemented.
 | [ADR-0049: Audit trail read API — a chronological activity feed](0049-audit-trail-read-api.md) | Accepted | [EV-0049](../evidence.d/0049-audit-trail-read-api.md) |
 | [ADR-0050: Today attention budget — cap Focus Blocks, remove their raw id, honest "show all"](0050-today-attention-budget.md) | Accepted | [EV-0050](../evidence.d/0050-today-attention-budget.md) |
 | [ADR-0051: Relationship workspace — People shows who needs something from you, not every person node](0051-relationship-workspace.md) | Accepted | [EV-0051](../evidence.d/0051-relationship-workspace.md) |
-| [ADR-0052: Context-derived Focus Sessions — group by shared node and similar timeframe, not node alone](0052-context-derived-focus-sessions.md) | Accepted | [EV-0052](../evidence.d/0052-context-derived-focus-sessions.md) |
+| [ADR-0052: Context-derived Focus Sessions — group by shared node *and* similar timeframe, not node alone](0052-context-derived-focus-sessions.md) | Accepted | [EV-0052](../evidence.d/0052-context-derived-focus-sessions.md) |
+| [ADR-0053: "What am I forgetting?" — compose existing risk signals into one capped, prominent list](0053-what-am-i-forgetting.md) | Accepted | [EV-0053](../evidence.d/0053-what-am-i-forgetting.md) |
+| [ADR-0054: Congruence Engine v1 — flag a commitment with no linked node at all](0054-congruence-engine-v1-isolated-commitment-signal.md) | Accepted | [EV-0054](../evidence.d/0054-congruence-engine-v1-isolated-commitment-signal.md) |
+| [ADR-0056: Local test-database isolation, plus a reviewable (not auto-run) dev-data cleanup](0056-local-test-database-isolation-and-dev-data-cleanup.md) | Proposed | [EV-0056](../evidence.d/0056-local-test-database-isolation-and-dev-data-cleanup.md) |

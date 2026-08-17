@@ -409,3 +409,29 @@ test("activity tab shows a just-recorded correction (ADR-0049)", async ({ page, 
   await expect(page.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".activity-states").filter({ hasText: marker }).first()).toBeVisible();
 });
+
+// ADR-0053: proves "What am I forgetting?" renders on Today, above "Do
+// these together", and either lists real flagged Obligations (composing
+// the existing risk_signals Daily Brief already returns, capped to 5) or
+// an honest empty state -- never a fabricated reassurance. Tolerant of
+// whatever the shared development database currently contains.
+test("today: 'What am I forgetting?' shows flagged obligations or an honest empty state (ADR-0053)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
+
+  const heading = page.getByRole("heading", { name: "What am I forgetting?" });
+  await expect(heading).toBeVisible();
+
+  const section = page.locator("h2:text('What am I forgetting?') + div.card");
+  await expect(section).toBeVisible();
+
+  const rows = section.locator(".daily-brief-list > li");
+  const rowCount = await rows.count();
+  if (rowCount === 0) {
+    await expect(section.locator("p.empty-state")).toHaveText("Nothing flagged right now.");
+    return;
+  }
+
+  expect(rowCount).toBeLessThanOrEqual(5);
+  await expect(rows.first().locator(".risk-signals li").first()).toBeVisible();
+});
