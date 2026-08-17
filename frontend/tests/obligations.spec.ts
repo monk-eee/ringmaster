@@ -400,10 +400,13 @@ test("time horizon buckets show risk-signal explanations when any obligation has
   test.skip(hasError, "backend fetch failed transiently for this run");
 
   const hasRiskSignal = (await page.locator(".risk-signals li").count()) > 0;
-  test.skip(!hasRiskSignal, "no Obligation currently due or overdue has a stale or date-compression signal");
+  test.skip(!hasRiskSignal, "no Obligation currently due or overdue has any risk signal");
 
+  // ADR-0046/ADR-0054 added the unowned/isolated signals after this test was
+  // originally written for date_compression/stale alone -- risk_signals is an
+  // array, so any of the four may legitimately be first.
   const explanation = await page.locator(".risk-signals li").first().textContent();
-  expect(explanation).toMatch(/no evidence linked|no update in \d+ day\(s\)/);
+  expect(explanation).toMatch(/no evidence linked|no update in \d+ day\(s\)|no owner linked|not linked to anyone or anything/i);
 });
 
 // ADR-0043: proves the Meeting Review page renders an ingested meeting's
