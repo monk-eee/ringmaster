@@ -13,6 +13,7 @@ frontend/.npmrc
 
 # Rust build artifacts (backend/, ADR-0005/ADR-0007)
 /target/
+backend/target/
 
 # Node front end (ADR-0012/ADR-0014)
 frontend/node_modules/

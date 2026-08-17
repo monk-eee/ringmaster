@@ -96,11 +96,11 @@ fixed and verified live:
   relationship list/create are first-class tools. Attributes shallow-merge;
   ambiguous identities fail rather than being silently combined.
 - **Semantic search** ([ADR-0018](adr.d/0018-generate-and-store-source-fragment-embeddings.md)/[ADR-0019](adr.d/0019-semantic-search-over-source-fragments.md)):
-  infrastructurally real (Ollama + `nomic-embed-text` configured,
-  `/api/search` responds `200`), but **currently 0 embeddings exist** (the
-  database reset wiped the 25 that existed at the last audit; embedding is
-  a deliberate manual step, never automatic) — right now, search would
-  return nothing for any query, worth knowing before demoing it.
+  live and populated: the accepted reindex operation appended embeddings for
+  all 358 source fragments using local `nomic-embed-text`, and
+  `/api/search?q=deployment%20risk&limit=3` returned ranked, relevant source
+  fragments. New ingests auto-embed best-effort; reindex remains available to
+  backfill fragments created while no embedding model was configured.
 - **Risk signals, now four**: `stale`/`date_compression`
   ([ADR-0041](adr.d/0041-risk-engine-v1-staleness-and-date-compression-signals.md)),
   `unowned` ([ADR-0046](adr.d/0046-unowned-obligation-risk-signal.md)),
@@ -172,9 +172,11 @@ mid-audit HEAD movements are just the latest instance of that.
 - Live Outlook/Teams/Calendar/SharePoint connectors — deliberately deferred
   pending an access-control decision for sensitive data
   ([VISION.md](VISION.md#open-questions-for-future-adrs)).
-- Person/participant-to-Person-node linking at ingestion time — participant
-  names, and `last_interaction_at`'s speaker match, are still plain-string
-  based, not resolved graph edges.
+- Participant/speaker names now resolve to existing Person nodes by exact,
+  case-insensitive name during new ingestion and create `participated_in`
+  edges. Fuzzy matching, Person-node creation for unknown names, backfill of
+  older sources, and changing `last_interaction_at` remain deliberately out
+  of scope.
 - Natural-language date parsing ("last week") anywhere — every date
   boundary is RFC3339, supplied by the caller.
 - "Upcoming conversation" on a person's page — no calendar/future-meeting

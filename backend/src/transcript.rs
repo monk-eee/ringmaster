@@ -1,6 +1,8 @@
+use crate::graph;
 use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -42,6 +44,34 @@ fn sha256_hex(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// ADR-0069: resolves each unique participant/speaker name against an
+/// existing Person node by exact, case-insensitive `canonical_text` match
+/// (ADR-0060's own resolution, reused here at ingestion time). A match
+/// creates a `participated_in` edge from the person to the source node; no
+/// match creates nothing -- no Person node is ever fabricated.
+async fn link_participants(tx: &mut sqlx::PgConnection, source_node_id: Uuid, names: &[String]) -> Result<(), sqlx::Error> {
+    let mut linked_person_ids = HashSet::new();
+    let mut seen_names = HashSet::new();
+    for name in names {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || !seen_names.insert(trimmed.to_lowercase()) {
+            continue;
+        }
+        let person_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM nodes WHERE node_type = 'person' AND lower(canonical_text) = lower($1) LIMIT 1",
+        )
+        .bind(trimmed)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(person_id) = person_id {
+            if linked_person_ids.insert(person_id) {
+                graph::create_edge(&mut *tx, person_id, source_node_id, "participated_in", Some(1.0)).await?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Splits raw text into blank-line-separated paragraphs (ADR-0040), for any
@@ -104,8 +134,9 @@ pub async fn ingest_transcript(
     .fetch_one(&mut *tx)
     .await?;
 
+    let turns = parse_transcript(raw_text);
     let mut fragment_ids = Vec::new();
-    for (sequence, turn) in parse_transcript(raw_text).into_iter().enumerate() {
+    for (sequence, turn) in turns.iter().enumerate() {
         let hash = sha256_hex(&turn.text);
         let (fragment_id,): (Uuid,) = sqlx::query_as(
             "INSERT INTO source_fragments (source_id, text, speaker, hash, sequence) \
@@ -120,6 +151,9 @@ pub async fn ingest_transcript(
         .await?;
         fragment_ids.push(fragment_id);
     }
+
+    let names: Vec<String> = metadata.participants.iter().cloned().chain(turns.iter().map(|turn| turn.speaker.clone())).collect();
+    link_participants(&mut *tx, meeting_id, &names).await?;
 
     tx.commit().await?;
 
@@ -169,6 +203,7 @@ pub async fn ingest_source(pool: &PgPool, metadata: &SourceMetadata, raw_text: &
     .await?;
 
     let mut fragment_ids = Vec::new();
+    let mut speaker_names: Vec<String> = Vec::new();
 
     if metadata.source_type == "meeting" {
         for (sequence, turn) in parse_transcript(raw_text).into_iter().enumerate() {
@@ -185,6 +220,7 @@ pub async fn ingest_source(pool: &PgPool, metadata: &SourceMetadata, raw_text: &
             .fetch_one(&mut *tx)
             .await?;
             fragment_ids.push(fragment_id);
+            speaker_names.push(turn.speaker);
         }
     } else {
         for (sequence, paragraph) in split_paragraphs(raw_text).into_iter().enumerate() {
@@ -202,6 +238,9 @@ pub async fn ingest_source(pool: &PgPool, metadata: &SourceMetadata, raw_text: &
             fragment_ids.push(fragment_id);
         }
     }
+
+    let names: Vec<String> = metadata.participants.iter().cloned().chain(speaker_names).collect();
+    link_participants(&mut *tx, node_id, &names).await?;
 
     tx.commit().await?;
 
@@ -445,5 +484,95 @@ mod tests {
         let (speaker,): (Option<String>,) =
             sqlx::query_as("SELECT speaker FROM source_fragments WHERE id = $1").bind(ingested.fragment_ids[0]).fetch_one(&pool).await.unwrap();
         assert_eq!(speaker.as_deref(), Some("Roopa"));
+    }
+
+    /// ADR-0069: an exact, case-insensitive match against an existing Person
+    /// node -- whether named in `participants` or as a fragment `speaker` --
+    /// creates a `participated_in` edge in the same transaction as ingestion.
+    #[tokio::test]
+    async fn ingest_source_creates_participated_in_edge_on_exact_participant_match() {
+        let pool = test_pool().await;
+        let person_name = format!("Roopa Venkat {}", Uuid::new_v4());
+        let person_id = crate::graph::create_node(&pool, "person", &person_name, json!({}))
+            .await
+            .expect("create person node");
+
+        let metadata = SourceMetadata {
+            source_type: "note".to_string(),
+            title: "Participant linking test".to_string(),
+            occurred_at: chrono::Utc::now(),
+            // Deliberately different case than the stored canonical_text.
+            participants: vec![person_name.to_uppercase()],
+        };
+        let ingested = ingest_source(&pool, &metadata, "A note mentioning the participant.")
+            .await
+            .expect("ingest source");
+
+        let edges = crate::graph::list_edges_for_node(&pool, person_id, Some("participated_in"), false)
+            .await
+            .expect("list edges for person");
+        assert_eq!(edges.len(), 1, "an exact case-insensitive participant match must create exactly one edge");
+        assert_eq!(edges[0].to_id, ingested.node_id);
+        assert_eq!(edges[0].from_id, person_id);
+    }
+
+    /// ADR-0069: a fragment `speaker` that exactly matches an existing Person
+    /// node also creates a `participated_in` edge, via ingest_transcript's
+    /// per-speaker-turn path.
+    #[tokio::test]
+    async fn ingest_transcript_creates_participated_in_edge_on_exact_speaker_match() {
+        let pool = test_pool().await;
+        let person_name = format!("Speaker Person {}", Uuid::new_v4());
+        let person_id = crate::graph::create_node(&pool, "person", &person_name, json!({}))
+            .await
+            .expect("create person node");
+
+        let metadata = MeetingMetadata {
+            title: "Speaker linking test".to_string(),
+            occurred_at: None,
+            organiser: None,
+            participants: vec![],
+        };
+        let raw = format!("{}: hello from the transcript.", person_name);
+        let ingested = ingest_transcript(&pool, &metadata, &raw).await.expect("ingest transcript");
+
+        let edges = crate::graph::list_edges_for_node(&pool, person_id, Some("participated_in"), false)
+            .await
+            .expect("list edges for person");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].to_id, ingested.meeting_id);
+    }
+
+    /// ADR-0069: a participant/speaker name with no exact Person match creates
+    /// no edge and fabricates no Person node -- ingestion is otherwise
+    /// unchanged, matching ADR-0060's own no-fabrication precedent.
+    #[tokio::test]
+    async fn ingest_source_creates_no_edge_or_person_node_without_an_exact_match() {
+        let pool = test_pool().await;
+        let unmatched_name = format!("Nobody Named {}", Uuid::new_v4());
+        let metadata = SourceMetadata {
+            source_type: "note".to_string(),
+            title: "No participant match test".to_string(),
+            occurred_at: chrono::Utc::now(),
+            participants: vec![unmatched_name.clone()],
+        };
+
+        let ingested = ingest_source(&pool, &metadata, "A note with an unmatched participant.")
+            .await
+            .expect("ingest source");
+
+        let (person_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM nodes WHERE node_type = 'person' AND canonical_text = $1")
+            .bind(&unmatched_name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(person_count, 0, "an unmatched participant name must never fabricate a Person node");
+
+        let (edge_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM edges WHERE to_id = $1 AND edge_type = 'participated_in'")
+            .bind(ingested.node_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(edge_count, 0, "no participated_in edge is created without an exact match");
     }
 }
