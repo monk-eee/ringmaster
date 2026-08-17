@@ -19,7 +19,10 @@ rationale = "Requires a one-time manual database-creation step against this envi
 id = "test-convention-uses-isolated-database"
 invariant = "The documented test-run convention points at ringmaster_test, not ringmaster."
 type = "present"
-pattern = "ringmaster_test"
+# check-evidence.mjs strips '*'/'_' from .md content before matching
+# (avoids markdown emphasis splitting identifiers), so this intentionally
+# has no underscore -- it matches "ringmaster_test" post-strip.
+pattern = "ringmastertest"
 paths = ["docs/CONTRIBUTING.md"]
 
 [[check]]
