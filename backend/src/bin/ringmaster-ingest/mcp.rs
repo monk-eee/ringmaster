@@ -1,3 +1,4 @@
+use ringmaster_backend::embedding_adapter::EmbeddingConfig;
 use ringmaster_backend::graph;
 use ringmaster_backend::transcript::{ingest_source, SourceMetadata};
 use rmcp::handler::server::wrapper::Parameters;
@@ -35,6 +36,18 @@ pub struct RecallSourcesParams {
     /// Only return nodes that occurred at or before this RFC3339 datetime.
     #[serde(default)]
     pub occurred_to: Option<String>,
+}
+
+/// ADR-0064: a natural-language query over embedded source fragments, reusing
+/// the same `graph::search_source_fragments` the HTTP `GET /api/search` route
+/// calls (ADR-0019).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchParams {
+    /// Natural-language query to rank source fragments by semantic similarity.
+    pub query: String,
+    /// Maximum number of hits to return (default 5).
+    #[serde(default)]
+    pub limit: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -97,6 +110,22 @@ impl RingmasterIngestServer {
 
         match graph::list_nodes(&self.pool, params.node_type.as_deref(), occurred_from, occurred_to, false, None, None).await {
             Ok(nodes) => Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::json!(nodes).to_string())])),
+            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
+        }
+    }
+
+    #[tool(
+        description = "Search previously-ingested evidence by meaning: ranks source fragments by semantic similarity to a natural-language query. Requires an embedding model to be configured; returns a clear error if one is not."
+    )]
+    async fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+        let Some(config) = EmbeddingConfig::from_env() else {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "RINGMASTER_EMBEDDING_URL is not set; semantic search is disabled".to_string(),
+            )]));
+        };
+        let limit = params.limit.filter(|value| *value > 0).unwrap_or(5);
+        match graph::search_source_fragments(&self.pool, &config, &params.query, limit).await {
+            Ok(results) => Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::json!(results).to_string())])),
             Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
         }
     }
