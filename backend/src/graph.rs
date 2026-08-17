@@ -67,13 +67,17 @@ pub async fn get_node(pool: &PgPool, id: Uuid) -> Result<Node, sqlx::Error> {
 /// branches. Ordering switches to `occurred_at DESC NULLS LAST` when either
 /// date bound is given -- sorting by write-time makes no sense once the
 /// caller is asking "what happened in this window"; otherwise unchanged
-/// (`updated_at DESC`).
+/// (`updated_at DESC`). `limit`/`offset` of `None` fetch every matching row
+/// unchanged (ADR-0059) -- Postgres treats `LIMIT NULL`/`OFFSET NULL` as
+/// unbounded, so this is one query either way, not a conditionally-built one.
 pub async fn list_nodes(
     pool: &PgPool,
     node_type: Option<&str>,
     occurred_from: Option<chrono::DateTime<chrono::Utc>>,
     occurred_to: Option<chrono::DateTime<chrono::Utc>>,
     needs_attention: bool,
+    limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Vec<Node>, sqlx::Error> {
     let order_by = if occurred_from.is_some() || occurred_to.is_some() {
         "ORDER BY occurred_at DESC NULLS LAST"
@@ -90,13 +94,16 @@ pub async fn list_nodes(
                 JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = n.id THEN e.to_id ELSE e.from_id END) \
                 WHERE (e.from_id = n.id OR e.to_id = n.id) AND op.status IN ('open', 'at_risk') \
            )) \
-         {order_by}"
+         {order_by} \
+         LIMIT $5 OFFSET $6"
     );
     sqlx::query_as(&query)
         .bind(node_type)
         .bind(occurred_from)
         .bind(occurred_to)
         .bind(needs_attention)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await
 }
@@ -390,9 +397,31 @@ mod tests {
         let person_id = create_node(&pool, "person", "Filter Test Person", json!({})).await.expect("create person");
         create_node(&pool, "risk", "Filter Test Risk", json!({})).await.expect("create risk");
 
-        let people = list_nodes(&pool, Some("person"), None, None, false).await.expect("list people");
+        let people = list_nodes(&pool, Some("person"), None, None, false, None, None).await.expect("list people");
         assert!(people.iter().any(|node| node.id == person_id));
         assert!(people.iter().all(|node| node.node_type == "person"), "filter must exclude other node types");
+    }
+
+    /// ADR-0059: `limit`/`offset` of `None` preserve every existing test's
+    /// exact prior behavior (every matching row); a real `limit` truncates
+    /// and `offset` skips, both against a stable `updated_at DESC` order.
+    #[tokio::test]
+    async fn list_nodes_applies_limit_and_offset() {
+        let pool = test_pool().await;
+        let first = create_node(&pool, "note", "Pagination Test First", json!({})).await.expect("create first");
+        let second = create_node(&pool, "note", "Pagination Test Second", json!({})).await.expect("create second");
+
+        let unbounded = list_nodes(&pool, None, None, None, false, None, None).await.expect("list unbounded");
+        let both_present = unbounded.iter().any(|node| node.id == first) && unbounded.iter().any(|node| node.id == second);
+        assert!(both_present, "omitting limit/offset must return every matching row");
+
+        let page = list_nodes(&pool, None, None, None, false, Some(1), None).await.expect("list first page");
+        assert_eq!(page.len(), 1, "limit=1 must return exactly one row");
+        assert_eq!(page[0].id, second, "updated_at DESC must put the most recently created row first");
+
+        let next_page = list_nodes(&pool, None, None, None, false, Some(1), Some(1)).await.expect("list second page");
+        assert_eq!(next_page.len(), 1, "limit=1 offset=1 must return exactly one row");
+        assert_eq!(next_page[0].id, first, "offset=1 must skip the first page's row");
     }
 
     /// ADR-0051: `needs_attention` restricts to person nodes with at least
@@ -422,7 +451,7 @@ mod tests {
 
         crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
 
-        let filtered = list_nodes(&pool, Some("person"), None, None, true).await.expect("list people needing attention");
+        let filtered = list_nodes(&pool, Some("person"), None, None, true, None, None).await.expect("list people needing attention");
         assert!(filtered.iter().any(|node| node.id == owed_person), "a person linked to an open Obligation must be included");
         assert!(!filtered.iter().any(|node| node.id == idle_person), "a person with no linked Obligation must be excluded");
         assert!(!filtered.iter().any(|node| node.id == closed_only_person), "a person linked only to a closed Obligation must be excluded");
@@ -449,7 +478,7 @@ mod tests {
             .await
             .expect("set out-of-range occurred_at");
 
-        let results = list_nodes(&pool, None, Some(from), Some(to), false).await.expect("list nodes by range");
+        let results = list_nodes(&pool, None, Some(from), Some(to), false, None, None).await.expect("list nodes by range");
         assert!(results.iter().any(|node| node.id == in_range), "in-range node must be present");
         assert!(!results.iter().any(|node| node.id == out_of_range), "out-of-range node must be excluded");
     }

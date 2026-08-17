@@ -177,12 +177,22 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function fetchObligations(): Promise<Obligation[]> {
-  return getJson<Obligation[]>("/api/obligations");
+// ADR-0059: limit/offset are optional and additive -- omitting both fetches
+// every row, unchanged from before this ADR.
+export function fetchObligations(limit?: number, offset?: number): Promise<Obligation[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined) params.set("offset", String(offset));
+  const query = params.toString();
+  return getJson<Obligation[]>(query ? `/api/obligations?${query}` : "/api/obligations");
 }
 
-export function fetchCandidates(): Promise<Candidate[]> {
-  return getJson<Candidate[]>("/api/candidates");
+export function fetchCandidates(limit?: number, offset?: number): Promise<Candidate[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined) params.set("offset", String(offset));
+  const query = params.toString();
+  return getJson<Candidate[]>(query ? `/api/candidates?${query}` : "/api/candidates");
 }
 
 export function searchSourceFragments(query: string): Promise<SearchResult[]> {
@@ -225,10 +235,12 @@ export function promoteCandidate(candidateId: string): Promise<Obligation> {
   return postJson<Obligation>(`/api/candidates/${encodeURIComponent(candidateId)}/promote`);
 }
 
-export function fetchNodes(nodeType?: string, needsAttention?: boolean): Promise<GraphNode[]> {
+export function fetchNodes(nodeType?: string, needsAttention?: boolean, limit?: number, offset?: number): Promise<GraphNode[]> {
   const params = new URLSearchParams();
   if (nodeType) params.set("node_type", nodeType);
   if (needsAttention) params.set("needs_attention", "true");
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined) params.set("offset", String(offset));
   const query = params.toString();
   return getJson<GraphNode[]>(query ? `/api/nodes?${query}` : "/api/nodes");
 }

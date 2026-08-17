@@ -55,11 +55,25 @@ async fn health() -> &'static str {
     "OK"
 }
 
+/// Shared `?limit=`/`?offset=` query params for the three list views
+/// (ADR-0059): Obligations, Candidates, and (via `NodeQuery`) People. `None`
+/// for either fetches every matching row, preserving each route's exact
+/// prior behavior for any caller that omits them.
+#[derive(Debug, Deserialize)]
+struct ListQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
 /// Reads the current `obligation_projection` rows (ADR-0005/ADR-0012). Never
 /// writes; the projection remains the sole source this route reflects. Joins
 /// read-only against the immutable `source_fragments` table for evidence
 /// (ADR-0023), the same treatment ADR-0015 already gave `GET /api/candidates`.
-async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+/// `limit`/`offset` of `None` fetch every row unchanged (ADR-0059); a given
+/// `limit` is clamped to `[1, MAX_LIST_LIMIT]` rather than rejected, matching
+/// ADR-0049's audit-limit precedent.
+async fn list_obligations(State(pool): State<PgPool>, Query(params): Query<ListQuery>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let (limit, offset) = clamp_list_params(&params);
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         uuid::Uuid,
@@ -74,8 +88,11 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
                 op.source_fragment_id, sf.text \
          FROM obligation_projection op \
          LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
-         ORDER BY op.updated_at DESC",
+         ORDER BY op.updated_at DESC \
+         LIMIT $1 OFFSET $2",
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&pool)
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -816,15 +833,21 @@ fn candidate_with_source_json(row: &CandidateWithSource) -> JsonValue {
 
 /// Reads the current `candidate_projection` rows, joined read-only against
 /// the immutable `source_fragments` table for evidence (ADR-0013/ADR-0015).
-/// Never writes.
-async fn list_candidates(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+/// Never writes. `limit`/`offset` of `None` fetch every row unchanged
+/// (ADR-0059); a given `limit` is clamped to `[1, MAX_LIST_LIMIT]` rather
+/// than rejected, matching ADR-0049's audit-limit precedent.
+async fn list_candidates(State(pool): State<PgPool>, Query(params): Query<ListQuery>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let (limit, offset) = clamp_list_params(&params);
     let rows: Vec<CandidateWithSource> = sqlx::query_as(
         "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
                 cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
          FROM candidate_projection cp \
          LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
-         ORDER BY cp.candidate_id",
+         ORDER BY cp.candidate_id \
+         LIMIT $1 OFFSET $2",
     )
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&pool)
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -1236,6 +1259,20 @@ struct NodeQuery {
     occurred_from: Option<String>,
     occurred_to: Option<String>,
     needs_attention: Option<bool>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+/// Page size ceiling shared by every list-view `limit` param (ADR-0059),
+/// matching the value ADR-0049 already established for audit events.
+const MAX_LIST_LIMIT: i64 = 200;
+
+/// Clamps a list-view page size to `[1, MAX_LIST_LIMIT]` rather than
+/// rejecting it (ADR-0059, matching ADR-0049's audit-limit precedent);
+/// `None` stays `None` -- Postgres treats `LIMIT NULL`/`OFFSET NULL` as
+/// unbounded, so every existing caller that omits both sees zero change.
+fn clamp_list_params(params: &ListQuery) -> (Option<i64>, Option<i64>) {
+    (params.limit.map(|value| value.clamp(1, MAX_LIST_LIMIT)), params.offset.map(|value| value.max(0)))
 }
 
 /// Parses an optional RFC3339 query param: absent/blank is `Ok(None)`, a
@@ -1252,15 +1289,18 @@ fn parse_optional_rfc3339(label: &str, raw: Option<&str>) -> Result<Option<chron
 /// Lists nodes, optionally filtered by `?node_type=` (ADR-0025), an
 /// `occurred_at` range via `?occurred_from=`/`?occurred_to=` (ADR-0042),
 /// and/or `?needs_attention=true` (ADR-0051), restricting to nodes with at
-/// least one linked open/at-risk Obligation. Omitting all three preserves
-/// this route's exact prior behavior. For `?node_type=person` specifically
-/// (ADR-0051), each row is additionally enriched with `open_count`,
-/// `at_risk_count`, and `last_interaction_at` -- two batched queries
-/// keyed by the already-fetched ids/names, never one query per row.
+/// least one linked open/at-risk Obligation. `?limit=`/`?offset=` (ADR-0059)
+/// page the result; omitting every param preserves this route's exact prior
+/// behavior. For `?node_type=person` specifically (ADR-0051), each row is
+/// additionally enriched with `open_count`, `at_risk_count`, and
+/// `last_interaction_at` -- two batched queries keyed by the already-fetched
+/// ids/names, never one query per row.
 async fn list_nodes_route(State(pool): State<PgPool>, Query(params): Query<NodeQuery>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     let occurred_from = parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref())?;
     let occurred_to = parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref())?;
-    let nodes = graph::list_nodes(&pool, params.node_type.as_deref(), occurred_from, occurred_to, params.needs_attention.unwrap_or(false))
+    let limit = params.limit.map(|value| value.clamp(1, MAX_LIST_LIMIT));
+    let offset = params.offset.map(|value| value.max(0));
+    let nodes = graph::list_nodes(&pool, params.node_type.as_deref(), occurred_from, occurred_to, params.needs_attention.unwrap_or(false), limit, offset)
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
@@ -1778,6 +1818,28 @@ mod tests {
         assert_eq!(row["source_text"], "We committed to a two-week transition plan.");
     }
 
+    /// ADR-0059: `?limit=`/`?offset=` page GET /api/obligations; omitting
+    /// both keeps returning every row.
+    #[tokio::test]
+    async fn obligations_route_applies_limit_and_offset() {
+        let pool = test_pool().await;
+        for _ in 0..2 {
+            crate::obligation::append_event(&pool, uuid::Uuid::new_v4(), crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+                .await
+                .expect("append created event");
+        }
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/obligations?limit=1").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.as_array().unwrap().len(), 1, "limit=1 must return exactly one row");
+    }
+
     /// ADR-0023: the Daily Brief's reason cites linked evidence, or says
     /// plainly that none is recorded -- it never fabricates either.
     #[tokio::test]
@@ -2068,6 +2130,28 @@ mod tests {
         let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
         assert!(parsed.is_array(), "response body must be a JSON array");
         assert!(!parsed.as_array().unwrap().is_empty(), "must include the just-appended candidate");
+    }
+
+    /// ADR-0059: `?limit=`/`?offset=` page GET /api/candidates; omitting
+    /// both keeps returning every row.
+    #[tokio::test]
+    async fn candidates_route_applies_limit_and_offset() {
+        let pool = test_pool().await;
+        for _ in 0..2 {
+            extraction::extract_candidate(&pool, uuid::Uuid::new_v4(), "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), Some("test-model"))
+                .await
+                .expect("extract candidate");
+        }
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/candidates?limit=1").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.as_array().unwrap().len(), 1, "limit=1 must return exactly one row");
     }
 
     #[tokio::test]
@@ -2945,6 +3029,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bad_response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    /// ADR-0059: `?limit=`/`?offset=` page GET /api/nodes; omitting both
+    /// keeps returning every matching row (this route's exact prior
+    /// behavior, unchanged).
+    #[tokio::test]
+    async fn nodes_route_applies_limit_and_offset() {
+        let pool = test_pool().await;
+        graph::create_node(&pool, "note", "Nodes Route Pagination Test First", json!({})).await.expect("create first");
+        graph::create_node(&pool, "note", "Nodes Route Pagination Test Second", json!({})).await.expect("create second");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/nodes?node_type=note&limit=1").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(parsed.as_array().unwrap().len(), 1, "limit=1 must return exactly one row");
     }
 
     /// ADR-0051: a `?node_type=person` list response is enriched with

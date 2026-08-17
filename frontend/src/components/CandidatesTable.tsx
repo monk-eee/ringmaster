@@ -2,9 +2,9 @@ import { useState } from "react";
 import { acceptCandidate, CANDIDATE_TYPES, correctCandidate, promoteCandidate, rejectCandidate, type Candidate } from "../api";
 import { typeIcon } from "../icons";
 
-type Props = { candidates: Candidate[]; onChanged: () => void };
+type Props = { candidates: Candidate[]; onChanged: () => void; hasMore?: boolean; onLoadMore?: () => void };
 
-export default function CandidatesTable({ candidates, onChanged }: Props) {
+export default function CandidatesTable({ candidates, onChanged, hasMore, onLoadMore }: Props) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -161,6 +161,11 @@ export default function CandidatesTable({ candidates, onChanged }: Props) {
           ))}
         </tbody>
       </table>
+      {hasMore && onLoadMore && (
+        <button type="button" className="daily-brief-view-more" onClick={onLoadMore}>
+          Load more
+        </button>
+      )}
     </div>
   );
 }

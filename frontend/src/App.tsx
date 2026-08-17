@@ -50,12 +50,17 @@ const TAB_TITLES: Record<Tab, string> = {
 const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox"];
 const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph", "meetings", "activity"];
 const TODAY_ITEM_CAP = 10;
+// ADR-0059: default page size for the Obligations/Candidates/People list
+// views -- a full page back means there may be more; a short page is the end.
+const LIST_PAGE_SIZE = 50;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("today");
   const [selectedObligationId, setSelectedObligationId] = useState<string | null>(null);
   const [obligations, setObligations] = useState<Obligation[]>([]);
+  const [obligationsHasMore, setObligationsHasMore] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidatesHasMore, setCandidatesHasMore] = useState(false);
   const [dailyBrief, setDailyBrief] = useState<DailyBriefItem[]>([]);
   const [focusBlocks, setFocusBlocks] = useState<FocusBlock[]>([]);
   const [timeHorizon, setTimeHorizon] = useState<TimeHorizonData>({});
@@ -75,14 +80,16 @@ export default function App() {
     setError(null);
     try {
       const [nextObligations, nextCandidates, nextDailyBrief, nextFocusBlocks, nextTimeHorizon] = await Promise.all([
-        fetchObligations(),
-        fetchCandidates(),
+        fetchObligations(LIST_PAGE_SIZE, 0),
+        fetchCandidates(LIST_PAGE_SIZE, 0),
         fetchDailyBrief(),
         fetchFocusBlocks(),
         fetchTimeHorizon(),
       ]);
       setObligations(nextObligations);
+      setObligationsHasMore(nextObligations.length === LIST_PAGE_SIZE);
       setCandidates(nextCandidates);
+      setCandidatesHasMore(nextCandidates.length === LIST_PAGE_SIZE);
       setDailyBrief(nextDailyBrief);
       setFocusBlocks(nextFocusBlocks);
       setTimeHorizon(nextTimeHorizon);
@@ -91,6 +98,19 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // ADR-0059: appends the next page rather than re-fetching everything.
+  async function loadMoreObligations() {
+    const next = await fetchObligations(LIST_PAGE_SIZE, obligations.length);
+    setObligations((current) => [...current, ...next]);
+    setObligationsHasMore(next.length === LIST_PAGE_SIZE);
+  }
+
+  async function loadMoreCandidates() {
+    const next = await fetchCandidates(LIST_PAGE_SIZE, candidates.length);
+    setCandidates((current) => [...current, ...next]);
+    setCandidatesHasMore(next.length === LIST_PAGE_SIZE);
   }
 
   async function runSearch(event: React.FormEvent) {
@@ -269,10 +289,10 @@ export default function App() {
               selectedObligationId ? (
                 <ObligationDetail obligationId={selectedObligationId} onBack={() => setSelectedObligationId(null)} />
               ) : (
-                <ObligationsTable obligations={visibleObligations} onSelect={setSelectedObligationId} />
+                <ObligationsTable obligations={visibleObligations} onSelect={setSelectedObligationId} hasMore={obligationsHasMore} onLoadMore={loadMoreObligations} />
               )
             ) : (
-              <CandidatesTable candidates={candidates} onChanged={load} />
+              <CandidatesTable candidates={candidates} onChanged={load} hasMore={candidatesHasMore} onLoadMore={loadMoreCandidates} />
             )}
           </>
         )}

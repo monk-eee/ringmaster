@@ -319,6 +319,36 @@ test("people tab defaults to who-needs-attention, excluding a person with no ope
   await expect(page.getByRole("button", { name: new RegExp(bareName) })).toBeVisible();
 });
 
+// ADR-0059: proves "Load more" actually fetches and appends a further page
+// rather than just being present but inert. Seeds 51 fresh person nodes
+// (one more than the frontend's LIST_PAGE_SIZE of 50) via the existing
+// POST /api/nodes route -- nodes sort newest-updated-first (graph.rs's
+// `ORDER BY updated_at DESC`), so these occupy page one and guarantee a
+// "Load more" affordance regardless of whatever else the shared
+// development database currently contains.
+test("people tab: Load more appends a further page (ADR-0059)", async ({ page, request, baseURL }) => {
+  const unique = Date.now();
+  await Promise.all(
+    Array.from({ length: 51 }, (_, index) =>
+      request.post(`${baseURL}/api/nodes`, { data: { node_type: "person", canonical_text: `Pagination Test Person ${unique}-${index}` } }),
+    ),
+  );
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "People" }).click();
+  await page.getByRole("button", { name: "Show everyone" }).click();
+
+  const cards = page.locator(".people-card");
+  await expect(cards.first()).toBeVisible();
+  const countBeforeLoadMore = await cards.count();
+
+  const loadMore = page.getByRole("button", { name: "Load more", exact: true });
+  await expect(loadMore).toBeVisible();
+  await loadMore.click();
+
+  await expect.poll(async () => cards.count()).toBeGreaterThan(countBeforeLoadMore);
+});
+
 // ADR-0041: proves Risk Engine v1's signals, when present, actually render
 // as real text in the browser -- tolerant of whatever the shared
 // development database currently contains, never asserting a specific

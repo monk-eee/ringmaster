@@ -2,9 +2,14 @@ import type { Obligation } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
 
-type Props = { obligations: Obligation[]; onSelect?: (obligationId: string) => void };
+type Props = {
+  obligations: Obligation[];
+  onSelect?: (obligationId: string) => void;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+};
 
-export default function ObligationsTable({ obligations, onSelect }: Props) {
+export default function ObligationsTable({ obligations, onSelect, hasMore, onLoadMore }: Props) {
   if (obligations.length === 0) {
     return (
       <div className="card">
@@ -51,6 +56,11 @@ export default function ObligationsTable({ obligations, onSelect }: Props) {
           ))}
         </tbody>
       </table>
+      {hasMore && onLoadMore && (
+        <button type="button" className="daily-brief-view-more" onClick={onLoadMore}>
+          Load more
+        </button>
+      )}
     </div>
   );
 }

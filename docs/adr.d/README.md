@@ -72,3 +72,6 @@ accepted and implemented.
 | [ADR-0053: "What am I forgetting?" — compose existing risk signals into one capped, prominent list](0053-what-am-i-forgetting.md) | Accepted | [EV-0053](../evidence.d/0053-what-am-i-forgetting.md) |
 | [ADR-0054: Congruence Engine v1 — flag a commitment with no linked node at all](0054-congruence-engine-v1-isolated-commitment-signal.md) | Accepted | [EV-0054](../evidence.d/0054-congruence-engine-v1-isolated-commitment-signal.md) |
 | [ADR-0056: Local test-database isolation, plus a reviewable (not auto-run) dev-data cleanup](0056-local-test-database-isolation-and-dev-data-cleanup.md) | Accepted | [EV-0056](../evidence.d/0056-local-test-database-isolation-and-dev-data-cleanup.md) |
+| [ADR-0057: Enforce test-database isolation with a runtime guard](0057-enforce-test-database-isolation-with-a-runtime-guard.md) | Accepted | [EV-0057](../evidence.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md) |
+| [ADR-0058: Extract a due date from a candidate and carry it to the promoted obligation](0058-extract-candidate-due-date-to-obligation.md) | Accepted | [EV-0058](../evidence.d/0058-extract-candidate-due-date-to-obligation.md) |
+| [ADR-0059: List-view pagination for Obligations, Candidates, and People](0059-list-view-pagination.md) | Accepted | [EV-0059](../evidence.d/0059-list-view-pagination.md) |

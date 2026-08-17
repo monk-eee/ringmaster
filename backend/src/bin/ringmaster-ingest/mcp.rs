@@ -95,7 +95,7 @@ impl RingmasterIngestServer {
             Err(message) => return Ok(CallToolResult::error(vec![ContentBlock::text(message)])),
         };
 
-        match graph::list_nodes(&self.pool, params.node_type.as_deref(), occurred_from, occurred_to, false).await {
+        match graph::list_nodes(&self.pool, params.node_type.as_deref(), occurred_from, occurred_to, false, None, None).await {
             Ok(nodes) => Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::json!(nodes).to_string())])),
             Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
         }

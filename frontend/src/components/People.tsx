@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { fetchNodeDetail, fetchNodes, type NodeDetail, type PersonListNode } from "../api";
 import { renderRelationshipGroup } from "./GraphExplorer";
 
+// ADR-0059: same default page size as Obligations/Candidates.
+const LIST_PAGE_SIZE = 50;
+
 function relativeInteraction(lastInteractionAt: string | null): string {
   if (!lastInteractionAt) return "No recorded interaction";
   const days = Math.floor((Date.now() - new Date(lastInteractionAt).getTime()) / 86_400_000);
@@ -17,6 +20,7 @@ function relativeInteraction(lastInteractionAt: string | null): string {
 // node -- an explicit, honest toggle switches back to everyone.
 export default function People() {
   const [people, setPeople] = useState<PersonListNode[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [needsAttentionOnly, setNeedsAttentionOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,11 +31,21 @@ export default function People() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetchNodes("person", needsAttentionOnly)
-      .then((nodes) => setPeople(nodes as PersonListNode[]))
+    fetchNodes("person", needsAttentionOnly, LIST_PAGE_SIZE, 0)
+      .then((nodes) => {
+        setPeople(nodes as PersonListNode[]);
+        setHasMore(nodes.length === LIST_PAGE_SIZE);
+      })
       .catch((cause) => setError((cause as Error).message))
       .finally(() => setLoading(false));
   }, [needsAttentionOnly]);
+
+  // ADR-0059: appends the next page rather than re-fetching everything.
+  async function loadMore() {
+    const next = await fetchNodes("person", needsAttentionOnly, LIST_PAGE_SIZE, people.length);
+    setPeople((current) => [...current, ...(next as PersonListNode[])]);
+    setHasMore(next.length === LIST_PAGE_SIZE);
+  }
 
   async function openPerson(id: string) {
     setSelectedId(id);
@@ -113,6 +127,11 @@ export default function People() {
             </li>
           ))}
         </ol>
+      )}
+      {hasMore && !loading && (
+        <button type="button" className="daily-brief-view-more" onClick={loadMore}>
+          Load more
+        </button>
       )}
     </>
   );
