@@ -25,9 +25,6 @@ node scripts/check-evidence.mjs
 git diff --check
 ```
 
-Add project-specific build, format, lint, and test commands here when the Rust
-and Node project structures are established under accepted ADRs.
-
 ## Backend tests
 
 Per [ADR-0056](adr.d/0056-local-test-database-isolation-and-dev-data-cleanup.md),
