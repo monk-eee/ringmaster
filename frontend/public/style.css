@@ -443,6 +443,29 @@ td.evidence-cell .no-evidence {
   background: var(--surface-alt);
 }
 
+/* ADR-0047: a Today/Obligations row opens a shared, in-place detail view. */
+.daily-brief-row-button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.obligation-row-selectable {
+  cursor: pointer;
+}
+
+.obligation-row-selectable:hover {
+  background: var(--surface-alt);
+}
+
 .daily-brief-row {
   display: flex;
   align-items: center;
@@ -459,6 +482,30 @@ td.evidence-cell .no-evidence {
   font-size: 0.92rem;
   color: var(--text);
   line-height: 1.45;
+}
+
+.activity-action {
+  font-weight: 650;
+  font-size: 0.85rem;
+}
+
+.activity-actor {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.activity-time {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.activity-states code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  background: var(--surface-alt);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
 }
 
 .time-horizon-sections {
@@ -916,6 +963,39 @@ td.evidence-cell .no-evidence {
 .graph-trail-back:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* ADR-0047: Obligation detail -- a read-only page reached from Today or
+   Obligations, reusing the same Back-control shape as the trail above. */
+.obligation-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.obligation-detail-back {
+  align-self: flex-start;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  cursor: pointer;
+}
+
+.obligation-detail-section-heading {
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+}
+
+.obligation-detail-linked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
 .graph-trail-path {

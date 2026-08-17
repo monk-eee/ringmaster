@@ -2,9 +2,9 @@ import type { Obligation } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
 
-type Props = { obligations: Obligation[] };
+type Props = { obligations: Obligation[]; onSelect?: (obligationId: string) => void };
 
-export default function ObligationsTable({ obligations }: Props) {
+export default function ObligationsTable({ obligations, onSelect }: Props) {
   if (obligations.length === 0) {
     return (
       <div className="card">
@@ -25,7 +25,11 @@ export default function ObligationsTable({ obligations }: Props) {
         </thead>
         <tbody>
           {obligations.map((o) => (
-            <tr key={o.obligation_id}>
+            <tr
+              key={o.obligation_id}
+              className={onSelect ? "obligation-row-selectable" : undefined}
+              onClick={onSelect ? () => onSelect(o.obligation_id) : undefined}
+            >
               <td className="obligation-title-cell">
                 <span className="type-icon" aria-hidden="true">
                   {typeIcon("obligation")}

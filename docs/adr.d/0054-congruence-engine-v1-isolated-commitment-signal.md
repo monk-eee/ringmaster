@@ -1,9 +1,9 @@
 # ADR-0054: Congruence Engine v1 — flag a commitment with no linked node at all
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Explicitly accepted by monk-eee on 2026-08-17 ("accept all")
 - **Depends on:** [ADR-0009](0009-add-graph-nodes-edges-and-source-fragments.md), [ADR-0041](0041-risk-engine-v1-staleness-and-date-compression-signals.md), [ADR-0053](0053-what-am-i-forgetting.md)
 - **Tags:** api, architecture, data-model
 

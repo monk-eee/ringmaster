@@ -122,6 +122,17 @@ export type Edge = {
   valid_to: string | null;
 };
 
+export type AuditEvent = {
+  id: string;
+  actor: string;
+  action: string;
+  previous_state: unknown;
+  new_state: unknown;
+  source: string;
+  policy_outcome: string;
+  recorded_at: string;
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
   if (!response.ok) {
@@ -178,6 +189,10 @@ export function fetchTimeHorizon(): Promise<TimeHorizon> {
 
 export function fetchFocusBlocks(): Promise<FocusBlock[]> {
   return getJson<FocusBlock[]>("/api/focus-blocks");
+}
+
+export function fetchAuditEvents(): Promise<AuditEvent[]> {
+  return getJson<AuditEvent[]>("/api/audit-events");
 }
 
 export function acceptCandidate(candidateId: string): Promise<Candidate> {
@@ -256,6 +271,30 @@ export function fetchMeetingDetail(id: string): Promise<MeetingDetail> {
 
 export function fetchMeetingCandidates(id: string): Promise<MeetingCandidates> {
   return getJson<MeetingCandidates>(`/api/meetings/${encodeURIComponent(id)}/candidates`);
+}
+
+export type LinkedNode = {
+  edge_id: string;
+  edge_type: string;
+  node_id: string | null;
+  node_type: string | null;
+  canonical_text: string | null;
+};
+
+export type ObligationDetail = {
+  obligation_id: string;
+  status: string;
+  updated_at: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  source_fragment_id: string | null;
+  source_text: string | null;
+  risk_signals: RiskSignal[];
+  linked_nodes: LinkedNode[];
+};
+
+export function fetchObligationDetail(id: string): Promise<ObligationDetail> {
+  return getJson<ObligationDetail>(`/api/obligations/${encodeURIComponent(id)}`);
 }
 
 export type ExtractResult = { status: "created" } | { status: "empty" } | { status: "unavailable"; message: string };

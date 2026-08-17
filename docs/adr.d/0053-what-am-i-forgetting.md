@@ -1,9 +1,9 @@
 # ADR-0053: "What am I forgetting?" — compose existing risk signals into one capped, prominent list
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Decider:** monk-eee
-- **Approval:** Pending — awaiting monk-eee's decision
+- **Approval:** Explicitly accepted by monk-eee on 2026-08-17 ("accept all")
 - **Depends on:** [ADR-0022](0022-daily-brief-endpoint.md), [ADR-0041](0041-risk-engine-v1-staleness-and-date-compression-signals.md), [ADR-0046](0046-unowned-obligation-risk-signal.md), [ADR-0050](0050-today-attention-budget.md)
 - **Tags:** api, frontend, architecture
 

@@ -64,3 +64,8 @@ accepted and implemented.
 | [ADR-0044: Today attention items show management meaning, not identifiers](0044-today-attention-items-management-meaning.md) | Accepted | [EV-0044](../evidence.d/0044-today-attention-items-management-meaning.md) |
 | [ADR-0045: Correct a candidate before accepting it](0045-correct-candidate-before-accepting.md) | Accepted | [EV-0045](../evidence.d/0045-correct-candidate-before-accepting.md) |
 | [ADR-0046: Unowned-obligation risk signal via existing owns edges](0046-unowned-obligation-risk-signal.md) | Accepted | [EV-0046](../evidence.d/0046-unowned-obligation-risk-signal.md) |
+| [ADR-0047: Obligation detail page — a first-class read view over existing data](0047-obligation-detail-page.md) | Accepted | [EV-0047](../evidence.d/0047-obligation-detail-page.md) |
+| [ADR-0049: Audit trail read API — a chronological activity feed](0049-audit-trail-read-api.md) | Accepted | [EV-0049](../evidence.d/0049-audit-trail-read-api.md) |
+| [ADR-0050: Today attention budget — cap Focus Blocks, remove their raw id, honest "show all"](0050-today-attention-budget.md) | Accepted | [EV-0050](../evidence.d/0050-today-attention-budget.md) |
+| [ADR-0051: Relationship workspace — People shows who needs something from you, not every person node](0051-relationship-workspace.md) | Accepted | [EV-0051](../evidence.d/0051-relationship-workspace.md) |
+| [ADR-0052: Context-derived Focus Sessions — group by shared node and similar timeframe, not node alone](0052-context-derived-focus-sessions.md) | Accepted | [EV-0052](../evidence.d/0052-context-derived-focus-sessions.md) |

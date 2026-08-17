@@ -29,6 +29,7 @@ pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/obligations", get(list_obligations))
+        .route("/api/obligations/:id", get(get_obligation_detail))
         .route("/api/daily-brief", get(daily_brief))
         .route("/api/time-horizon", get(time_horizon))
         .route("/api/focus-blocks", get(focus_blocks))
@@ -43,6 +44,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/candidates/:id/promote", post(promote_candidate))
         .route("/api/source-fragments/:id/extract", post(extract_source_fragment))
         .route("/api/search", get(search))
+        .route("/api/audit-events", get(list_audit_events))
         .route("/api/nodes", get(list_nodes_route).post(create_node_route))
         .route("/api/nodes/:id", get(get_node_detail).patch(update_node_route))
         .route("/api/edges", post(create_edge_route))
@@ -96,6 +98,95 @@ async fn list_obligations(State(pool): State<PgPool>) -> Result<Json<JsonValue>,
     Ok(Json(json!(body)))
 }
 
+#[derive(Debug, FromRow)]
+struct ObligationLinkedNodeRow {
+    edge_id: Uuid,
+    edge_type: String,
+    neighbor_id: Option<Uuid>,
+    neighbor_node_type: Option<String>,
+    neighbor_canonical_text: Option<String>,
+}
+
+/// Reads one Obligation by id (ADR-0047): the same fields
+/// `GET /api/daily-brief` already returns per row (including `risk_signals`,
+/// computed by the exact same function and `has_owner` subquery -- zero new
+/// reasoning), plus `linked_nodes`: every edge touching this id, with the
+/// other end resolved against `nodes` the same way `GET /api/nodes/:id`
+/// resolves a neighbor (ADR-0025) -- an edge whose other end isn't a `nodes`
+/// row reports a null neighbor, the same honest fallback. `404` for an
+/// unknown id. Read-only.
+async fn get_obligation_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    #[allow(clippy::type_complexity)]
+    let row: (
+        String,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<uuid::Uuid>,
+        Option<String>,
+        bool,
+        bool,
+    ) = sqlx::query_as(
+        "SELECT op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
+                op.source_fragment_id, sf.text, \
+                EXISTS ( \
+                    SELECT 1 FROM edges e JOIN nodes n ON n.id = e.from_id \
+                    WHERE e.to_id = op.obligation_id AND e.edge_type = 'owns' AND n.node_type = 'person' \
+                ) AS has_owner, \
+                EXISTS ( \
+                    SELECT 1 FROM edges e WHERE e.from_id = op.obligation_id OR e.to_id = op.obligation_id \
+                ) AS has_edges \
+         FROM obligation_projection op \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE op.obligation_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "obligation not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+    let (status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner, has_edges) = row;
+
+    let linked_rows: Vec<ObligationLinkedNodeRow> = sqlx::query_as(
+        "SELECT e.id AS edge_id, e.edge_type, \
+                n.id AS neighbor_id, n.node_type AS neighbor_node_type, n.canonical_text AS neighbor_canonical_text \
+         FROM edges e \
+         LEFT JOIN nodes n ON n.id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
+         WHERE e.from_id = $1 OR e.to_id = $1",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let linked_nodes: Vec<JsonValue> = linked_rows
+        .into_iter()
+        .map(|linked| {
+            json!({
+                "edge_id": linked.edge_id,
+                "edge_type": linked.edge_type,
+                "node_id": linked.neighbor_id,
+                "node_type": linked.neighbor_node_type,
+                "canonical_text": linked.neighbor_canonical_text,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "obligation_id": id,
+        "status": status,
+        "updated_at": updated_at.to_rfc3339(),
+        "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
+        "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
+        "source_fragment_id": source_fragment_id,
+        "source_text": source_text,
+        "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges),
+        "linked_nodes": linked_nodes,
+    })))
+}
+
 /// A deterministic reason for one Daily Brief item (ADR-0022), with a second
 /// evidence clause added by ADR-0023: cites the linked source fragment's
 /// text when present, or states plainly that none is recorded. Never
@@ -139,15 +230,17 @@ const DATE_COMPRESSION_WINDOW_DAYS: i64 = 7;
 /// signals derivable today with zero schema change and zero fabricated
 /// data. Each signal is independent and additive -- no combined severity
 /// score is computed here, since weighting them together needs a model
-/// this ADR does not decide. `has_owner` (ADR-0046) is computed by the
-/// caller from the existing `edges` table, not by this function -- it
-/// stays pure and directly unit-testable.
+/// this ADR does not decide. `has_owner` (ADR-0046) and `has_edges`
+/// (ADR-0054, Congruence Engine v1) are computed by the caller from the
+/// existing `edges` table, not by this function -- it stays pure and
+/// directly unit-testable.
 fn risk_signals(
     hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
     soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
     updated_at: chrono::DateTime<chrono::Utc>,
     source_fragment_id: Option<Uuid>,
     has_owner: bool,
+    has_edges: bool,
 ) -> Vec<JsonValue> {
     let mut signals = Vec::new();
 
@@ -175,6 +268,10 @@ fn risk_signals(
         signals.push(json!({ "signal": "unowned", "explanation": "No owner linked." }));
     }
 
+    if !has_edges {
+        signals.push(json!({ "signal": "isolated", "explanation": "Not linked to anyone or anything." }));
+    }
+
     signals
 }
 
@@ -194,13 +291,17 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
         Option<uuid::Uuid>,
         Option<String>,
         bool,
+        bool,
     )> = sqlx::query_as(
         "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
                 op.source_fragment_id, sf.text, \
                 EXISTS ( \
                     SELECT 1 FROM edges e JOIN nodes n ON n.id = e.from_id \
                     WHERE e.to_id = op.obligation_id AND e.edge_type = 'owns' AND n.node_type = 'person' \
-                ) AS has_owner \
+                ) AS has_owner, \
+                EXISTS ( \
+                    SELECT 1 FROM edges e WHERE e.from_id = op.obligation_id OR e.to_id = op.obligation_id \
+                ) AS has_edges \
          FROM obligation_projection op \
          LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
          WHERE op.status <> 'closed' \
@@ -213,7 +314,7 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
 
     let body = rows
         .into_iter()
-        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner)| {
+        .map(|(obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner, has_edges)| {
             let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
             json!({
                 "obligation_id": obligation_id,
@@ -224,7 +325,7 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
                 "source_fragment_id": source_fragment_id,
                 "source_text": source_text,
                 "reason": reason,
-                "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner),
+                "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges),
             })
         })
         .collect::<Vec<_>>();
@@ -274,13 +375,17 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
         Option<uuid::Uuid>,
         Option<String>,
         bool,
+        bool,
     )> = sqlx::query_as(
         "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
                 op.source_fragment_id, sf.text, \
                 EXISTS ( \
                     SELECT 1 FROM edges e JOIN nodes n ON n.id = e.from_id \
                     WHERE e.to_id = op.obligation_id AND e.edge_type = 'owns' AND n.node_type = 'person' \
-                ) AS has_owner \
+                ) AS has_owner, \
+                EXISTS ( \
+                    SELECT 1 FROM edges e WHERE e.from_id = op.obligation_id OR e.to_id = op.obligation_id \
+                ) AS has_edges \
          FROM obligation_projection op \
          LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
          WHERE op.status <> 'closed' \
@@ -291,7 +396,7 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     let mut buckets: std::collections::HashMap<&'static str, Vec<JsonValue>> = std::collections::HashMap::new();
-    for (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner) in rows {
+    for (obligation_id, status, updated_at, hard_due_at, soft_due_at, source_fragment_id, source_text, has_owner, has_edges) in rows {
         let bucket = time_horizon_bucket(&status, hard_due_at, soft_due_at);
         let reason = daily_brief_reason(&status, hard_due_at, soft_due_at, source_text.as_deref());
         buckets.entry(bucket).or_default().push(json!({
@@ -302,7 +407,7 @@ async fn time_horizon(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (ax
             "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
             "source_fragment_id": source_fragment_id,
             "reason": reason,
-            "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner),
+            "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges),
         }));
     }
 
@@ -1050,6 +1155,33 @@ async fn search(
 }
 
 #[derive(Debug, Deserialize)]
+struct AuditEventsQuery {
+    limit: Option<i64>,
+}
+
+/// A flat, reverse-chronological feed of recent audit rows (ADR-0049):
+/// read-only, no correlation to any specific Obligation or candidate.
+async fn list_audit_events(
+    State(pool): State<PgPool>,
+    Query(params): Query<AuditEventsQuery>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let rows = audit::recent(&pool, params.limit).await.map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(json!(rows
+        .into_iter()
+        .map(|row| json!({
+            "id": row.id,
+            "actor": row.actor,
+            "action": row.action,
+            "previous_state": row.previous_state,
+            "new_state": row.new_state,
+            "source": row.source,
+            "policy_outcome": row.policy_outcome,
+            "recorded_at": row.recorded_at.to_rfc3339(),
+        }))
+        .collect::<Vec<_>>())))
+}
+
+#[derive(Debug, Deserialize)]
 struct NodeQuery {
     node_type: Option<String>,
     occurred_from: Option<String>,
@@ -1309,35 +1441,35 @@ mod tests {
     #[test]
     fn risk_signals_flags_date_compression_when_due_soon_with_no_evidence() {
         let due = chrono::Utc::now() + chrono::Duration::days(3);
-        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None, true);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None, true, true);
         assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
     }
 
     #[test]
     fn risk_signals_does_not_flag_date_compression_when_evidence_is_linked() {
         let due = chrono::Utc::now() + chrono::Duration::days(3);
-        let signals = risk_signals(Some(due), None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true, true);
         assert!(signals.iter().all(|signal| signal["signal"] != "date_compression"));
     }
 
     #[test]
     fn risk_signals_does_not_flag_date_compression_when_due_date_is_far_out() {
         let due = chrono::Utc::now() + chrono::Duration::days(30);
-        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None, true);
+        let signals = risk_signals(Some(due), None, chrono::Utc::now(), None, true, true);
         assert!(signals.is_empty());
     }
 
     #[test]
     fn risk_signals_flags_stale_when_untouched_past_threshold() {
         let updated_at = chrono::Utc::now() - chrono::Duration::days(20);
-        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()), true);
+        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()), true, true);
         assert!(signals.iter().any(|signal| signal["signal"] == "stale"));
     }
 
     #[test]
     fn risk_signals_does_not_flag_stale_within_threshold() {
         let updated_at = chrono::Utc::now() - chrono::Duration::days(2);
-        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()), true);
+        let signals = risk_signals(None, None, updated_at, Some(uuid::Uuid::new_v4()), true, true);
         assert!(signals.is_empty());
     }
 
@@ -1345,7 +1477,7 @@ mod tests {
     fn risk_signals_can_flag_both_signals_at_once() {
         let due = chrono::Utc::now() - chrono::Duration::days(1);
         let updated_at = chrono::Utc::now() - chrono::Duration::days(20);
-        let signals = risk_signals(Some(due), None, updated_at, None, true);
+        let signals = risk_signals(Some(due), None, updated_at, None, true, true);
         assert_eq!(signals.len(), 2);
     }
 
@@ -1353,14 +1485,30 @@ mod tests {
     /// no due date, recently updated, evidence linked, just no owner.
     #[test]
     fn risk_signals_flags_unowned_when_has_owner_is_false() {
-        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), false);
+        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), false, true);
         assert_eq!(signals.len(), 1);
         assert_eq!(signals[0]["signal"], "unowned");
     }
 
     #[test]
     fn risk_signals_does_not_flag_unowned_when_has_owner_is_true() {
-        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true);
+        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true, true);
+        assert!(signals.is_empty());
+    }
+
+    /// ADR-0054 (Congruence Engine v1): isolated is independent of the
+    /// other three signals -- no due date, recently updated, evidence
+    /// linked, has an owner, just zero edges at all.
+    #[test]
+    fn risk_signals_flags_isolated_when_has_edges_is_false() {
+        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true, false);
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["signal"], "isolated");
+    }
+
+    #[test]
+    fn risk_signals_does_not_flag_isolated_when_has_edges_is_true() {
+        let signals = risk_signals(None, None, chrono::Utc::now(), Some(uuid::Uuid::new_v4()), true, true);
         assert!(signals.is_empty());
     }
 
@@ -2205,6 +2353,45 @@ mod tests {
         assert_eq!(response.status(), axum::http::StatusCode::CREATED);
     }
 
+    /// ADR-0049: the audit feed surfaces a real, just-recorded correction --
+    /// found by a unique marker, never an aggregate count.
+    #[tokio::test]
+    async fn audit_events_route_surfaces_a_real_correction() {
+        let pool = test_pool().await;
+        let candidate_id = uuid::Uuid::new_v4();
+        extraction::extract_candidate(&pool, candidate_id, "risk", "stated risk", uuid::Uuid::new_v4(), Some(0.7), None)
+            .await
+            .expect("extract candidate");
+        extraction::rebuild_candidate_projection(&pool).await.expect("rebuild candidate projection");
+
+        let marker = format!("audit-route-marker-{}", uuid::Uuid::new_v4());
+        let correct_response = app(pool.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/candidates/{candidate_id}/correct"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"statement": marker}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(correct_response.status(), axum::http::StatusCode::OK);
+
+        let audit_response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/audit-events?limit=200").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(audit_response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(audit_response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let rows = parsed.as_array().unwrap();
+        assert!(
+            rows.iter().any(|row| row["new_state"]["statement"] == marker),
+            "the correction's audit row must be present in the feed"
+        );
+    }
+
     #[tokio::test]
     async fn accept_route_returns_409_for_an_already_transitioned_candidate() {
         let pool = test_pool().await;
@@ -2828,6 +3015,65 @@ mod tests {
                 assert!(items.iter().all(|row| row["obligation_id"] != closed_id.to_string()), "a closed obligation must never appear in any bucket");
             }
         }
+    }
+
+    /// ADR-0047: the Obligation detail route returns the same fields Daily
+    /// Brief returns, plus risk_signals and linked_nodes resolved from the
+    /// existing edges table (an owns edge from a real person).
+    #[tokio::test]
+    async fn obligation_detail_route_returns_risk_signals_and_linked_nodes() {
+        let pool = test_pool().await;
+
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "hard_due_at": (chrono::Utc::now() - chrono::Duration::days(2)).to_rfc3339()}),
+        )
+        .await
+        .expect("append obligation");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let person_id = graph::create_node(&pool, "person", "Obligation Detail Test Person", json!({}))
+            .await
+            .expect("create person node");
+        graph::create_edge(&pool, person_id, obligation_id, "owns", None).await.expect("link owner");
+        let unresolved_id = uuid::Uuid::new_v4();
+        graph::create_edge(&pool, obligation_id, unresolved_id, "blocks", None).await.expect("link an edge to a non-node id");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/obligations/{obligation_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        assert_eq!(parsed["obligation_id"], obligation_id.to_string());
+        let signals = parsed["risk_signals"].as_array().expect("risk_signals is an array");
+        assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
+        assert!(!signals.iter().any(|signal| signal["signal"] == "unowned"), "an owned obligation must not be flagged unowned");
+
+        let linked = parsed["linked_nodes"].as_array().expect("linked_nodes is an array");
+        assert!(linked.iter().any(|node| node["node_id"] == person_id.to_string() && node["edge_type"] == "owns"));
+        let unresolved_link = linked.iter().find(|node| node["edge_type"] == "blocks").expect("the edge to a non-node id must still appear");
+        assert!(unresolved_link["node_id"].is_null(), "an edge into a non-node id must report a null neighbor, not error");
+    }
+
+    #[tokio::test]
+    async fn obligation_detail_route_404s_for_an_unknown_id() {
+        let pool = test_pool().await;
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/obligations/{}", uuid::Uuid::new_v4()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     /// ADR-0041: the Time Horizon route attaches the same risk_signals field.

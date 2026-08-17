@@ -17,19 +17,21 @@ import ObligationsTable from "./components/ObligationsTable";
 import CandidatesTable from "./components/CandidatesTable";
 import SearchResults from "./components/SearchResults";
 import DailyBrief from "./components/DailyBrief";
+import ObligationDetail from "./components/ObligationDetail";
 import FocusBlocks from "./components/FocusBlocks";
 import GraphExplorer from "./components/GraphExplorer";
 import TimeHorizon from "./components/TimeHorizon";
 import People from "./components/People";
 import ComingSoonStrip from "./components/ComingSoonStrip";
 import MeetingReview from "./components/MeetingReview";
+import Activity from "./components/Activity";
 
 // ADR-0039: four primary destinations answer a manager's actual questions
 // (what needs attention, what's coming, who do I owe, what's awaiting a
 // decision) instead of naming backend entities. Obligations/Search/Graph
 // remain fully functional, unchanged developer/diagnostic surfaces --
 // demoted in the tab bar, not deleted.
-type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph" | "meetings";
+type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph" | "meetings" | "activity";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
@@ -41,14 +43,16 @@ const TAB_TITLES: Record<Tab, string> = {
   search: "Search",
   graph: "Graph",
   meetings: "Meetings",
+  activity: "Activity",
 };
 
 const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox"];
-const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph", "meetings"];
+const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph", "meetings", "activity"];
 const TODAY_ITEM_CAP = 10;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("today");
+  const [selectedObligationId, setSelectedObligationId] = useState<string | null>(null);
   const [obligations, setObligations] = useState<Obligation[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [dailyBrief, setDailyBrief] = useState<DailyBriefItem[]>([]);
@@ -110,6 +114,13 @@ export default function App() {
 
   const statuses = useMemo(() => Array.from(new Set(obligations.map((o) => o.status))).sort(), [obligations]);
 
+  // ADR-0047: a Today/Obligations row opens the same shared detail view in
+  // place of the tab's own list -- switching tabs always leaves it behind.
+  function switchTab(nextTab: Tab) {
+    setSelectedObligationId(null);
+    setTab(nextTab);
+  }
+
   const visibleObligations = useMemo(() => {
     const filtered = statusFilter === "all" ? obligations : obligations.filter((o) => o.status === statusFilter);
     return [...filtered].sort((a, b) =>
@@ -134,7 +145,7 @@ export default function App() {
               role="tab"
               aria-selected={tab === primaryTab}
               className={tab === primaryTab ? "tab tab-active" : "tab"}
-              onClick={() => setTab(primaryTab)}
+              onClick={() => switchTab(primaryTab)}
             >
               {TAB_TITLES[primaryTab]}
             </button>
@@ -147,7 +158,7 @@ export default function App() {
               role="tab"
               aria-selected={tab === secondaryTab}
               className={tab === secondaryTab ? "tab tab-secondary tab-active" : "tab tab-secondary"}
-              onClick={() => setTab(secondaryTab)}
+              onClick={() => switchTab(secondaryTab)}
             >
               {TAB_TITLES[secondaryTab]}
             </button>
@@ -160,6 +171,8 @@ export default function App() {
           <People />
         ) : tab === "meetings" ? (
           <MeetingReview />
+        ) : tab === "activity" ? (
+          <Activity />
         ) : tab === "timeline" ? (
           <>
             <div className="toolbar">
@@ -187,6 +200,9 @@ export default function App() {
             <SearchResults results={searchResults} hasSearched={hasSearched} />
           </>
         ) : tab === "today" ? (
+          selectedObligationId ? (
+            <ObligationDetail obligationId={selectedObligationId} onBack={() => setSelectedObligationId(null)} />
+          ) : (
           <>
             <div className="toolbar">
               <button onClick={load} disabled={loading}>
@@ -199,15 +215,21 @@ export default function App() {
                 ? "Nothing needs your attention right now."
                 : `${dailyBrief.length} thing${dailyBrief.length === 1 ? "" : "s"} need${dailyBrief.length === 1 ? "s" : ""} your attention today.`}
             </p>
-            <DailyBrief items={dailyBrief.slice(0, TODAY_ITEM_CAP)} totalCount={dailyBrief.length} onViewMore={() => setTab("timeline")} />
+            <DailyBrief
+              items={dailyBrief.slice(0, TODAY_ITEM_CAP)}
+              totalCount={dailyBrief.length}
+              onViewMore={() => switchTab("timeline")}
+              onSelect={setSelectedObligationId}
+            />
             {focusBlocks.length > 0 && (
               <>
                 <h2 className="today-section-heading">Do these together</h2>
                 <FocusBlocks blocks={focusBlocks} />
               </>
             )}
-            <ComingSoonStrip horizon={timeHorizon} onOpenTimeline={() => setTab("timeline")} />
+            <ComingSoonStrip horizon={timeHorizon} onOpenTimeline={() => switchTab("timeline")} />
           </>
+          )
         ) : (
           <>
             <div className="toolbar">
@@ -241,7 +263,11 @@ export default function App() {
             {error && <p className="error">Could not reach backend: {error}</p>}
 
             {tab === "obligations" ? (
-              <ObligationsTable obligations={visibleObligations} />
+              selectedObligationId ? (
+                <ObligationDetail obligationId={selectedObligationId} onBack={() => setSelectedObligationId(null)} />
+              ) : (
+                <ObligationsTable obligations={visibleObligations} onSelect={setSelectedObligationId} />
+              )
             ) : (
               <CandidatesTable candidates={candidates} onChanged={load} />
             )}

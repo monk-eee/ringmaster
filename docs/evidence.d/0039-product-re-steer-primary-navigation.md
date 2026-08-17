@@ -24,9 +24,9 @@ paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "today-page-renders-required-sections"
-invariant = "The Today page renders a greeting, the capped ranked list, a labeled \"Do these together\" section, and a compact coming-soon strip, in that order."
+invariant = "The Today page renders a greeting, the capped ranked list, a labeled \"Do these together\" section, and a compact coming-soon strip, in that order (robust to DailyBrief's props being reformatted across multiple lines, e.g. ADR-0047's onSelect prop)."
 type = "present"
-pattern = 'today-greeting[\s\S]*DailyBrief items=\{dailyBrief\.slice\(0, TODAY_ITEM_CAP\)\}[\s\S]*Do these together[\s\S]*ComingSoonStrip'
+pattern = 'today-greeting[\s\S]*DailyBrief[\s\S]*items=\{dailyBrief\.slice\(0, TODAY_ITEM_CAP\)\}[\s\S]*Do these together[\s\S]*ComingSoonStrip'
 paths = ["frontend/src/App.tsx"]
 
 [[check]]

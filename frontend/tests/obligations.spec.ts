@@ -13,6 +13,24 @@ test("today tab renders a ranked list by default", async ({ page }) => {
   await expect(page.locator("p.error")).toHaveCount(0);
 });
 
+// ADR-0047: selecting a Today row opens the shared Obligation detail view,
+// and Back returns to the list -- tolerant of whatever the shared
+// development database currently contains (never asserting exact content).
+test("obligation detail: selecting a Today row opens detail and Back returns", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
+
+  const row = page.locator(".daily-brief-row-button").first();
+  test.skip((await row.count()) === 0, "no Today items exist yet to select");
+
+  await row.click();
+  await expect(page.locator(".obligation-detail")).toBeVisible();
+  await expect(page.locator(".obligation-detail .today-item-title")).not.toHaveText("");
+
+  await page.locator(".obligation-detail-back").click();
+  await expect(page.locator(".daily-brief-list")).toBeVisible();
+});
+
 // ADR-0039: Obligations/Search/Graph are demoted to a secondary/developer
 // group but remain fully reachable and functionally unchanged.
 test("obligations tab renders a table backed by the backend API", async ({ page }) => {
@@ -362,4 +380,31 @@ test("inbox tab: correcting a candidate edits its statement and shows Corrected 
   await expect(row).toBeVisible();
   await expect(row.locator("td").nth(2)).toHaveText("corrected");
   await expect(row.getByRole("button", { name: "Promote to Obligation" })).toBeVisible();
+});
+
+// ADR-0049: proves the Activity tab surfaces a real, just-recorded audit
+// row -- seeds its own marker via the Correct action rather than relying
+// on whatever the shared development database already contains.
+test("activity tab shows a just-recorded correction (ADR-0049)", async ({ page, request }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Inbox" }).click();
+
+  const correctButton = page.locator(".correct-button").first();
+  test.skip((await correctButton.count()) === 0, "no candidate is currently in the candidate state to correct");
+
+  await correctButton.click();
+  const stamp = Date.now();
+  const marker = `activity feed marker ${stamp}`;
+  await page.locator(".correction-form textarea").fill(marker);
+  await page.locator(".save-correction-button").click();
+  await expect(page.getByText(marker)).toBeVisible();
+
+  const auditResponse = await request.get("/api/audit-events?limit=200");
+  expect(auditResponse.ok()).toBeTruthy();
+  const auditEvents = (await auditResponse.json()) as { new_state: { statement?: string } | null }[];
+  expect(auditEvents.some((event) => event.new_state?.statement === marker)).toBe(true);
+
+  await page.getByRole("tab", { name: "Activity" }).click();
+  await expect(page.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".activity-states").filter({ hasText: marker }).first()).toBeVisible();
 });
