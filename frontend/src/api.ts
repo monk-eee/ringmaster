@@ -86,6 +86,13 @@ export type GraphNode = {
   lifecycle_state: string;
 };
 
+// ADR-0051: present only when the list was fetched with ?node_type=person.
+export type PersonListNode = GraphNode & {
+  open_count: number;
+  at_risk_count: number;
+  last_interaction_at: string | null;
+};
+
 export type NodeNeighbor = {
   edge_id: string;
   from_id: string;
@@ -106,11 +113,13 @@ export type RelationshipObligation = {
   hard_due_at: string | null;
   soft_due_at: string | null;
   reason: string;
+  risk_signals: RiskSignal[];
 };
 
 export type NodeDetail = GraphNode & {
   neighbors: NodeNeighbor[];
   relationship: { at_risk: RelationshipObligation[]; open: RelationshipObligation[] } | null;
+  last_interaction_at: string | null;
 };
 
 export type Edge = {
@@ -216,8 +225,12 @@ export function promoteCandidate(candidateId: string): Promise<Obligation> {
   return postJson<Obligation>(`/api/candidates/${encodeURIComponent(candidateId)}/promote`);
 }
 
-export function fetchNodes(nodeType?: string): Promise<GraphNode[]> {
-  return getJson<GraphNode[]>(nodeType ? `/api/nodes?node_type=${encodeURIComponent(nodeType)}` : "/api/nodes");
+export function fetchNodes(nodeType?: string, needsAttention?: boolean): Promise<GraphNode[]> {
+  const params = new URLSearchParams();
+  if (nodeType) params.set("node_type", nodeType);
+  if (needsAttention) params.set("needs_attention", "true");
+  const query = params.toString();
+  return getJson<GraphNode[]>(query ? `/api/nodes?${query}` : "/api/nodes");
 }
 
 export function fetchNodeDetail(id: string): Promise<NodeDetail> {

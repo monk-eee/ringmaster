@@ -1378,6 +1378,33 @@ td.evidence-cell .no-evidence {
   color: var(--muted);
 }
 
+.people-card-owed {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--at-risk-fg);
+}
+
+.people-card-interaction {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.people-attention-toggle {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.people-attention-toggle:hover {
+  background: var(--surface-alt);
+}
+
 .people-back {
   border: none;
   background: transparent;

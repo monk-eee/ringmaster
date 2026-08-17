@@ -67,6 +67,13 @@ export function renderRelationshipGroup(title: string, entries: RelationshipObli
               <StatusBadge value={entry.status} />
             </div>
             <span className="daily-brief-reason">{entry.reason}</span>
+            {entry.risk_signals.length > 0 && (
+              <ul className="risk-signals">
+                {entry.risk_signals.map((signal) => (
+                  <li key={signal.signal}>{signal.explanation}</li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ol>

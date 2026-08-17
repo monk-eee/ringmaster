@@ -1223,6 +1223,7 @@ struct NodeQuery {
     node_type: Option<String>,
     occurred_from: Option<String>,
     occurred_to: Option<String>,
+    needs_attention: Option<bool>,
 }
 
 /// Parses an optional RFC3339 query param: absent/blank is `Ok(None)`, a
@@ -1236,16 +1237,87 @@ fn parse_optional_rfc3339(label: &str, raw: Option<&str>) -> Result<Option<chron
     }
 }
 
-/// Lists nodes, optionally filtered by `?node_type=` (ADR-0025) and/or an
-/// `occurred_at` range via `?occurred_from=`/`?occurred_to=` (ADR-0042).
-/// Omitting both date params preserves this route's exact prior behavior.
+/// Lists nodes, optionally filtered by `?node_type=` (ADR-0025), an
+/// `occurred_at` range via `?occurred_from=`/`?occurred_to=` (ADR-0042),
+/// and/or `?needs_attention=true` (ADR-0051), restricting to nodes with at
+/// least one linked open/at-risk Obligation. Omitting all three preserves
+/// this route's exact prior behavior. For `?node_type=person` specifically
+/// (ADR-0051), each row is additionally enriched with `open_count`,
+/// `at_risk_count`, and `last_interaction_at` -- two batched queries
+/// keyed by the already-fetched ids/names, never one query per row.
 async fn list_nodes_route(State(pool): State<PgPool>, Query(params): Query<NodeQuery>) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
     let occurred_from = parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref())?;
     let occurred_to = parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref())?;
-    let nodes = graph::list_nodes(&pool, params.node_type.as_deref(), occurred_from, occurred_to)
+    let nodes = graph::list_nodes(&pool, params.node_type.as_deref(), occurred_from, occurred_to, params.needs_attention.unwrap_or(false))
         .await
         .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    Ok(Json(json!(nodes)))
+
+    if params.node_type.as_deref() != Some("person") || nodes.is_empty() {
+        return Ok(Json(json!(nodes)));
+    }
+
+    #[derive(Debug, FromRow)]
+    struct PersonCountRow {
+        node_id: Uuid,
+        open_count: i64,
+        at_risk_count: i64,
+    }
+    let ids: Vec<Uuid> = nodes.iter().map(|node| node.id).collect();
+    let counts: Vec<PersonCountRow> = sqlx::query_as(
+        "SELECT n.id AS node_id, \
+                COUNT(*) FILTER (WHERE op.status = 'open') AS open_count, \
+                COUNT(*) FILTER (WHERE op.status = 'at_risk') AS at_risk_count \
+         FROM nodes n \
+         JOIN edges e ON e.from_id = n.id OR e.to_id = n.id \
+         JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = n.id THEN e.to_id ELSE e.from_id END) \
+         WHERE n.id = ANY($1) AND op.status IN ('open', 'at_risk') \
+         GROUP BY n.id",
+    )
+    .bind(&ids)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    #[derive(Debug, FromRow)]
+    struct InteractionRow {
+        speaker: String,
+        last_interaction_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+    let names: Vec<String> = nodes.iter().map(|node| node.canonical_text.clone()).collect();
+    let interactions: Vec<InteractionRow> = sqlx::query_as(
+        "SELECT sf.speaker, MAX(n.occurred_at) AS last_interaction_at \
+         FROM source_fragments sf JOIN nodes n ON n.id = sf.source_id \
+         WHERE sf.speaker = ANY($1) \
+         GROUP BY sf.speaker",
+    )
+    .bind(&names)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let body: Vec<JsonValue> = nodes
+        .into_iter()
+        .map(|node| {
+            let counts = counts.iter().find(|row| row.node_id == node.id);
+            let last_interaction_at = interactions
+                .iter()
+                .find(|row| row.speaker == node.canonical_text)
+                .and_then(|row| row.last_interaction_at)
+                .map(|value| value.to_rfc3339());
+            json!({
+                "id": node.id,
+                "node_type": node.node_type,
+                "canonical_text": node.canonical_text,
+                "attributes": node.attributes,
+                "lifecycle_state": node.lifecycle_state,
+                "occurred_at": node.occurred_at.map(|value| value.to_rfc3339()),
+                "open_count": counts.map(|row| row.open_count).unwrap_or(0),
+                "at_risk_count": counts.map(|row| row.at_risk_count).unwrap_or(0),
+                "last_interaction_at": last_interaction_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!(body)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1278,9 +1350,13 @@ struct NeighborRow {
     neighbor_canonical_text: Option<String>,
     obligation_id: Option<Uuid>,
     obligation_status: Option<String>,
+    obligation_updated_at: Option<chrono::DateTime<chrono::Utc>>,
     obligation_hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
     obligation_soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    obligation_source_fragment_id: Option<Uuid>,
     obligation_source_text: Option<String>,
+    obligation_has_owner: Option<bool>,
+    obligation_has_edges: Option<bool>,
 }
 
 /// Orders like the Daily Brief's own `ASC NULLS LAST`: a due date sorts
@@ -1311,9 +1387,16 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
     let neighbors: Vec<NeighborRow> = sqlx::query_as(
         "SELECT e.id, e.from_id, e.to_id, e.edge_type, e.confidence, e.valid_from, e.valid_to, \
                 n.id AS neighbor_id, n.node_type AS neighbor_node_type, n.canonical_text AS neighbor_canonical_text, \
-                op.obligation_id AS obligation_id, op.status AS obligation_status, \
+                op.obligation_id AS obligation_id, op.status AS obligation_status, op.updated_at AS obligation_updated_at, \
                 op.hard_due_at AS obligation_hard_due_at, op.soft_due_at AS obligation_soft_due_at, \
-                sf.text AS obligation_source_text \
+                op.source_fragment_id AS obligation_source_fragment_id, sf.text AS obligation_source_text, \
+                EXISTS ( \
+                    SELECT 1 FROM edges oe JOIN nodes on2 ON on2.id = oe.from_id \
+                    WHERE oe.to_id = op.obligation_id AND oe.edge_type = 'owns' AND on2.node_type = 'person' \
+                ) AS obligation_has_owner, \
+                EXISTS ( \
+                    SELECT 1 FROM edges oe WHERE oe.from_id = op.obligation_id OR oe.to_id = op.obligation_id \
+                ) AS obligation_has_edges \
          FROM edges e \
          LEFT JOIN nodes n ON n.id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
          LEFT JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
@@ -1385,6 +1468,14 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
                     row.obligation_soft_due_at,
                     row.obligation_source_text.as_deref(),
                 ),
+                "risk_signals": risk_signals(
+                    row.obligation_hard_due_at,
+                    row.obligation_soft_due_at,
+                    row.obligation_updated_at.unwrap_or_else(chrono::Utc::now),
+                    row.obligation_source_fragment_id,
+                    row.obligation_has_owner.unwrap_or(false),
+                    row.obligation_has_edges.unwrap_or(false),
+                ),
             });
             if row.obligation_status.as_deref() == Some("at_risk") {
                 at_risk.push(entry);
@@ -1397,6 +1488,21 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
         None
     };
 
+    let last_interaction_at = if node.node_type == "person" {
+        let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx::query_as(
+            "SELECT MAX(n.occurred_at) FROM source_fragments sf \
+             JOIN nodes n ON n.id = sf.source_id \
+             WHERE sf.speaker = $1",
+        )
+        .bind(&node.canonical_text)
+        .fetch_one(&pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        row.0.map(|value| value.to_rfc3339())
+    } else {
+        None
+    };
+
     Ok(Json(json!({
         "id": node.id,
         "node_type": node.node_type,
@@ -1405,6 +1511,7 @@ async fn get_node_detail(State(pool): State<PgPool>, Path(id): Path<Uuid>) -> Re
         "lifecycle_state": node.lifecycle_state,
         "neighbors": neighbors_json,
         "relationship": relationship,
+        "last_interaction_at": last_interaction_at,
     })))
 }
 
@@ -2783,6 +2890,52 @@ mod tests {
         assert_eq!(bad_response.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
+    /// ADR-0051: a `?node_type=person` list response is enriched with
+    /// `open_count`/`at_risk_count`/`last_interaction_at`; `?needs_attention=true`
+    /// excludes a person with no linked open/at_risk Obligation.
+    #[tokio::test]
+    async fn nodes_route_person_list_is_enriched_and_needs_attention_filters() {
+        let pool = test_pool().await;
+        let owed_person = graph::create_node(&pool, "person", "Route Enrichment Test Owed", json!({})).await.expect("create owed person");
+        let idle_person = graph::create_node(&pool, "person", "Route Enrichment Test Idle", json!({})).await.expect("create idle person");
+
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, obligation_id, crate::obligation::ObligationEventType::Created, json!({"status": "at_risk"}))
+            .await
+            .expect("append at_risk obligation");
+        graph::create_edge(&pool, owed_person, obligation_id, "owns", None).await.expect("link owed person");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/nodes?node_type=person").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let listed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let owed_row = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == owed_person.to_string())
+            .expect("the owed person must be present");
+        assert_eq!(owed_row["at_risk_count"], 1);
+        assert_eq!(owed_row["open_count"], 0);
+        let idle_row = listed.as_array().unwrap().iter().find(|row| row["id"] == idle_person.to_string()).expect("the idle person must be present");
+        assert_eq!(idle_row["at_risk_count"], 0);
+        assert_eq!(idle_row["open_count"], 0);
+
+        let filtered_response = app(pool)
+            .oneshot(Request::builder().uri("/api/nodes?node_type=person&needs_attention=true").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let filtered_body = axum::body::to_bytes(filtered_response.into_body(), usize::MAX).await.unwrap();
+        let filtered: JsonValue = serde_json::from_slice(&filtered_body).expect("valid json body");
+        let filtered_ids: Vec<&str> = filtered.as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect();
+        assert!(filtered_ids.contains(&owed_person.to_string().as_str()), "a person needing attention must be included");
+        assert!(!filtered_ids.contains(&idle_person.to_string().as_str()), "a person needing nothing must be excluded");
+    }
+
     #[tokio::test]
     async fn node_detail_route_returns_404_for_unknown_node() {
         let pool = test_pool().await;
@@ -2881,6 +3034,91 @@ mod tests {
             !at_risk_group.iter().any(|entry| entry["obligation_id"] == closed_id.to_string()),
             "a closed obligation must never appear in either relationship group"
         );
+    }
+
+    /// ADR-0051: each Obligation in a person's relationship grouping
+    /// carries risk_signals, the same computation Daily Brief/Time Horizon
+    /// already use -- an owned obligation must not be flagged unowned.
+    #[tokio::test]
+    async fn node_detail_relationship_obligations_include_risk_signals() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Relationship Risk Signal Test Person", json!({})).await.expect("create person");
+
+        let stale_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, stale_id, crate::obligation::ObligationEventType::Created, json!({"status": "open"}))
+            .await
+            .expect("append a stale obligation");
+        graph::create_edge(&pool, person_id, stale_id, "owns", None).await.expect("link person to the stale obligation");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+        sqlx::query("UPDATE obligation_projection SET updated_at = now() - interval '30 days' WHERE obligation_id = $1")
+            .bind(stale_id)
+            .execute(&pool)
+            .await
+            .expect("backdate updated_at");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let open_group = detail["relationship"]["open"].as_array().unwrap();
+        let entry = open_group.iter().find(|entry| entry["obligation_id"] == stale_id.to_string()).expect("the stale obligation must be present");
+        let signals = entry["risk_signals"].as_array().expect("risk_signals is an array");
+        assert!(signals.iter().any(|signal| signal["signal"] == "stale"), "a backdated obligation must be flagged stale");
+        assert!(signals.iter().all(|signal| signal["signal"] != "unowned"), "an owned obligation must not be flagged unowned");
+    }
+
+    /// ADR-0051: last_interaction_at is the most recent occurred_at among
+    /// fragments whose speaker string-matches this person's canonical_text
+    /// -- a best-effort name match, not a resolved identity edge.
+    #[tokio::test]
+    async fn node_detail_includes_last_interaction_at_from_matching_fragment_speaker() {
+        let pool = test_pool().await;
+        let person_name = "Last Interaction Test Person";
+        let person_id = graph::create_node(&pool, "person", person_name, json!({})).await.expect("create person");
+
+        let source_id = uuid::Uuid::new_v4();
+        let occurred_at = chrono::Utc::now() - chrono::Duration::days(2);
+        sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'meeting', 'Interaction Source', '{}'::jsonb, $2)")
+            .bind(source_id)
+            .bind(occurred_at)
+            .execute(&pool)
+            .await
+            .expect("create a dated source node");
+        sqlx::query("INSERT INTO source_fragments (source_id, text, speaker, hash) VALUES ($1, 'hello', $2, 'last-interaction-test-hash')")
+            .bind(source_id)
+            .bind(person_name)
+            .execute(&pool)
+            .await
+            .expect("create a fragment spoken by this person");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let last_interaction_at = detail["last_interaction_at"].as_str().expect("last_interaction_at must be present");
+        let parsed = chrono::DateTime::parse_from_rfc3339(last_interaction_at).expect("valid RFC3339");
+        assert!((parsed.timestamp() - occurred_at.timestamp()).abs() < 2, "must reflect the matching fragment's source occurred_at");
+    }
+
+    /// ADR-0051: no matching fragment speaker means an honest null, never a guess.
+    #[tokio::test]
+    async fn node_detail_last_interaction_at_is_null_with_no_matching_fragment() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "No Interaction Test Person", json!({})).await.expect("create person");
+
+        let response = app(pool)
+            .oneshot(Request::builder().uri(format!("/api/nodes/{person_id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let detail: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert!(detail["last_interaction_at"].is_null());
     }
 
     /// ADR-0028: only person nodes get a `relationship` grouping.

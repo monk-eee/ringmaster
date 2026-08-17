@@ -19,6 +19,7 @@ import SearchResults from "./components/SearchResults";
 import DailyBrief from "./components/DailyBrief";
 import ObligationDetail from "./components/ObligationDetail";
 import FocusBlocks from "./components/FocusBlocks";
+import ForgettingSection from "./components/ForgettingSection";
 import GraphExplorer from "./components/GraphExplorer";
 import TimeHorizon from "./components/TimeHorizon";
 import People from "./components/People";
@@ -221,6 +222,8 @@ export default function App() {
               onViewMore={() => switchTab("timeline")}
               onSelect={setSelectedObligationId}
             />
+            <h2 className="today-section-heading">What am I forgetting?</h2>
+            <ForgettingSection items={dailyBrief} onSelect={setSelectedObligationId} />
             {focusBlocks.length > 0 && (
               <>
                 <h2 className="today-section-heading">Do these together</h2>

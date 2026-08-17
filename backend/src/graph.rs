@@ -60,17 +60,20 @@ pub async fn get_node(pool: &PgPool, id: Uuid) -> Result<Node, sqlx::Error> {
 }
 
 /// Lists nodes, optionally filtered by `node_type` and/or an `occurred_at`
-/// range (ADR-0025, ADR-0042). Read-only. A NULL filter argument is a
-/// no-op in SQL (`$n IS NULL OR ...`), so every combination of filters is
-/// one query, not eight branches. Ordering switches to `occurred_at DESC
-/// NULLS LAST` when either date bound is given -- sorting by write-time
-/// makes no sense once the caller is asking "what happened in this
-/// window"; otherwise unchanged (`updated_at DESC`).
+/// range (ADR-0025, ADR-0042), and/or (ADR-0051) restricted to those with
+/// at least one linked `open`/`at_risk` Obligation when `needs_attention`
+/// is `true`. Read-only. A NULL filter argument is a no-op in SQL (`$n IS
+/// NULL OR ...`), so every combination of filters is one query, not eight
+/// branches. Ordering switches to `occurred_at DESC NULLS LAST` when either
+/// date bound is given -- sorting by write-time makes no sense once the
+/// caller is asking "what happened in this window"; otherwise unchanged
+/// (`updated_at DESC`).
 pub async fn list_nodes(
     pool: &PgPool,
     node_type: Option<&str>,
     occurred_from: Option<chrono::DateTime<chrono::Utc>>,
     occurred_to: Option<chrono::DateTime<chrono::Utc>>,
+    needs_attention: bool,
 ) -> Result<Vec<Node>, sqlx::Error> {
     let order_by = if occurred_from.is_some() || occurred_to.is_some() {
         "ORDER BY occurred_at DESC NULLS LAST"
@@ -78,16 +81,22 @@ pub async fn list_nodes(
         "ORDER BY updated_at DESC"
     };
     let query = format!(
-        "SELECT id, node_type, canonical_text, attributes, lifecycle_state, occurred_at FROM nodes \
+        "SELECT id, node_type, canonical_text, attributes, lifecycle_state, occurred_at FROM nodes n \
          WHERE ($1::text IS NULL OR node_type = $1) \
            AND ($2::timestamptz IS NULL OR occurred_at >= $2) \
            AND ($3::timestamptz IS NULL OR occurred_at <= $3) \
+           AND ($4::boolean IS NOT TRUE OR EXISTS ( \
+                SELECT 1 FROM edges e \
+                JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = n.id THEN e.to_id ELSE e.from_id END) \
+                WHERE (e.from_id = n.id OR e.to_id = n.id) AND op.status IN ('open', 'at_risk') \
+           )) \
          {order_by}"
     );
     sqlx::query_as(&query)
         .bind(node_type)
         .bind(occurred_from)
         .bind(occurred_to)
+        .bind(needs_attention)
         .fetch_all(pool)
         .await
 }
@@ -380,9 +389,42 @@ mod tests {
         let person_id = create_node(&pool, "person", "Filter Test Person", json!({})).await.expect("create person");
         create_node(&pool, "risk", "Filter Test Risk", json!({})).await.expect("create risk");
 
-        let people = list_nodes(&pool, Some("person"), None, None).await.expect("list people");
+        let people = list_nodes(&pool, Some("person"), None, None, false).await.expect("list people");
         assert!(people.iter().any(|node| node.id == person_id));
         assert!(people.iter().all(|node| node.node_type == "person"), "filter must exclude other node types");
+    }
+
+    /// ADR-0051: `needs_attention` restricts to person nodes with at least
+    /// one linked open/at_risk Obligation; a person with no such link is
+    /// excluded, and a closed-only link does not count.
+    #[tokio::test]
+    async fn list_nodes_needs_attention_filters_to_linked_open_or_at_risk_obligations() {
+        let pool = test_pool().await;
+        let owed_person = create_node(&pool, "person", "Needs Attention Test Owed", json!({})).await.expect("create owed person");
+        let idle_person = create_node(&pool, "person", "Needs Attention Test Idle", json!({})).await.expect("create idle person");
+        let closed_only_person = create_node(&pool, "person", "Needs Attention Test Closed Only", json!({})).await.expect("create closed-only person");
+
+        let open_obligation = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, open_obligation, crate::obligation::ObligationEventType::Created, serde_json::json!({"status": "open"}))
+            .await
+            .expect("append open obligation");
+        create_edge(&pool, owed_person, open_obligation, "owns", None).await.expect("link owed person");
+
+        let closed_obligation = uuid::Uuid::new_v4();
+        crate::obligation::append_event(&pool, closed_obligation, crate::obligation::ObligationEventType::Created, serde_json::json!({"status": "open"}))
+            .await
+            .expect("append obligation to close");
+        crate::obligation::append_event(&pool, closed_obligation, crate::obligation::ObligationEventType::Closed, serde_json::json!({}))
+            .await
+            .expect("close it");
+        create_edge(&pool, closed_only_person, closed_obligation, "owns", None).await.expect("link closed-only person");
+
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let filtered = list_nodes(&pool, Some("person"), None, None, true).await.expect("list people needing attention");
+        assert!(filtered.iter().any(|node| node.id == owed_person), "a person linked to an open Obligation must be included");
+        assert!(!filtered.iter().any(|node| node.id == idle_person), "a person with no linked Obligation must be excluded");
+        assert!(!filtered.iter().any(|node| node.id == closed_only_person), "a person linked only to a closed Obligation must be excluded");
     }
 
     #[tokio::test]
@@ -406,7 +448,7 @@ mod tests {
             .await
             .expect("set out-of-range occurred_at");
 
-        let results = list_nodes(&pool, None, Some(from), Some(to)).await.expect("list nodes by range");
+        let results = list_nodes(&pool, None, Some(from), Some(to), false).await.expect("list nodes by range");
         assert!(results.iter().any(|node| node.id == in_range), "in-range node must be present");
         assert!(!results.iter().any(|node| node.id == out_of_range), "out-of-range node must be excluded");
     }
