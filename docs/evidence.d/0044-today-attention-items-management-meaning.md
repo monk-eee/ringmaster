@@ -11,8 +11,9 @@ adr = "0044-today-attention-items-management-meaning"
 [[check]]
 id = "daily-brief-returns-source-text"
 invariant = "GET /api/daily-brief returns the already-selected source_text on each item, matching GET /api/obligations."
-type = "manual"
-notes = "Deferred one-line backend addition: the daily_brief function is under concurrent edit (ADR-0046 unowned-owner signal touches the same SQL query and .map closure). The frontend already consumes item.source_text (null-safe, honest status-label fallback), so the title auto-upgrades to the evidence quote the moment this field is returned. Flip to a present-type check ('\"source_text\"' in backend/src/api.rs's daily_brief) once that concurrent edit lands."
+type = "present"
+pattern = '"source_text": source_text'
+paths = ["backend/src/api.rs"]
 
 [[check]]
 id = "today-row-hides-raw-id"

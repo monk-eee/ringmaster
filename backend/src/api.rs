@@ -222,6 +222,7 @@ async fn daily_brief(State(pool): State<PgPool>) -> Result<Json<JsonValue>, (axu
                 "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
                 "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
                 "source_fragment_id": source_fragment_id,
+                "source_text": source_text,
                 "reason": reason,
                 "risk_signals": risk_signals(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner),
             })
@@ -1659,6 +1660,45 @@ mod tests {
             .expect("the just-created obligation must be present");
         let signals = row["risk_signals"].as_array().expect("risk_signals must be an array");
         assert!(signals.iter().any(|signal| signal["signal"] == "date_compression"));
+    }
+
+    /// ADR-0044: the Today page's plain-language title is this quote,
+    /// falling back to an honest status label only when it's null.
+    #[tokio::test]
+    async fn daily_brief_route_includes_source_text_evidence() {
+        let pool = test_pool().await;
+        let fragment_id = graph::create_source_fragment(
+            &pool,
+            uuid::Uuid::new_v4(),
+            "We committed to a two-week transition plan.",
+            "daily-brief-source-text-test-hash",
+        )
+        .await
+        .expect("create source fragment");
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "source_fragment_id": fragment_id.to_string()}),
+        )
+        .await
+        .expect("append created event with a linked source fragment");
+        crate::obligation::rebuild_projection(&pool).await.expect("rebuild projection");
+
+        let response = app(pool.clone())
+            .oneshot(Request::builder().uri("/api/daily-brief").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["obligation_id"] == obligation_id.to_string())
+            .expect("the just-created obligation must be present");
+        assert_eq!(row["source_text"], "We committed to a two-week transition plan.");
     }
 
     /// ADR-0046: an Obligation with an `owns` edge from a person is never
