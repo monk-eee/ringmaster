@@ -173,13 +173,13 @@ from one meeting transcript fragment. Decide whether the fragment contains a \
 commitment, request, risk, follow_up, decision, or expectation. Respond with \
 ONLY one JSON object and no other text, matching exactly this shape: \
 {\"candidate_type\": \"commitment|request|risk|follow_up|decision|expectation\", \
-"statement": "...", "confidence": 0.0-1.0, "due_at": "RFC3339 datetime or null", \
-"owner_name": "name explicitly stated as responsible, or null"}. \
+\"statement\": \"...\", \"confidence\": 0.0-1.0, \"due_at\": \"RFC3339 datetime or null\", \
+\"owner_name\": \"name explicitly stated as responsible, or null\"}. \
 Set due_at only when the fragment states a deadline; resolve relative dates \
-("by Friday", "next week") against the reference date provided, and use null \
+(\"by Friday\", \"next week\") against the reference date provided, and use null \
 when no deadline is stated. Set owner_name only when the fragment explicitly \
 names who is responsible, and use null otherwise. If the fragment contains \
-nothing worth extracting, respond with exactly {"candidate_type": null}.";
+nothing worth extracting, respond with exactly {\"candidate_type\": null}.";
 
 #[derive(Debug)]
 pub enum ModelExtractionError {
@@ -419,6 +419,27 @@ mod tests {
         let pool = test_pool().await;
         let result = extract_candidate(&pool, Uuid::new_v4(), "risk", "x", Uuid::new_v4(), Some(1.5), None).await;
         assert!(matches!(result, Err(ExtractionError::InvalidPayload(_))));
+    }
+
+    /// ADR-0060: a stated owner_name round-trips through the extracted
+    /// event payload; an absent one degrades to None, never an error.
+    #[tokio::test]
+    async fn candidate_extracted_owner_name_round_trips_a_stated_owner_and_defaults_to_none() {
+        let pool = test_pool().await;
+
+        let with_owner = Uuid::new_v4();
+        extract_candidate_with_due_at(&pool, with_owner, "request", "send the plan", Uuid::new_v4(), Some(0.8), None, None, Some("Roopa"))
+            .await
+            .expect("extract candidate with a stated owner");
+        let owner = candidate_extracted_owner_name(&pool, with_owner).await.expect("read owner_name");
+        assert_eq!(owner.as_deref(), Some("Roopa"));
+
+        let without_owner = Uuid::new_v4();
+        extract_candidate(&pool, without_owner, "request", "send the plan", Uuid::new_v4(), Some(0.8), None)
+            .await
+            .expect("extract candidate without a stated owner");
+        let owner = candidate_extracted_owner_name(&pool, without_owner).await.expect("read owner_name");
+        assert_eq!(owner, None);
     }
 
     #[tokio::test]
