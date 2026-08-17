@@ -20,7 +20,17 @@ function parseStaleDays(argumentsList) {
 }
 
 function read(filePath) {
-  return fs.readFileSync(filePath, "utf8");
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    // A file listed moments earlier by allFiles()/recordFiles() can vanish
+    // or get renamed before this read (a concurrent commit/build/editor is
+    // common in this repo) -- treat that exactly like an empty file rather
+    // than crashing the whole check with an uncaught exception. Every
+    // caller already handles "no match"/"not accepted" correctly for "".
+    if (error.code === "ENOENT") return "";
+    throw error;
+  }
 }
 
 function relative(filePath) {
