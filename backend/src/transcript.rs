@@ -123,6 +123,7 @@ pub async fn ingest_transcript(
 
     tx.commit().await?;
 
+    embed_fragments_best_effort(pool, &fragment_ids).await;
     Ok(IngestedTranscript { meeting_id, fragment_ids })
 }
 
@@ -204,7 +205,24 @@ pub async fn ingest_source(pool: &PgPool, metadata: &SourceMetadata, raw_text: &
 
     tx.commit().await?;
 
+    embed_fragments_best_effort(pool, &fragment_ids).await;
     Ok(IngestedSource { node_id, fragment_ids })
+}
+
+/// ADR-0062: best-effort auto-embedding after an ingest commits. Never fails
+/// the ingest -- when no embedding model is configured, or a call fails, the
+/// fragment simply stays unembedded (ADR-0018's non-blocking guarantee). Runs
+/// after the transaction so a slow or failing model call can neither hold the
+/// ingest transaction open nor roll it back.
+async fn embed_fragments_best_effort(pool: &PgPool, fragment_ids: &[Uuid]) {
+    let Some(config) = crate::embedding_adapter::EmbeddingConfig::from_env() else {
+        return;
+    };
+    for &fragment_id in fragment_ids {
+        if let Err(error) = crate::graph::embed_source_fragment(pool, &config, fragment_id).await {
+            eprintln!("auto-embed skipped for fragment {fragment_id}: {error}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -221,6 +239,34 @@ mod tests {
             .connect(&database_url)
             .await
             .expect("connect to test database")
+    }
+
+    #[tokio::test]
+    async fn ingest_auto_embeds_fragments_when_a_model_is_configured() {
+        let pool = test_pool().await;
+        let metadata = SourceMetadata {
+            source_type: "note".to_string(),
+            title: "Auto-embed on ingest".to_string(),
+            occurred_at: chrono::Utc::now(),
+            participants: vec![],
+        };
+        let marker = format!("auto-embed marker {}", Uuid::new_v4());
+        let ingested = ingest_source(&pool, &metadata, &marker).await.expect("ingest source");
+        assert!(!ingested.fragment_ids.is_empty(), "ingest must create at least one fragment");
+
+        // ADR-0062: with a model configured, ingest auto-embeds; without one it
+        // stays a no-op and ingest still succeeds (proven by reaching here).
+        if crate::embedding_adapter::EmbeddingConfig::from_env().is_some() {
+            let (count,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM embeddings WHERE entity_id = ANY($1)")
+                    .bind(&ingested.fragment_ids)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("count embeddings for the ingested fragments");
+            assert!(count > 0, "with an embedding model configured, ingest must auto-embed at least one fragment");
+        } else {
+            eprintln!("skipped embedding assertion: RINGMASTER_EMBEDDING_URL is not set");
+        }
     }
 
     #[test]
