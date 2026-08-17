@@ -91,6 +91,10 @@ fixed and verified live:
 - **Retrieval** ([ADR-0042](adr.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md)):
   `occurred_at` is readable and date-range filterable on `GET /api/nodes`;
   the MCP server's `recall_sources` tool needs no embedding model.
+- **Graph management over MCP** ([ADR-0066](adr.d/0066-non-destructive-graph-management-over-mcp.md)):
+  entity list/get/create/update, atomic exact-match batch upsert, and
+  relationship list/create are first-class tools. Attributes shallow-merge;
+  ambiguous identities fail rather than being silently combined.
 - **Semantic search** ([ADR-0018](adr.d/0018-generate-and-store-source-fragment-embeddings.md)/[ADR-0019](adr.d/0019-semantic-search-over-source-fragments.md)):
   infrastructurally real (Ollama + `nomic-embed-text` configured,
   `/api/search` responds `200`), but **currently 0 embeddings exist** (the
@@ -150,7 +154,7 @@ and now staying down. The reduction is real, the isolation mechanism
 it is now *enforced*, not merely documented: every backend `test_pool()`
 calls a runtime guard (`backend/src/lib.rs`) that panics unless
 `DATABASE_URL` targets `ringmaster_test`, so a stray `cargo test` against
-the long-lived `ringmaster` database a person reads at `localhost:3000`
+the long-lived `ringmaster` database a person reads at `localhost:3001`
 now fails loudly instead of silently polluting it. The residue the first
 audit found has been cleared and the guard stops it recurring.
 

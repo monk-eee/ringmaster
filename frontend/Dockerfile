@@ -8,5 +8,5 @@ COPY frontend/node_modules ./node_modules
 COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json ./
 COPY frontend/src ./src
 COPY frontend/public ./public
-EXPOSE 3000
+EXPOSE 3001
 CMD ["npx", "vite"]

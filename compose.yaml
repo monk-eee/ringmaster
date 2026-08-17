@@ -36,8 +36,12 @@ services:
       # ADR-0065: optional bearer token for a hosted (non-Ollama) model
       # endpoint; unset by default, matching Ollama's own no-auth posture.
       RINGMASTER_LLM_API_KEY: ${RINGMASTER_LLM_API_KEY:-}
-      # ADR-0018: optional embedding adapter, same host and posture as above.      RINGMASTER_EMBEDDING_URL: ${RINGMASTER_EMBEDDING_URL:-http://host.containers.internal:11434/v1}
+      # ADR-0018: optional embedding adapter, same host and posture as above.
+      RINGMASTER_EMBEDDING_URL: ${RINGMASTER_EMBEDDING_URL:-http://host.containers.internal:11434/v1}
       RINGMASTER_EMBEDDING_MODEL: ${RINGMASTER_EMBEDDING_MODEL:-nomic-embed-text}
+      # ADR-0068: optional bearer token for hosted embedding endpoints;
+      # unset by default so keyless Ollama keeps its existing behavior.
+      RINGMASTER_EMBEDDING_API_KEY: ${RINGMASTER_EMBEDDING_API_KEY:-}
     ports:
       - "8080:8080"
     depends_on:
@@ -52,7 +56,7 @@ services:
     environment:
       BACKEND_URL: http://backend:8080
     ports:
-      - "3000:3000"
+      - "3001:3001"
     depends_on:
       - backend
 

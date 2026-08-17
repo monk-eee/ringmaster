@@ -227,7 +227,7 @@ tests that need no live model.
 
 ## 6. Frontend architecture (`frontend/`)
 
-React 18 + Vite 5 SPA, `npm run dev` on `:3000`. Vite's dev server proxies
+React 18 + Vite 5 SPA, `npm run dev` on `:3001`. Vite's dev server proxies
 `/api/*` to the backend (`BACKEND_URL`, read server-side only — same-origin
 from the browser's perspective, no CORS needed).
 

@@ -32,9 +32,22 @@ This brings up Postgres, the Rust backend
 ([ADR-0005](docs/adr.d/0005-adopt-rust-event-sourced-postgres-commitment-graph.md),
 serving its HTTP API on `:8080`) and the React/Vite front end
 ([ADR-0014](docs/adr.d/0014-react-vite-single-page-app.md), at
-`http://localhost:3000`) locally; it is dev tooling only, not a deployment
+`http://localhost:3001`) locally; it is dev tooling only, not a deployment
 artifact. Copy `.env.example` to `.env` to override the default dev
 credentials.
+
+### Ringmaster MCP
+
+Opening this workspace registers the local `ringmaster` stdio MCP server from
+`.vscode/mcp.json`. In addition to dated source ingestion and search, it exposes
+generic graph management tools:
+
+`list_entities`, `get_entity`, `create_entity`, `update_entity`,
+`upsert_entities`, `list_relationships`, and `create_relationship`.
+
+`upsert_entities` accepts 1-100 entities atomically. It exact-matches the
+case-sensitive `(node_type, canonical_text)` pair, shallow-merges attributes,
+creates missing entities, and rejects ambiguous duplicates rather than guessing.
 
 ### Front-end tests
 

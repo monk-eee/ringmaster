@@ -8,14 +8,14 @@ export default defineConfig({
   fullyParallel: true,
   webServer: {
     command: "npx vite",
-    url: "http://localhost:3000",
+    url: "http://localhost:3001",
     reuseExistingServer: !process.env.CI,
     env: {
       BACKEND_URL: process.env.BACKEND_URL || "http://localhost:8080",
     },
   },
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: "http://localhost:3001",
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });
