@@ -13,21 +13,21 @@ id = "isolated-signal-flags-a-zero-edge-commitment"
 invariant = "An Obligation with zero edges is flagged with an isolated risk signal."
 type = "present"
 pattern = 'fn risk_signals_flags_isolated_when_has_edges_is_false'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "isolated-signal-does-not-flag-a-linked-commitment"
 invariant = "An Obligation with at least one edge is not flagged isolated."
 type = "present"
 pattern = 'fn risk_signals_does_not_flag_isolated_when_has_edges_is_true'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "isolated-signal-attached-like-existing-signals"
 invariant = "isolated appears in risk_signals on Daily Brief, Time Horizon, and Obligation detail, reusing the existing signal attachment pattern."
 type = "present"
-pattern = 'risk_signals\(hard_due_at, soft_due_at, updated_at, source_fragment_id, has_owner, has_edges\)'
-paths = ["backend/src/api.rs"]
+pattern = 'risk_signals\([\s\S]*?hard_due_at,[\s\S]*?soft_due_at,[\s\S]*?updated_at,[\s\S]*?source_fragment_id,[\s\S]*?has_owner,[\s\S]*?has_edges,?[\s\S]*?\)'
+paths = ["backend/src/api/obligations.rs"]
 ```
 
 ## Notes

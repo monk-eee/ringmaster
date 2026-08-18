@@ -13,21 +13,21 @@ id = "time-horizon-route-buckets-by-due-date"
 invariant = "GET /api/time-horizon groups non-closed Obligations into Overdue/7/30/90/Beyond buckets."
 type = "present"
 pattern = 'fn time_horizon_bucket\('
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "at-risk-no-date-lands-in-overdue"
 invariant = "An at_risk Obligation with no due date is bucketed under Overdue, matching the Daily Brief's own precedent."
 type = "present"
-pattern = 'status == "at_risk" \{ "overdue" \}'
-paths = ["backend/src/api.rs"]
+pattern = 'status == "at_risk"[\s\S]*?"overdue"'
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "closed-excluded-from-time-horizon"
 invariant = "A closed Obligation is confirmed absent from every bucket."
 type = "present"
 pattern = "op.status <> 'closed'"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "time-horizon-tab-exists"
