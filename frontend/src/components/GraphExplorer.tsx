@@ -110,9 +110,22 @@ type TrailStep = {
   viaConfidence: number | null;
 };
 
+type Lens = "all" | "actions";
+
+// ADR-0081: "what needs doing" -- an Obligation (the polymorphic neighbor
+// shape) or a risk node. Deliberately narrow; widening this is a future
+// decision, not a silent edit here.
+function isActionableNeighbor(neighbor: NodeNeighbor): boolean {
+  const target = neighbor.neighbor;
+  if (target === null) return false;
+  if ("type" in target && target.type === "obligation") return true;
+  return "node_type" in target && target.node_type === "risk";
+}
+
 export default function GraphExplorer() {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [nodeTypeFilter, setNodeTypeFilter] = useState("all");
+  const [lens, setLens] = useState<Lens>("all");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detail, setDetail] = useState<NodeDetail | null>(null);
   const [trail, setTrail] = useState<TrailStep[]>([]);
@@ -283,6 +296,10 @@ export default function GraphExplorer() {
   }
 
   const neighbors = detail?.neighbors ?? [];
+  // ADR-0081: a pure client-side filter over the already-fetched one-hop
+  // response -- no new request, no change to the trail/pivot mechanism.
+  const visibleNeighbors = lens === "actions" ? neighbors.filter(isActionableNeighbor) : neighbors;
+  const filteredOutCount = neighbors.length - visibleNeighbors.length;
 
   return (
     <div className="graph-explorer">
@@ -448,9 +465,16 @@ export default function GraphExplorer() {
                 </div>
               )}
 
+              <label className="filter-label">
+                Lens
+                <select className="lens-select" value={lens} onChange={(event) => setLens(event.target.value as Lens)}>
+                  <option value="all">All</option>
+                  <option value="actions">Actions</option>
+                </select>
+              </label>
               <svg width={CENTER * 2} height={CENTER * 2} className="relationship-view" role="img" aria-label={`Relationships for ${detail.canonical_text}`}>
-                {neighbors.map((neighbor, index) => {
-                  const angle = (2 * Math.PI * index) / Math.max(neighbors.length, 1) - Math.PI / 2;
+                {visibleNeighbors.map((neighbor, index) => {
+                  const angle = (2 * Math.PI * index) / Math.max(visibleNeighbors.length, 1) - Math.PI / 2;
                   const x = CENTER + RADIUS * Math.cos(angle);
                   const y = CENTER + RADIUS * Math.sin(angle);
                   const label = isNodeNeighbor(neighbor.neighbor) ? neighbor.neighbor.canonical_text : neighbor.neighbor ? "Obligation" : "Unknown";
@@ -512,7 +536,11 @@ export default function GraphExplorer() {
                 </text>
               </svg>
               <p className="relationship-count">
-                {neighbors.length === 0 ? "No relationships yet." : `${neighbors.length} relationship${neighbors.length === 1 ? "" : "s"}`}
+                {visibleNeighbors.length === 0 && filteredOutCount === 0
+                  ? "No relationships yet."
+                  : lens === "actions"
+                  ? `${visibleNeighbors.length} shown, ${filteredOutCount} filtered by Actions lens`
+                  : `${visibleNeighbors.length} relationship${visibleNeighbors.length === 1 ? "" : "s"}`}
               </p>
 
               <form className="toolbar" onSubmit={handleEnrich}>
@@ -532,7 +560,7 @@ export default function GraphExplorer() {
               </form>
 
               <form className="toolbar" onSubmit={handleLink}>
-                <select value={edgeTargetId} onChange={(event) => setEdgeTargetId(event.target.value)}>
+                <select className="link-target-select" value={edgeTargetId} onChange={(event) => setEdgeTargetId(event.target.value)}>
                   <option value="">Link to…</option>
                   {nodes.filter((node) => node.id !== selectedNodeId).map((node) => (
                     <option key={node.id} value={node.id}>

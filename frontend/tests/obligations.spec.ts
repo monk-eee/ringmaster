@@ -162,7 +162,7 @@ test("graph trail: traversing two edges and returning to the root (ADR-0033)", a
 
   async function link(fromText: string, toText: string, verb: string) {
     await selectNode(fromText);
-    await page.locator(".node-detail select").selectOption({ label: `${nodeType}: ${toText}` });
+    await page.locator(".node-detail select.link-target-select").selectOption({ label: `${nodeType}: ${toText}` });
     await page.getByPlaceholder("Relationship (e.g. made, owns)").fill(verb);
     await page.getByRole("button", { name: "Add relationship" }).click();
     // The form resets its fields on success (so the submit button goes back to
@@ -212,6 +212,74 @@ test("graph trail: traversing two edges and returning to the root (ADR-0033)", a
   await expect(page.locator(".node-detail h3")).toContainText(nodeA);
   await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(1);
   await expect(page.locator(".graph-trail-back")).toBeDisabled();
+});
+
+// ADR-0081: proves the Actions lens filters the radial neighbourhood down to
+// what needs doing (an Obligation or a risk node), states the shown/
+// filtered count honestly rather than silently hiding neighbours, and never
+// disturbs the trail/pivot mechanism ADR-0033 already built.
+test("graph explorer: the Actions lens filters neighbours to what needs doing (ADR-0081)", async ({ page }) => {
+  const stamp = Date.now() % 100000;
+  const nodeType = `lenstest${stamp}`;
+  const root = `Rt${stamp}`;
+  const riskNode = `Rk${stamp}`;
+  const otherNode = `Ot${stamp}`;
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Graph" }).click();
+  await expect(page.getByRole("tab", { name: "Graph" })).toHaveAttribute("aria-selected", "true");
+
+  async function createNode(text: string, type: string) {
+    await page.getByPlaceholder("Node type (e.g. person, risk)").fill(type);
+    await page.getByPlaceholder("Canonical text (e.g. a name)").fill(text);
+    await page.getByRole("button", { name: "Create node" }).click();
+    await expect(page.locator(".node-detail h3")).toContainText(text);
+  }
+
+  async function selectNode(text: string) {
+    await page.locator(".node-list-button", { hasText: text }).click();
+    await expect(page.locator(".node-detail h3")).toContainText(text);
+  }
+
+  async function link(fromText: string, toText: string, toType: string, verb: string) {
+    await selectNode(fromText);
+    await page.locator(".node-detail select.link-target-select").selectOption({ label: `${toType}: ${toText}` });
+    await page.getByPlaceholder("Relationship (e.g. made, owns)").fill(verb);
+    await page.getByRole("button", { name: "Add relationship" }).click();
+    await expect(page.locator("svg.relationship-view g", { hasText: toText })).toBeVisible();
+  }
+
+  // A root plus one risk neighbour (actionable) and one same-freeform-type
+  // neighbour (not actionable) -- proves the filter includes/excludes by
+  // node_type, not by presence alone.
+  await createNode(root, nodeType);
+  await createNode(riskNode, "risk");
+  await createNode(otherNode, nodeType);
+  await link(root, riskNode, "risk", "at_risk_from");
+  await link(root, otherNode, nodeType, "relates_to");
+
+  // Default "All" lens: both neighbours render.
+  await expect(page.locator("svg.relationship-view g", { hasText: riskNode })).toBeVisible();
+  await expect(page.locator("svg.relationship-view g", { hasText: otherNode })).toBeVisible();
+  await expect(page.locator(".relationship-count")).toContainText("2 relationships");
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(1);
+
+  // Switching to "Actions" keeps only the risk neighbour and states the
+  // shown/filtered count honestly, without touching the trail.
+  await page.locator(".lens-select").selectOption("actions");
+  await expect(page.locator("svg.relationship-view g", { hasText: riskNode })).toBeVisible();
+  await expect(page.locator("svg.relationship-view g", { hasText: otherNode })).toHaveCount(0);
+  await expect(page.locator(".relationship-count")).toHaveText("1 shown, 1 filtered by Actions lens");
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(1);
+
+  // Pivoting into the still-visible risk neighbour works identically with the lens active.
+  await page.locator("svg.relationship-view g", { hasText: riskNode }).locator("circle.relationship-node-clickable").click();
+  await expect(page.locator(".node-detail h3")).toContainText(riskNode);
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(2);
+
+  // Switching back to "All" does not reset or truncate the trail.
+  await page.locator(".lens-select").selectOption("all");
+  await expect(page.locator(".graph-trail-path .graph-trail-item")).toHaveCount(2);
 });
 
 // ADR-0035: proves the Buckets/Timeline toggle and the timeline's Now/zoom/
@@ -280,18 +348,20 @@ test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (AD
 });
 
 // ADR-0039: proves the primary/secondary tab regrouping is real (Today,
-// Timeline, People, Inbox as primary; Obligations, Search, Graph, Meetings,
+// Timeline, People, Inbox as primary; Obligations, Search, Meetings,
 // Activity still present, just visually demoted) -- not that the old tabs
 // were deleted. Meetings joined the secondary group later (ADR-0043),
-// Activity later still (ADR-0049).
-test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Graph remain as secondary tabs", async ({ page }) => {
+// Activity later still (ADR-0049). ADR-0080 promotes Graph to primary,
+// after it: its progressive traversal trail (ADR-0033) now answers a
+// primary management question, not a database-browser one.
+test("primary navigation is Today/Timeline/People/Inbox/Graph; Obligations/Search remain as secondary tabs (ADR-0080)", async ({ page }) => {
   await page.goto("/");
 
   const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Obligations", "Search", "Graph", "Meetings", "Activity"]);
+  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Graph", "Obligations", "Search", "Meetings", "Activity"]);
 
   const secondaryTabs = page.locator(".tab-secondary");
-  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph", "Meetings", "Activity"]);
+  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Meetings", "Activity"]);
 });
 
 test("primary navigation scrolls internally without widening a narrow viewport", async ({ page }) => {

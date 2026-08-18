@@ -10,16 +10,16 @@ adr = "0039-product-re-steer-primary-navigation"
 
 [[check]]
 id = "primary-nav-order-and-default"
-invariant = "Today/Timeline/People/Inbox render as the primary tab group, in that order, with Today the default landing tab."
+invariant = "Today/Timeline/People/Inbox render as the primary tab group, in that order, with Today the default landing tab (ADR-0080 later appends Graph to this same group; this check only re-proves the original four's order, unaffected by that addition)."
 type = "present"
-pattern = 'const PRIMARY_TABS: Tab\[\] = \["today", "timeline", "people", "inbox"\]'
+pattern = 'const PRIMARY_TABS: Tab\[\] = \["today", "timeline", "people", "inbox"'
 paths = ["frontend/src/App.tsx"]
 
 [[check]]
 id = "secondary-nav-group-exists"
-invariant = "Obligations/Graph/Search render as a visually distinct secondary/developer group, not deleted (later ADRs, e.g. ADR-0043's Meetings tab, may append further secondary tabs without breaking this check)."
+invariant = "Obligations/Search render as a visually distinct secondary/developer group, not deleted (later ADRs, e.g. ADR-0043's Meetings tab, may append further secondary tabs without breaking this check; ADR-0080 narrowly promoted Graph out of this group, recorded there, not here)."
 type = "present"
-pattern = 'const SECONDARY_TABS: Tab\[\] = \["obligations", "search", "graph"'
+pattern = 'const SECONDARY_TABS: Tab\[\] = \["obligations", "search"'
 paths = ["frontend/src/App.tsx"]
 
 [[check]]

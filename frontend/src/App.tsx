@@ -47,8 +47,11 @@ const TAB_TITLES: Record<Tab, string> = {
   activity: "Activity",
 };
 
-const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox"];
-const SECONDARY_TABS: Tab[] = ["obligations", "search", "graph", "meetings", "activity"];
+// ADR-0080: Graph is promoted to primary nav -- its progressive traversal
+// trail (ADR-0033) now answers a primary management question, not a
+// database-browser one. Obligations/Search remain demoted per ADR-0039.
+const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox", "graph"];
+const SECONDARY_TABS: Tab[] = ["obligations", "search", "meetings", "activity"];
 const TODAY_ITEM_CAP = 10;
 // ADR-0059: default page size for the Obligations/Candidates/People list
 // views -- a full page back means there may be more; a short page is the end.

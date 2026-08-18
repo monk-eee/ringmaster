@@ -92,3 +92,5 @@ accepted and implemented.
 | [ADR-0077: Bulk candidate promotion — complete the triage loop ADR-0076 started](0077-bulk-candidate-promotion.md) | Accepted | [EV-0077](../evidence.d/0077-bulk-candidate-promotion.md) |
 | [ADR-0078: Log build provenance so stale containers are visible on startup](0078-log-build-provenance-to-detect-stale-containers.md) | Accepted | [EV-0078](../evidence.d/0078-log-build-provenance-to-detect-stale-containers.md) |
 | [ADR-0079: Timeline surfaces a linked source's own occurred_at](0079-timeline-surfaces-source-occurred-at.md) | Accepted | [EV-0079](../evidence.d/0079-timeline-surfaces-source-occurred-at.md) |
+| [ADR-0080: Promote Graph Explorer to primary navigation](0080-promote-graph-explorer-to-primary-navigation.md) | Accepted | [EV-0080](../evidence.d/0080-promote-graph-explorer-to-primary-navigation.md) |
+| [ADR-0081: Add an Actions lens to Graph Explorer's neighbourhood view](0081-graph-explorer-actions-lens.md) | Accepted | [EV-0081](../evidence.d/0081-graph-explorer-actions-lens.md) |
