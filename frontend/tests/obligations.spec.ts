@@ -94,6 +94,62 @@ test("today: honest empty state renders no narrative summary when nothing needs 
   await expect(page.locator(".today-summary")).toHaveCount(0);
 });
 
+// ADR-0085: proves the People/All filter shows only person-linked blocks
+// when toggled on, and both blocks again when toggled back off. Mocks
+// GET /api/focus-blocks with one person-linked and one non-person-linked
+// block so the toggle is guaranteed to render and do something.
+function mockFocusBlock(unique: number, offset: number, nodeType: string, canonicalText: string) {
+  return {
+    node_id: `00000000-0000-4000-b000-${String(unique + offset).padStart(12, "0")}`,
+    node_type: nodeType,
+    canonical_text: canonicalText,
+    time_horizon_bucket: "next_7_days",
+    obligations: [0, 1].map((index) => ({
+      obligation_id: `00000000-0000-4000-c000-${String(unique + offset * 10 + index).padStart(12, "0")}`,
+      status: "open",
+      hard_due_at: null,
+      soft_due_at: null,
+      reason: "a focus block test reason",
+    })),
+  };
+}
+
+test("focus blocks: People/All filter shows and hides person-linked blocks (ADR-0085)", async ({ page }) => {
+  const unique = Date.now();
+  const personBlock = mockFocusBlock(unique, 0, "person", `Focus Filter Person ${unique}`);
+  const riskBlock = mockFocusBlock(unique, 1, "risk", `Focus Filter Risk ${unique}`);
+  await page.route("**/api/focus-blocks", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([personBlock, riskBlock]) });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText(`Focus Filter Person ${unique}`)).toBeVisible();
+  await expect(page.getByText(`Focus Filter Risk ${unique}`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Show people only" }).click();
+  await expect(page.getByText(`Focus Filter Person ${unique}`)).toBeVisible();
+  await expect(page.getByText(`Focus Filter Risk ${unique}`)).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Show all" }).click();
+  await expect(page.getByText(`Focus Filter Risk ${unique}`)).toBeVisible();
+});
+
+// ADR-0085: the toggle must not appear when it would filter nothing --
+// every block sharing the same attention type.
+test("focus blocks: People/All filter toggle is hidden when every block shares one attention type (ADR-0085)", async ({ page }) => {
+  const unique = Date.now();
+  const riskBlockA = mockFocusBlock(unique, 2, "risk", `Focus Uniform Risk A ${unique}`);
+  const riskBlockB = mockFocusBlock(unique, 3, "risk", `Focus Uniform Risk B ${unique}`);
+  await page.route("**/api/focus-blocks", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([riskBlockA, riskBlockB]) });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText(`Focus Uniform Risk A ${unique}`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show people only" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show all" })).toHaveCount(0);
+});
+
 // ADR-0047: selecting a Today row opens the shared Obligation detail view,
 // and Back returns to the list -- tolerant of whatever the shared
 // development database currently contains (never asserting exact content).

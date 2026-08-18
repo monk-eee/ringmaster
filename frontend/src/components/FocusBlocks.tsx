@@ -35,9 +35,18 @@ function blockRank(block: FocusBlock): [number, number] {
 
 export default function FocusBlocks({ blocks }: Props) {
   const [showAll, setShowAll] = useState(false);
+  const [peopleOnly, setPeopleOnly] = useState(false);
   if (blocks.length === 0) return null;
 
-  const ordered = [...blocks].sort((a, b) => {
+  // ADR-0085: the one attention-type distinction groundable in real data
+  // today -- a block's shared node either is a person or it isn't. Only
+  // offered when it would actually change something.
+  const hasPeopleBlocks = blocks.some((block) => block.node_type === "person");
+  const hasNonPeopleBlocks = blocks.some((block) => block.node_type !== "person");
+  const showFilterToggle = hasPeopleBlocks && hasNonPeopleBlocks;
+  const filtered = peopleOnly ? blocks.filter((block) => block.node_type === "person") : blocks;
+
+  const ordered = [...filtered].sort((a, b) => {
     const rankA = blockRank(a);
     const rankB = blockRank(b);
     return rankA[0] - rankB[0] || rankA[1] - rankB[1];
@@ -46,6 +55,11 @@ export default function FocusBlocks({ blocks }: Props) {
 
   return (
     <div className="focus-blocks">
+      {showFilterToggle && (
+        <button type="button" className="focus-blocks-people-toggle" onClick={() => setPeopleOnly((value) => !value)}>
+          {peopleOnly ? "Show all" : "Show people only"}
+        </button>
+      )}
       {shown.map((block) => (
         <div className="card focus-block" key={`${block.node_id}-${block.time_horizon_bucket}`}>
           <p className="daily-brief-summary">
@@ -69,9 +83,9 @@ export default function FocusBlocks({ blocks }: Props) {
           </ol>
         </div>
       ))}
-      {blocks.length > FOCUS_BLOCK_CAP && (
+      {filtered.length > FOCUS_BLOCK_CAP && (
         <button type="button" className="daily-brief-view-more" onClick={() => setShowAll((value) => !value)}>
-          {showAll ? "Show fewer" : `Show all ${blocks.length}`}
+          {showAll ? "Show fewer" : `Show all ${filtered.length}`}
         </button>
       )}
     </div>

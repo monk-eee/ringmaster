@@ -1579,6 +1579,24 @@ td.evidence-cell .no-evidence {
   background: var(--surface-alt);
 }
 
+/* ADR-0085: matches .people-attention-toggle's convention exactly. */
+.focus-blocks-people-toggle {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.75rem;
+  margin-bottom: 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.focus-blocks-people-toggle:hover {
+  background: var(--surface-alt);
+}
+
 .people-back {
   border: none;
   background: transparent;

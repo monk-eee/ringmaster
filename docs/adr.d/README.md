@@ -97,3 +97,4 @@ accepted and implemented.
 | [ADR-0082: Repeated-concern signal — the same risk raised in multiple meetings, still unpromoted](0082-repeated-concern-risk-signal.md) | Accepted | [EV-0082](../evidence.d/0082-repeated-concern-risk-signal.md) |
 | [ADR-0083: Meeting-brief generation — a person's open commitments, recent asks, and risks in one call](0083-meeting-brief-generation.md) | Accepted | [EV-0083](../evidence.d/0083-meeting-brief-generation.md) |
 | [ADR-0084: Today's narrative summary — the ranked count line VISION.md describes](0084-today-narrative-summary.md) | Accepted | [EV-0084](../evidence.d/0084-today-narrative-summary.md) |
+| [ADR-0085: Focus Sessions filter to People-linked blocks — the one honestly-groundable attention-type slice](0085-focus-blocks-people-filter.md) | Accepted | [EV-0085](../evidence.d/0085-focus-blocks-people-filter.md) |
