@@ -339,6 +339,40 @@ export type LinkedNode = {
   canonical_text: string | null;
 };
 
+// ADR-0083: the person-brief composition -- open commitments and recent
+// asks with source citations, reused by the Workbench's relationship pane
+// (ADR-0086).
+export type PersonBriefCommitment = {
+  obligation_id: string;
+  status: string;
+  hard_due_at: string | null;
+  soft_due_at: string | null;
+  reason: string;
+  risk_signals: RiskSignal[];
+};
+
+export type PersonBriefAsk = {
+  candidate_id: string;
+  candidate_type: string;
+  statement: string;
+  validation_state: string;
+  confidence: number | null;
+  source_text: string | null;
+  speaker: string | null;
+  occurred_at: string | null;
+};
+
+export type PersonBrief = {
+  person: { id: string; canonical_text: string };
+  open_commitments: PersonBriefCommitment[];
+  recent_asks: PersonBriefAsk[];
+  recent_asks_total: number;
+};
+
+export function fetchPersonBrief(personId: string): Promise<PersonBrief> {
+  return getJson<PersonBrief>(`/api/people/${encodeURIComponent(personId)}/brief`);
+}
+
 export type ObligationDetail = {
   obligation_id: string;
   status: string;

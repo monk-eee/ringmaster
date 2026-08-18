@@ -26,13 +26,14 @@ import People from "./components/People";
 import ComingSoonStrip from "./components/ComingSoonStrip";
 import MeetingReview from "./components/MeetingReview";
 import Activity from "./components/Activity";
+import Workbench from "./components/Workbench";
 
 // ADR-0039: four primary destinations answer a manager's actual questions
 // (what needs attention, what's coming, who do I owe, what's awaiting a
 // decision) instead of naming backend entities. Obligations/Search/Graph
 // remain fully functional, unchanged developer/diagnostic surfaces --
 // demoted in the tab bar, not deleted.
-type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph" | "meetings" | "activity";
+type Tab = "today" | "timeline" | "people" | "inbox" | "obligations" | "search" | "graph" | "meetings" | "activity" | "workbench";
 type SortKey = "updated_at" | "status";
 
 const TAB_TITLES: Record<Tab, string> = {
@@ -45,13 +46,16 @@ const TAB_TITLES: Record<Tab, string> = {
   graph: "Graph",
   meetings: "Meetings",
   activity: "Activity",
+  workbench: "Workbench",
 };
 
 // ADR-0080: Graph is promoted to primary nav -- its progressive traversal
 // trail (ADR-0033) now answers a primary management question, not a
 // database-browser one. Obligations/Search remain demoted per ADR-0039.
+// ADR-0086: Workbench ships secondary/opt-in first, matching Graph
+// Explorer's own precedent, until the three-pane pattern is proven.
 const PRIMARY_TABS: Tab[] = ["today", "timeline", "people", "inbox", "graph"];
-const SECONDARY_TABS: Tab[] = ["obligations", "search", "meetings", "activity"];
+const SECONDARY_TABS: Tab[] = ["obligations", "search", "meetings", "activity", "workbench"];
 const TODAY_ITEM_CAP = 10;
 // ADR-0059: default page size for the Obligations/Candidates/People list
 // views -- a full page back means there may be more; a short page is the end.
@@ -221,6 +225,8 @@ export default function App() {
           <MeetingReview />
         ) : tab === "activity" ? (
           <Activity />
+        ) : tab === "workbench" ? (
+          <Workbench dailyBrief={dailyBrief} />
         ) : tab === "timeline" ? (
           <>
             <div className="toolbar">

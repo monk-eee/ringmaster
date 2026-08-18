@@ -150,6 +150,133 @@ test("focus blocks: People/All filter toggle is hidden when every block shares o
   await expect(page.getByRole("button", { name: "Show all" })).toHaveCount(0);
 });
 
+// ADR-0086: proves selecting an Attention row fills the Current focus and
+// Relationship context panes without navigating away from the Workbench
+// tab, and that the relationship pane composes the linked person's brief.
+test("workbench: selecting an item fills current focus and relationship context (ADR-0086)", async ({ page }) => {
+  const unique = Date.now();
+  const obligationId = `00000000-0000-4000-d000-${String(unique).padStart(12, "0")}`;
+  const personId = `00000000-0000-4000-e000-${String(unique).padStart(12, "0")}`;
+
+  await page.route("**/api/daily-brief", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          obligation_id: obligationId,
+          status: "open",
+          hard_due_at: null,
+          soft_due_at: null,
+          updated_at: new Date().toISOString(),
+          reason: `Workbench test reason ${unique}`,
+          source_fragment_id: null,
+          source_text: `Workbench test statement ${unique}`,
+          risk_signals: [],
+        },
+      ]),
+    });
+  });
+  await page.route(`**/api/obligations/${obligationId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        obligation_id: obligationId,
+        status: "open",
+        updated_at: new Date().toISOString(),
+        hard_due_at: null,
+        soft_due_at: null,
+        source_fragment_id: null,
+        source_text: `Workbench test statement ${unique}`,
+        risk_signals: [],
+        linked_nodes: [
+          { edge_id: "edge-1", edge_type: "owns", node_id: personId, node_type: "person", canonical_text: `Workbench Person ${unique}` },
+        ],
+      }),
+    });
+  });
+  await page.route(`**/api/people/${personId}/brief`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        person: { id: personId, canonical_text: `Workbench Person ${unique}` },
+        open_commitments: [
+          { obligation_id: obligationId, status: "open", hard_due_at: null, soft_due_at: null, reason: "an open commitment for the workbench test", risk_signals: [] },
+        ],
+        recent_asks: [
+          { candidate_id: "candidate-1", candidate_type: "request", statement: `Workbench ask ${unique}`, validation_state: "candidate", confidence: 0.8, source_text: "spoke about it in the meeting", speaker: "Someone", occurred_at: new Date().toISOString() },
+        ],
+        recent_asks_total: 1,
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Workbench" }).click();
+  await expect(page.getByRole("tab", { name: "Workbench" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Select an item on the left to see its context.")).toBeVisible();
+
+  await page.getByText(`Workbench test statement ${unique}`).click();
+
+  await expect(page.locator(".obligation-detail")).toBeVisible();
+  await expect(page.getByRole("heading", { name: `Workbench Person ${unique}` })).toBeVisible();
+  await expect(page.getByText(`Workbench ask ${unique}`)).toBeVisible();
+});
+
+// ADR-0086: an obligation with no linked person renders an honest empty
+// state in the relationship pane, never a fabricated relationship.
+// playwright-proves-workbench-honest-empty-states
+test("workbench: honest empty state when the selected item has no linked person (ADR-0086)", async ({ page }) => {
+  const unique = Date.now();
+  const obligationId = `00000000-0000-4000-d000-${String(unique + 1).padStart(12, "0")}`;
+
+  await page.route("**/api/daily-brief", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          obligation_id: obligationId,
+          status: "open",
+          hard_due_at: null,
+          soft_due_at: null,
+          updated_at: new Date().toISOString(),
+          reason: `Workbench unlinked reason ${unique}`,
+          source_fragment_id: null,
+          source_text: `Workbench unlinked statement ${unique}`,
+          risk_signals: [],
+        },
+      ]),
+    });
+  });
+  await page.route(`**/api/obligations/${obligationId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        obligation_id: obligationId,
+        status: "open",
+        updated_at: new Date().toISOString(),
+        hard_due_at: null,
+        soft_due_at: null,
+        source_fragment_id: null,
+        source_text: `Workbench unlinked statement ${unique}`,
+        risk_signals: [],
+        linked_nodes: [],
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Workbench" }).click();
+  await page.getByText(`Workbench unlinked statement ${unique}`).click();
+
+  await expect(page.locator(".obligation-detail")).toBeVisible();
+  await expect(page.getByText("No person linked to this item.")).toBeVisible();
+});
+
 // ADR-0047: selecting a Today row opens the shared Obligation detail view,
 // and Back returns to the list -- tolerant of whatever the shared
 // development database currently contains (never asserting exact content).
@@ -476,10 +603,10 @@ test("primary navigation is Today/Timeline/People/Inbox/Graph; Obligations/Searc
   await page.goto("/");
 
   const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Graph", "Obligations", "Search", "Meetings", "Activity"]);
+  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Graph", "Obligations", "Search", "Meetings", "Activity", "Workbench"]);
 
   const secondaryTabs = page.locator(".tab-secondary");
-  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Meetings", "Activity"]);
+  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Meetings", "Activity", "Workbench"]);
 });
 
 test("primary navigation scrolls internally without widening a narrow viewport", async ({ page }) => {

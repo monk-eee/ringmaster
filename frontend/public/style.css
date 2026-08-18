@@ -1419,6 +1419,54 @@ td.evidence-cell .no-evidence {
   margin: 0;
 }
 
+/* ADR-0086: three panes, no page navigation. Stacks on narrow viewports. */
+.workbench {
+  display: grid;
+  grid-template-columns: 1.1fr 1.3fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+.workbench-pane {
+  min-width: 0;
+}
+
+.person-brief-name {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.person-brief-list {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+}
+
+.person-brief-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.person-brief-list li:last-child {
+  border-bottom: none;
+}
+
+.person-brief-source {
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--muted);
+}
+
+
 .today-section-heading {
   font-size: 0.95rem;
   font-weight: 650;
