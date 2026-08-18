@@ -57,6 +57,15 @@ const TODAY_ITEM_CAP = 10;
 // views -- a full page back means there may be more; a short page is the end.
 const LIST_PAGE_SIZE = 50;
 
+// ADR-0084: honest about what is and isn't known -- no stored display name
+// exists anywhere in this app, so the greeting is time-of-day only.
+function timeOfDayGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning.";
+  if (hour < 18) return "Good afternoon.";
+  return "Good evening.";
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("today");
   const [selectedObligationId, setSelectedObligationId] = useState<string | null>(null);
@@ -141,6 +150,17 @@ export default function App() {
   }, [tab]);
 
   const statuses = useMemo(() => Array.from(new Set(obligations.map((o) => o.status))).sort(), [obligations]);
+
+  // ADR-0084: reuses the exact risk_signals already fetched with each daily
+  // brief item -- no new signal, no new route, a plain client-side filter.
+  const dateCompressionCount = useMemo(
+    () => dailyBrief.filter((item) => item.risk_signals.some((signal) => signal.signal === "date_compression")).length,
+    [dailyBrief],
+  );
+  const staleCount = useMemo(
+    () => dailyBrief.filter((item) => item.risk_signals.some((signal) => signal.signal === "stale")).length,
+    [dailyBrief],
+  );
 
   // ADR-0047: a Today/Obligations row opens the same shared detail view in
   // place of the tab's own list -- switching tabs always leaves it behind.
@@ -238,11 +258,26 @@ export default function App() {
               </button>
             </div>
             {error && <p className="error">Could not reach backend: {error}</p>}
-            <p className="today-greeting">
-              {dailyBrief.length === 0
-                ? "Nothing needs your attention right now."
-                : `${dailyBrief.length} thing${dailyBrief.length === 1 ? "" : "s"} need${dailyBrief.length === 1 ? "s" : ""} your attention today.`}
-            </p>
+            {dailyBrief.length === 0 ? (
+              <p className="today-greeting">Nothing needs your attention right now.</p>
+            ) : (
+              <div className="today-summary">
+                <p className="today-greeting">{timeOfDayGreeting()}</p>
+                <p className="today-summary-line">
+                  {dailyBrief.length} thing{dailyBrief.length === 1 ? "" : "s"} need{dailyBrief.length === 1 ? "s" : ""} attention today.
+                </p>
+                {dateCompressionCount > 0 && (
+                  <p className="today-summary-line">
+                    {dateCompressionCount} will become risk{dateCompressionCount === 1 ? "" : "s"} this week.
+                  </p>
+                )}
+                {staleCount > 0 && (
+                  <p className="today-summary-line">
+                    {staleCount} commitment{staleCount === 1 ? "" : "s"} appear{staleCount === 1 ? "s" : ""} forgotten.
+                  </p>
+                )}
+              </div>
+            )}
             <DailyBrief
               items={dailyBrief.slice(0, TODAY_ITEM_CAP)}
               totalCount={dailyBrief.length}

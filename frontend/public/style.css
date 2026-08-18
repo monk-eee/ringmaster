@@ -1402,6 +1402,23 @@ td.evidence-cell .no-evidence {
   margin: 0 0 1.1rem;
 }
 
+/* ADR-0084: the narrative summary block replaces the single-line greeting
+   when there is something to report; .today-greeting above still covers
+   the honest empty state alone. */
+.today-summary {
+  margin: 0 0 1.1rem;
+}
+
+.today-summary .today-greeting {
+  margin: 0 0 0.4rem;
+}
+
+.today-summary-line {
+  font-size: 0.95rem;
+  color: var(--muted);
+  margin: 0;
+}
+
 .today-section-heading {
   font-size: 0.95rem;
   font-weight: 650;

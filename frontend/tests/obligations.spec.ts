@@ -32,6 +32,67 @@ test("today tab renders a ranked list by default", async ({ page }) => {
   await expect(page.locator("p.error")).toHaveCount(0);
 });
 
+// ADR-0084: proves the narrative summary reuses the existing date_compression
+// and stale risk signals honestly -- a zero count for either is omitted
+// entirely, never rendered as "0 ...". Mocks GET /api/daily-brief so the
+// exact counts are deterministic regardless of whatever the shared
+// development database currently contains.
+test("today: narrative summary reports date_compression/stale counts and omits zero counts (ADR-0084)", async ({ page }) => {
+  const unique = Date.now();
+  await page.route("**/api/daily-brief", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          obligation_id: `00000000-0000-4000-a000-${String(unique).padStart(12, "0")}`,
+          status: "at_risk",
+          hard_due_at: null,
+          soft_due_at: null,
+          updated_at: new Date().toISOString(),
+          reason: "date-compressed test item",
+          source_fragment_id: null,
+          source_text: null,
+          risk_signals: [{ signal: "date_compression", explanation: "Due within 7 days." }],
+        },
+        {
+          obligation_id: `00000000-0000-4000-a000-${String(unique + 1).padStart(12, "0")}`,
+          status: "open",
+          hard_due_at: null,
+          soft_due_at: null,
+          updated_at: new Date().toISOString(),
+          reason: "stale test item",
+          source_fragment_id: null,
+          source_text: null,
+          risk_signals: [{ signal: "stale", explanation: "No update recorded in 30 days." }],
+        },
+      ]),
+    });
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
+
+  const summary = page.locator(".today-summary");
+  await expect(summary.getByText("2 things need attention today.")).toBeVisible();
+  await expect(summary.getByText("1 will become risk this week.")).toBeVisible();
+  await expect(summary.getByText("1 commitment appears forgotten.")).toBeVisible();
+  await expect(summary.getByText(/Good morning\.|Good afternoon\.|Good evening\./)).toBeVisible();
+});
+
+// ADR-0084: an empty daily brief keeps the pre-existing honest empty state
+// and renders no narrative summary lines at all.
+test("today: honest empty state renders no narrative summary when nothing needs attention (ADR-0084)", async ({ page }) => {
+  await page.route("**/api/daily-brief", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Nothing needs your attention right now.")).toBeVisible();
+  await expect(page.locator(".today-summary")).toHaveCount(0);
+});
+
 // ADR-0047: selecting a Today row opens the shared Obligation detail view,
 // and Back returns to the list -- tolerant of whatever the shared
 // development database currently contains (never asserting exact content).
@@ -815,4 +876,40 @@ test("today: 'What am I forgetting?' shows flagged obligations or an honest empt
 
   expect(rowCount).toBeLessThanOrEqual(5);
   await expect(rows.first().locator(".risk-signals li").first()).toBeVisible();
+});
+
+// ADR-0084: the narrative summary above the ranked list is a time-of-day
+// greeting plus honest, zero-omitted counts derived from data already
+// fetched -- never asserts an exact count, since the shared database
+// accumulates data across sessions/agents (same posture as ADR-0014's own
+// "today tab renders a ranked list" test above).
+// playwright-proves-today-narrative-summary
+test("today: narrative summary shows a time-of-day greeting and honest, zero-omitted counts (ADR-0084)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
+
+  const emptyState = page.getByText("Nothing needs your attention right now.");
+  if (await emptyState.isVisible()) {
+    await expect(page.locator(".today-summary")).toHaveCount(0);
+    return;
+  }
+
+  const summary = page.locator(".today-summary");
+  await expect(summary).toBeVisible();
+
+  const greeting = summary.locator("p.today-greeting");
+  await expect(greeting).toHaveText(/^Good (morning|afternoon|evening)\.$/);
+
+  const summaryLines = summary.locator("p.today-summary-line");
+  await expect(summaryLines.first()).toHaveText(/^\d+ things? needs? attention today\.$/);
+
+  // Any additional lines are exactly the "will become risks"/"appear
+  // forgotten" stats -- never a literal "0 ..." line (the honest
+  // zero-omission rule ADR-0084 decides).
+  const lineCount = await summaryLines.count();
+  for (let index = 1; index < lineCount; index += 1) {
+    await expect(summaryLines.nth(index)).toHaveText(
+      /^\d+ (will become risks? this week\.|commitments? appears? forgotten\.)$/,
+    );
+  }
 });
