@@ -13,10 +13,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use sqlx::{FromRow, PgPool};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const MAX_BATCH_SIZE: usize = 200;
+const REPEATED_CONCERN_SIMILARITY_THRESHOLD: f64 = 0.85;
 
 fn validate_batch_ids(candidate_ids: &[Uuid]) -> Result<(), (axum::http::StatusCode, String)> {
     if candidate_ids.is_empty() {
@@ -81,11 +82,85 @@ fn candidate_with_source_json(row: &CandidateWithSource) -> JsonValue {
     })
 }
 
+/// One raw match row for `repeated_concern_matches` below (ADR-0082):
+/// unlike `risk_signals` (obligations.rs), "the same risk in another
+/// meeting" is inherently a cross-row comparison, so this queries
+/// `candidate_projection`/`embeddings` directly rather than taking
+/// already-fetched rows as parameters.
+#[derive(Debug, Clone, FromRow)]
+struct RepeatedConcernMatch {
+    candidate_id: Uuid,
+    matched_candidate_id: Uuid,
+    matched_meeting_id: Uuid,
+    matched_meeting_text: String,
+}
+
+/// ADR-0082: a `risk` candidate matches another `risk` candidate from a
+/// *different* meeting (`source_fragments.source_id`) whose source
+/// fragment embedding is within cosine similarity >=
+/// `REPEATED_CONCERN_SIMILARITY_THRESHOLD` -- the same
+/// `1 - (embedding <=> embedding)` expression
+/// `graph::source_fragment::search_source_fragments` already uses, as a
+/// self-join instead of an ad hoc query embed. Excludes either side being
+/// already promoted (a real, tracked Obligation is this repo's existing
+/// proxy for "mitigation") or rejected ("not a genuine management
+/// object", PRODUCT-SPEC.md SS6). Symmetric: if A matches B, a separate
+/// row also reports B matching A.
+async fn repeated_concern_matches(pool: &PgPool) -> Result<Vec<RepeatedConcernMatch>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT a.candidate_id AS candidate_id, \
+                b.candidate_id AS matched_candidate_id, \
+                sfb.source_id AS matched_meeting_id, \
+                nb.canonical_text AS matched_meeting_text \
+         FROM candidate_projection a \
+         JOIN source_fragments sfa ON sfa.id = a.source_fragment_id \
+         JOIN embeddings ea ON ea.entity_type = 'source_fragment' AND ea.entity_id = sfa.id \
+         JOIN embeddings eb ON eb.entity_type = 'source_fragment' \
+         JOIN source_fragments sfb ON sfb.id = eb.entity_id \
+         JOIN candidate_projection b ON b.source_fragment_id = sfb.id \
+         JOIN nodes nb ON nb.id = sfb.source_id \
+         WHERE a.candidate_type = 'risk' \
+           AND b.candidate_type = 'risk' \
+           AND a.candidate_id != b.candidate_id \
+           AND a.validation_state != 'rejected' \
+           AND b.validation_state != 'rejected' \
+           AND a.promoted_obligation_id IS NULL \
+           AND b.promoted_obligation_id IS NULL \
+           AND sfa.source_id != sfb.source_id \
+           AND (1 - (ea.embedding <=> eb.embedding)) >= $1",
+    )
+    .bind(REPEATED_CONCERN_SIMILARITY_THRESHOLD)
+    .fetch_all(pool)
+    .await
+}
+
+/// Groups raw match rows by the flagged candidate, one explanation entry
+/// per matched meeting (ADR-0082's "explanation required" shape,
+/// PRODUCT-SPEC.md SS7.1).
+fn repeated_concern_by_candidate(
+    matches: &[RepeatedConcernMatch],
+) -> HashMap<Uuid, Vec<JsonValue>> {
+    let mut grouped: HashMap<Uuid, Vec<JsonValue>> = HashMap::new();
+    for entry in matches {
+        grouped.entry(entry.candidate_id).or_default().push(json!({
+            "candidate_id": entry.matched_candidate_id,
+            "meeting_id": entry.matched_meeting_id,
+            "explanation": format!(
+                "Also raised as a risk in \"{}\", not yet promoted or rejected there either.",
+                entry.matched_meeting_text
+            ),
+        }));
+    }
+    grouped
+}
+
 /// Reads the current `candidate_projection` rows, joined read-only against
 /// the immutable `source_fragments` table for evidence (ADR-0013/ADR-0015).
 /// Never writes. `limit`/`offset` of `None` fetch every row unchanged
 /// (ADR-0059); a given `limit` is clamped to `[1, MAX_LIST_LIMIT]` rather
-/// than rejected, matching ADR-0049's audit-limit precedent.
+/// than rejected, matching ADR-0049's audit-limit precedent. Also attaches
+/// `repeated_concern` (ADR-0082), computed across every `risk` candidate,
+/// not just this page, so a match is never missed by pagination.
 pub(super) async fn list_candidates(
     State(pool): State<PgPool>,
     Query(params): Query<ListQuery>,
@@ -105,9 +180,21 @@ pub(super) async fn list_candidates(
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
+    let matches = repeated_concern_matches(&pool)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let grouped = repeated_concern_by_candidate(&matches);
+
     Ok(Json(json!(rows
         .iter()
-        .map(candidate_with_source_json)
+        .map(|row| {
+            let mut value = candidate_with_source_json(row);
+            value["repeated_concern"] = json!(grouped
+                .get(&row.candidate_id)
+                .cloned()
+                .unwrap_or_default());
+            value
+        })
         .collect::<Vec<_>>())))
 }
 
@@ -2555,5 +2642,463 @@ mod tests {
                 "{uri} must reject duplicate ids before processing"
             );
         }
+    }
+
+    /// A 768-dimension unit vector with a 1 at `index` and 0 elsewhere
+    /// (ADR-0082 tests): two calls with the same `index` are identical
+    /// (cosine similarity 1.0); two calls with different indices are
+    /// orthogonal (cosine similarity 0.0) -- deterministic stand-ins for a
+    /// real embedding model's "similar"/"dissimilar" output.
+    fn unit_vector(index: usize) -> String {
+        let mut values = vec!["0".to_string(); 768];
+        values[index] = "1".to_string();
+        format!("[{}]", values.join(","))
+    }
+
+    /// Creates a real `source_fragments` row plus its `embeddings` row
+    /// directly (ADR-0082 tests): `repeated_concern_matches` inner-joins
+    /// both tables, unlike the LEFT JOIN read routes elsewhere in this
+    /// file that tolerate a bare random UUID with no backing row.
+    async fn insert_risk_fragment_with_embedding(
+        pool: &PgPool,
+        meeting_id: uuid::Uuid,
+        text: &str,
+        vector_literal: &str,
+    ) -> uuid::Uuid {
+        let fragment_id = graph::create_source_fragment(pool, meeting_id, text, "test-hash")
+            .await
+            .expect("create source fragment");
+        sqlx::query(
+            "INSERT INTO embeddings (entity_id, entity_type, model_id, embedding, source_hash) \
+             VALUES ($1, 'source_fragment', 'test-model', $2::vector, 'test-hash')",
+        )
+        .bind(fragment_id)
+        .bind(vector_literal)
+        .execute(pool)
+        .await
+        .expect("insert embedding");
+        fragment_id
+    }
+
+    #[tokio::test]
+    async fn repeated_concern_flags_similar_risks_from_different_meetings() {
+        let pool = test_pool().await;
+        let meeting_a = graph::create_node(&pool, "meeting", "Sprint Planning", json!({}))
+            .await
+            .expect("create meeting a");
+        let meeting_b = graph::create_node(&pool, "meeting", "Sprint Retro", json!({}))
+            .await
+            .expect("create meeting b");
+        let vector = unit_vector(0);
+        let fragment_a = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_a,
+            "Vendor may miss the migration deadline.",
+            &vector,
+        )
+        .await;
+        let fragment_b = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_b,
+            "Vendor may miss the migration deadline again.",
+            &vector,
+        )
+        .await;
+        let candidate_a = uuid::Uuid::new_v4();
+        let candidate_b = uuid::Uuid::new_v4();
+        extraction::extract_candidate(
+            &pool,
+            candidate_a,
+            "risk",
+            "Vendor may miss the migration deadline.",
+            fragment_a,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate a");
+        extraction::extract_candidate(
+            &pool,
+            candidate_b,
+            "risk",
+            "Vendor may miss the migration deadline again.",
+            fragment_b,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate b");
+        extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let matches = repeated_concern_matches(&pool)
+            .await
+            .expect("compute repeated concern matches");
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.candidate_id == candidate_a && m.matched_candidate_id == candidate_b),
+            "candidate a must be flagged as matching candidate b"
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.candidate_id == candidate_b && m.matched_candidate_id == candidate_a),
+            "the match must be symmetric"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_concern_does_not_flag_similar_risks_from_the_same_meeting() {
+        let pool = test_pool().await;
+        let meeting = graph::create_node(&pool, "meeting", "Weekly Sync", json!({}))
+            .await
+            .expect("create meeting");
+        let vector = unit_vector(1);
+        let fragment_a =
+            insert_risk_fragment_with_embedding(&pool, meeting, "Same risk restated.", &vector)
+                .await;
+        let fragment_b = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting,
+            "Same risk restated again.",
+            &vector,
+        )
+        .await;
+        let candidate_a = uuid::Uuid::new_v4();
+        let candidate_b = uuid::Uuid::new_v4();
+        extraction::extract_candidate(
+            &pool,
+            candidate_a,
+            "risk",
+            "Same risk restated.",
+            fragment_a,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate a");
+        extraction::extract_candidate(
+            &pool,
+            candidate_b,
+            "risk",
+            "Same risk restated again.",
+            fragment_b,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate b");
+        extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let matches = repeated_concern_matches(&pool)
+            .await
+            .expect("compute repeated concern matches");
+        assert!(
+            !matches
+                .iter()
+                .any(|m| m.candidate_id == candidate_a || m.candidate_id == candidate_b),
+            "same-meeting risks must not be flagged as a repeated concern"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_concern_excludes_a_promoted_risk() {
+        let pool = test_pool().await;
+        let meeting_a = graph::create_node(&pool, "meeting", "Kickoff", json!({}))
+            .await
+            .expect("create meeting a");
+        let meeting_b = graph::create_node(&pool, "meeting", "Checkpoint", json!({}))
+            .await
+            .expect("create meeting b");
+        let vector = unit_vector(2);
+        let fragment_a = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_a,
+            "Promoted risk restated.",
+            &vector,
+        )
+        .await;
+        let fragment_b = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_b,
+            "Promoted risk restated again.",
+            &vector,
+        )
+        .await;
+        let candidate_a = uuid::Uuid::new_v4();
+        let candidate_b = uuid::Uuid::new_v4();
+        extraction::extract_candidate(
+            &pool,
+            candidate_a,
+            "risk",
+            "Promoted risk restated.",
+            fragment_a,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate a");
+        extraction::extract_candidate(
+            &pool,
+            candidate_b,
+            "risk",
+            "Promoted risk restated again.",
+            fragment_b,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate b");
+        extraction::transition_candidate(&pool, candidate_a, "accepted", json!({}))
+            .await
+            .expect("accept candidate a");
+        extraction::transition_candidate(
+            &pool,
+            candidate_a,
+            "promoted",
+            json!({"obligation_id": uuid::Uuid::new_v4()}),
+        )
+        .await
+        .expect("promote candidate a");
+        extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let matches = repeated_concern_matches(&pool)
+            .await
+            .expect("compute repeated concern matches");
+        assert!(
+            !matches
+                .iter()
+                .any(|m| m.candidate_id == candidate_a || m.matched_candidate_id == candidate_a),
+            "an already-promoted risk must not appear on either side of a match"
+        );
+        assert!(
+            !matches.iter().any(|m| m.candidate_id == candidate_b),
+            "candidate b's only possible match was the now-promoted candidate a"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_concern_excludes_a_rejected_risk() {
+        let pool = test_pool().await;
+        let meeting_a = graph::create_node(&pool, "meeting", "Design Review", json!({}))
+            .await
+            .expect("create meeting a");
+        let meeting_b = graph::create_node(&pool, "meeting", "Follow-up", json!({}))
+            .await
+            .expect("create meeting b");
+        let vector = unit_vector(3);
+        let fragment_a = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_a,
+            "Rejected risk restated.",
+            &vector,
+        )
+        .await;
+        let fragment_b = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_b,
+            "Rejected risk restated again.",
+            &vector,
+        )
+        .await;
+        let candidate_a = uuid::Uuid::new_v4();
+        let candidate_b = uuid::Uuid::new_v4();
+        extraction::extract_candidate(
+            &pool,
+            candidate_a,
+            "risk",
+            "Rejected risk restated.",
+            fragment_a,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate a");
+        extraction::extract_candidate(
+            &pool,
+            candidate_b,
+            "risk",
+            "Rejected risk restated again.",
+            fragment_b,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate b");
+        extraction::transition_candidate(&pool, candidate_a, "rejected", json!({}))
+            .await
+            .expect("reject candidate a");
+        extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let matches = repeated_concern_matches(&pool)
+            .await
+            .expect("compute repeated concern matches");
+        assert!(
+            !matches
+                .iter()
+                .any(|m| m.candidate_id == candidate_a || m.matched_candidate_id == candidate_a),
+            "a rejected risk must not appear on either side of a match"
+        );
+        assert!(
+            !matches.iter().any(|m| m.candidate_id == candidate_b),
+            "candidate b's only possible match was the now-rejected candidate a"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_concern_does_not_flag_dissimilar_risks() {
+        let pool = test_pool().await;
+        let meeting_a = graph::create_node(&pool, "meeting", "Budget Review", json!({}))
+            .await
+            .expect("create meeting a");
+        let meeting_b = graph::create_node(&pool, "meeting", "Staffing Review", json!({}))
+            .await
+            .expect("create meeting b");
+        let fragment_a = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_a,
+            "Budget may run over.",
+            &unit_vector(4),
+        )
+        .await;
+        let fragment_b = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_b,
+            "Unrelated staffing concern.",
+            &unit_vector(5),
+        )
+        .await;
+        let candidate_a = uuid::Uuid::new_v4();
+        let candidate_b = uuid::Uuid::new_v4();
+        extraction::extract_candidate(
+            &pool,
+            candidate_a,
+            "risk",
+            "Budget may run over.",
+            fragment_a,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate a");
+        extraction::extract_candidate(
+            &pool,
+            candidate_b,
+            "risk",
+            "Unrelated staffing concern.",
+            fragment_b,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate b");
+        extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let matches = repeated_concern_matches(&pool)
+            .await
+            .expect("compute repeated concern matches");
+        assert!(
+            !matches
+                .iter()
+                .any(|m| m.candidate_id == candidate_a || m.candidate_id == candidate_b),
+            "risks below the similarity threshold must not be flagged"
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_list_route_attaches_repeated_concern() {
+        let pool = test_pool().await;
+        let meeting_a = graph::create_node(&pool, "meeting", "Quarterly Planning", json!({}))
+            .await
+            .expect("create meeting a");
+        let meeting_b = graph::create_node(&pool, "meeting", "Quarterly Check-in", json!({}))
+            .await
+            .expect("create meeting b");
+        let vector = unit_vector(6);
+        let fragment_a = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_a,
+            "Integration partner is unresponsive.",
+            &vector,
+        )
+        .await;
+        let fragment_b = insert_risk_fragment_with_embedding(
+            &pool,
+            meeting_b,
+            "Integration partner is still unresponsive.",
+            &vector,
+        )
+        .await;
+        let candidate_a = uuid::Uuid::new_v4();
+        let candidate_b = uuid::Uuid::new_v4();
+        extraction::extract_candidate(
+            &pool,
+            candidate_a,
+            "risk",
+            "Integration partner is unresponsive.",
+            fragment_a,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate a");
+        extraction::extract_candidate(
+            &pool,
+            candidate_b,
+            "risk",
+            "Integration partner is still unresponsive.",
+            fragment_b,
+            Some(0.7),
+            None,
+        )
+        .await
+        .expect("extract candidate b");
+        extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/candidates")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let row_a = parsed
+            .as_array()
+            .expect("candidate array")
+            .iter()
+            .find(|row| row["candidate_id"] == candidate_a.to_string())
+            .expect("candidate a present in response");
+        let repeated = row_a["repeated_concern"]
+            .as_array()
+            .expect("repeated_concern must be an array");
+        assert_eq!(
+            repeated.len(),
+            1,
+            "candidate a must show exactly one repeated-concern match"
+        );
+        assert_eq!(repeated[0]["candidate_id"], candidate_b.to_string());
+        assert!(repeated[0]["explanation"]
+            .as_str()
+            .expect("explanation must be a string")
+            .contains("Quarterly Check-in"));
     }
 }
