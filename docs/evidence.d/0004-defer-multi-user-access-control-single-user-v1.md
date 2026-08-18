@@ -19,8 +19,8 @@ paths = ["docs/VISION.md"]
 id = "no-sensitive-data-sharing-path"
 invariant = "No implementation syncs, exports, or shares People-commitment content outside the single local operator."
 type = "manual"
-# No ingestion, sync, telemetry, or sharing implementation exists yet.
-# Re-check as an automated check once such code exists.
+last_verified = "2026-08-18"
+rationale = "Re-affirmed after ADR-0066 through ADR-0079 landed: every provider surface is still local-only (HTTP on localhost, stdio MCP, local Postgres); no sync, export, cloud telemetry, shared dashboard, second-user session, or outbound People-commitment path exists. The optional LLM/embedding adapters send only the explicit extraction/embedding prompt or fragment supplied by the caller and remain governed by their own hosted-first API-key ADRs; they do not enumerate, sync, or export the commitment store. Live Outlook/Teams/Calendar/SharePoint connectors remain explicitly deferred in docs/current-status.md pending an access-control ADR. This invariant is a policy/data-flow claim rather than a single literal a regex could honestly prove; keep it manual and re-check whenever a connector, shared deployment, telemetry, or second operator is proposed."
 
 [[check]]
 id = "no-second-account-access"
