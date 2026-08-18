@@ -1,5 +1,10 @@
 FROM docker.io/library/rust:1-slim AS build
 WORKDIR /app
+# ADR-0078: build.rs shells out to `git` at compile time for build
+# provenance; rust:1-slim does not include it by default.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN cargo build --release --manifest-path backend/Cargo.toml
 

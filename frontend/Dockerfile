@@ -1,5 +1,10 @@
 FROM docker.io/library/node:20-slim
 WORKDIR /app
+# ADR-0078: vite.config.ts shells out to `git` at dev-server startup (not
+# just build time) for build provenance; node:20-slim does not include it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 # node_modules is copied from the host install rather than fetched here:
 # this container's network cannot reach registry.npmjs.org reliably
 # (observed empirically; unrelated to package size or --omit=dev).

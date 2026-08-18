@@ -60,3 +60,19 @@ and `npm run build` all passed. Ran the built binary directly and
 confirmed the exact startup log line renders with a real commit SHA and
 timestamp (not the `"unknown"` fallback), since `.git` is present on this
 development machine.
+
+**Gap found and fixed, 2026-08-19:** the verification above only ran a
+host `cargo build`/binary, never the actual `docker compose build`
+path this ADR exists to fix. Rebuilding for real showed both containers
+logging `built from unknown (unknown)` -- `rust:1-slim` and `node:20-slim`
+do not include `git`, so `build.rs`'s and `vite.config.ts`'s `git`
+invocations failed and hit the designed fallback every time, silently
+defeating the feature in exactly the scenario it targets.
+`backend/Dockerfile`'s build stage and `frontend/Dockerfile` now each
+`apt-get install` `git` before compiling/running. Re-verified live:
+`docker compose build backend frontend && docker compose up -d
+--force-recreate backend frontend` then `docker compose logs
+backend`/`frontend` both now show `built from 6d15fefc11a5
+(2026-08-18T20:24:46+10:00)`, matching `git log -1 --format=%cI HEAD`
+exactly. `cargo check`, `cargo clippy -- -D warnings`, `npx tsc --noEmit`,
+`npm run build`, and `git diff --check` all still pass.
