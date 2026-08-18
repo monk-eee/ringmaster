@@ -84,3 +84,4 @@ accepted and implemented.
 | [ADR-0069: Resolve participant/speaker names to existing Person nodes at ingestion](0069-resolve-participants-to-person-nodes-at-ingestion.md) | Accepted | [EV-0069](../evidence.d/0069-resolve-participants-to-person-nodes-at-ingestion.md) |
 | [ADR-0070: Derive Person interaction recency from identity edges with a legacy fallback](0070-edge-backed-person-interaction-recency.md) | Accepted | [EV-0070](../evidence.d/0070-edge-backed-person-interaction-recency.md) |
 | [ADR-0071: Surface recent interaction sources on Person detail](0071-person-detail-recent-interactions.md) | Accepted | [EV-0071](../evidence.d/0071-person-detail-recent-interactions.md) |
+| [ADR-0072: Split oversized, low-cohesion backend modules with no behavior change](0072-split-oversized-low-cohesion-backend-modules.md) | Accepted | [EV-0072](../evidence.d/0072-split-oversized-low-cohesion-backend-modules.md) |

@@ -306,20 +306,47 @@ test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Grap
 // ADR-0059 itself). Serial execution removes the temporal overlap instead
 // of just retrying harder.
 test.describe.serial("People tab", () => {
-test("people tab opens a person into relationship and interaction detail", async ({ page }) => {
+test("people tab opens a person into relationship and populated interaction detail", async ({ page, request, baseURL }) => {
+  const unique = Date.now();
+  const personName = `Recent Interaction Person ${unique}`;
+  const sourceTitle = `Recent Interaction Note ${unique}`;
+  const occurredAt = new Date(Date.now() - 86_400_000).toISOString();
+
+  const personResponse = await request.post(`${baseURL}/api/nodes`, {
+    data: { node_type: "person", canonical_text: personName },
+  });
+  expect(personResponse.ok()).toBe(true);
+
+  const sourceResponse = await request.post(`${baseURL}/api/sources/ingest`, {
+    data: {
+      source_type: "note",
+      title: sourceTitle,
+      occurred_at: occurredAt,
+      participants: [personName],
+      text: `Interaction evidence ${unique}`,
+    },
+  });
+  expect(sourceResponse.ok()).toBe(true);
+  const source = (await sourceResponse.json()) as { node_id: string };
+
   await page.goto("/");
-  await page.reload();
   await page.getByRole("tab", { name: "People" }).click();
   await expect(page.getByRole("tab", { name: "People" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("h1")).toHaveText("People");
 
   await page.getByRole("button", { name: "Show everyone" }).click();
-  const target = page.locator(".people-card").first();
+  const target = page.getByRole("button", { name: new RegExp(personName) });
+  await revealByClickingLoadMore(page, target);
   await expect(target).toBeVisible();
   await target.click();
-  await expect(page.locator(".people-detail h3")).not.toHaveText("");
-  await expect(page.getByRole("heading", { name: "Recent interactions" })).toBeVisible();
-  await expect(page.getByText("No recorded interactions.")).toBeVisible();
+  await expect(page.locator(".people-detail h3")).toHaveText(personName);
+  const interactions = page.getByRole("region", { name: "Recent interactions" });
+  await expect(interactions.getByText(sourceTitle)).toBeVisible();
+  await expect(interactions.locator(".recent-interaction-meta")).toContainText("note");
+  const expectedDate = await page.evaluate((value) => new Date(value).toLocaleDateString(), occurredAt);
+  await expect(interactions.locator(".recent-interaction-meta")).toContainText(expectedDate);
+  await expect(interactions).not.toContainText(source.node_id);
+  await expect(interactions).not.toContainText("participated_in");
   await expect(page.locator(".relationship-obligations")).toBeVisible();
 
   await page.getByRole("button", { name: "All people" }).click();
@@ -345,6 +372,58 @@ test("people tab defaults to who-needs-attention, excluding a person with no ope
   const bareTarget = page.getByRole("button", { name: new RegExp(bareName) });
   await revealByClickingLoadMore(page, bareTarget);
   await expect(bareTarget).toBeVisible();
+  await bareTarget.click();
+  const interactions = page.getByRole("region", { name: "Recent interactions" });
+  await expect(interactions.getByText("No recorded interactions.")).toBeVisible();
+  await page.getByRole("button", { name: "All people" }).click();
+});
+
+test("people detail reports a capped recent-interactions list honestly (ADR-0071)", async ({ page, request, baseURL }) => {
+  const unique = Date.now();
+  const personName = `Capped Recent Interactions Person ${unique}`;
+  const personResponse = await request.post(`${baseURL}/api/nodes`, {
+    data: { node_type: "person", canonical_text: personName },
+  });
+  expect(personResponse.ok()).toBe(true);
+  const person = (await personResponse.json()) as { id: string };
+  const recentInteractions = Array.from({ length: 10 }, (_, index) => ({
+    source_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    source_type: "note",
+    title: `Capped interaction ${index + 1}`,
+    occurred_at: new Date(Date.now() - index * 86_400_000).toISOString(),
+    evidence_mode: "participated_in",
+  }));
+
+  await page.route(`**/api/nodes/${person.id}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: person.id,
+        node_type: "person",
+        canonical_text: personName,
+        attributes: {},
+        lifecycle_state: "active",
+        neighbors: [],
+        relationship: null,
+        last_interaction_at: recentInteractions[0].occurred_at,
+        recent_interactions: recentInteractions,
+        recent_interactions_total: 12,
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "People" }).click();
+  await page.getByRole("button", { name: "Show everyone" }).click();
+  const target = page.getByRole("button", { name: new RegExp(personName) });
+  await revealByClickingLoadMore(page, target);
+  await target.click();
+
+  const interactions = page.getByRole("region", { name: "Recent interactions" });
+  await expect(interactions.locator(".recent-interactions-list > li")).toHaveCount(10);
+  await expect(interactions.getByText("Capped interaction 1", { exact: true })).toBeVisible();
+  await expect(interactions.getByText("Showing the latest 10 of 12.")).toBeVisible();
 });
 
 // ADR-0059: proves "Load more" actually fetches and appends a further page
