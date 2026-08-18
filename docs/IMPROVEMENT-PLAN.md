@@ -21,6 +21,11 @@ this plan may already be stale by the time it's read.
 
 ## Priority 0 — Data hygiene and trust (no new design, low risk)
 
+**Status: done.** 0.1 ([ADR-0056](adr.d/0056-local-test-database-isolation-and-dev-data-cleanup.md)),
+0.2 ([ADR-0078](adr.d/0078-log-build-provenance-to-detect-stale-containers.md)), and
+0.3 (re-affirmed, [EV-0004](../evidence.d/0004-defer-multi-user-access-control-single-user-v1.md),
+2026-08-19) have all landed.
+
 ### 0.1 Clean up the 392 stray Person nodes
 
 `ringmaster_test` isolation is now enforced for both `cargo test`
@@ -62,6 +67,10 @@ the position still holds before it becomes stale-by-assumption.
 ---
 
 ## Priority 1 — Close the named-but-unbuilt gaps
+
+**Status: done.** 1.1 ([ADR-0082](adr.d/0082-repeated-concern-risk-signal.md)),
+1.2 ([ADR-0083](adr.d/0083-meeting-brief-generation.md)), and
+1.3 ([ADR-0079](adr.d/0079-timeline-surfaces-source-occurred-at.md)) have all landed.
 
 These are already stated as intent in `VISION.md`/`PRODUCT-SPEC.md` or
 directly answer a workflow Learn.ADOA still does by hand. None appear in the
@@ -106,6 +115,10 @@ retrievable; this is wiring, not design.
 ---
 
 ## Priority 2 — The UX reframe `VISION.md` already describes
+
+**Status: done.** 2.1 ([ADR-0084](adr.d/0084-today-narrative-summary.md)),
+2.2 ([ADR-0085](adr.d/0085-focus-blocks-people-filter.md)), and
+2.3 ([ADR-0086](adr.d/0086-workbench-three-pane-view.md)) have all landed.
 
 `VISION.md`'s "The UX is the product" section (2026-08-14) explicitly says
 it "sharpens" the current panel-based Today/Focus Blocks implementation
@@ -177,15 +190,16 @@ already exist.
 
 ## Suggested order
 
-1. **0.1, 0.2** — same week, no design risk, restores trust in what's on
-   screen.
-2. **1.3** — smallest, already-plumbed gap; a good next PR-sized ADR.
-3. **1.1** — directly closes the ADOA THEMES.md replacement.
-4. **1.2** — directly closes the ADOA meeting-brief replacement.
-5. **2.1–2.3** — once 1.1–1.3 land, since the reframed Today should
-   narrate the richer signal set, not the current four-signal set.
-6. **3, 4** — largest and most speculative; needs its own access-control
-   ADR and real usage pressure before committing effort.
+1. **0.1, 0.2, 0.3** — done.
+2. **1.3** — done.
+3. **1.1** — done.
+4. **1.2** — done.
+5. **2.1–2.3** — done.
+6. **3, 4** — remaining. Largest and most speculative; needs its own
+   access-control ADR and real usage pressure before committing effort.
+   This is a genuine policy decision (what data-classification/access model
+   governs a future connector), not a bounded implementation choice, and
+   should not be drafted speculatively without the decider's direction.
 
 Every numbered item above still requires its own ADR acceptance before
 implementation begins, per [AGENTS.md](../AGENTS.md). This document orders
