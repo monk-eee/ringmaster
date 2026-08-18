@@ -48,5 +48,12 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:13001",
   },
+  // ADR-0087: fullyParallel drives every worker against one shared
+  // backend/Vite pair (ADR-0073), so legitimate concurrent load can push a
+  // real round trip past the implicit 5000ms default under full-suite
+  // concurrency even though any single flow is well under it alone.
+  expect: {
+    timeout: 10_000,
+  },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });

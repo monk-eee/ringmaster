@@ -243,8 +243,10 @@ export default function GraphExplorer() {
       setNewNodeType("");
       setNewCanonicalText("");
       setNewAttributesText("");
-      await loadNodes();
-      await selectRootNode(node);
+      // The list refresh (an unbounded, ever-growing GET /api/nodes) and the
+      // new node's own detail fetch are independent -- run them concurrently
+      // so detail-pane population never waits behind the slower full list.
+      await Promise.all([loadNodes(), selectRootNode(node)]);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
