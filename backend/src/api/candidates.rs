@@ -2655,6 +2655,16 @@ mod tests {
         format!("[{}]", values.join(","))
     }
 
+    /// A fresh random index into `unit_vector`'s 768 dimensions (ADR-0082
+    /// tests): this database is never reset between suite runs, so a
+    /// fixed index would let one run's fixture rows keep matching the
+    /// next run's -- exactly the false "5 matches instead of 1" failure a
+    /// hardcoded index produced. A random base per run makes cross-run
+    /// collisions astronomically unlikely instead of guaranteed.
+    fn random_vector_index() -> usize {
+        (uuid::Uuid::new_v4().as_u128() % 768) as usize
+    }
+
     /// Creates a real `source_fragments` row plus its `embeddings` row
     /// directly (ADR-0082 tests): `repeated_concern_matches` inner-joins
     /// both tables, unlike the LEFT JOIN read routes elsewhere in this
@@ -2689,7 +2699,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Sprint Retro", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(0);
+        let vector = unit_vector(random_vector_index());
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -2755,7 +2765,7 @@ mod tests {
         let meeting = graph::create_node(&pool, "meeting", "Weekly Sync", json!({}))
             .await
             .expect("create meeting");
-        let vector = unit_vector(1);
+        let vector = unit_vector(random_vector_index());
         let fragment_a =
             insert_risk_fragment_with_embedding(&pool, meeting, "Same risk restated.", &vector)
                 .await;
@@ -2814,7 +2824,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Checkpoint", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(2);
+        let vector = unit_vector(random_vector_index());
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -2892,7 +2902,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Follow-up", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(3);
+        let vector = unit_vector(random_vector_index());
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -2962,18 +2972,19 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Staffing Review", json!({}))
             .await
             .expect("create meeting b");
+        let dissimilar_base = random_vector_index();
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
             "Budget may run over.",
-            &unit_vector(4),
+            &unit_vector(dissimilar_base),
         )
         .await;
         let fragment_b = insert_risk_fragment_with_embedding(
             &pool,
             meeting_b,
             "Unrelated staffing concern.",
-            &unit_vector(5),
+            &unit_vector((dissimilar_base + 1) % 768),
         )
         .await;
         let candidate_a = uuid::Uuid::new_v4();
@@ -3024,7 +3035,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Quarterly Check-in", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(6);
+        let vector = unit_vector(random_vector_index());
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
