@@ -22,8 +22,8 @@
 
 \echo '--- nodes: matching "test" heuristic, by node_type ---'
 SELECT node_type,
-       count(*) FILTER (WHERE canonical_text ILIKE '%test%') AS matching_heuristic,
-       count(*) FILTER (WHERE canonical_text NOT ILIKE '%test%') AS not_matching,
+       count(*) FILTER (WHERE node_type ILIKE '%test%' OR canonical_text ILIKE '%test%') AS matching_heuristic,
+       count(*) FILTER (WHERE node_type NOT ILIKE '%test%' AND canonical_text NOT ILIKE '%test%') AS not_matching,
        count(*) AS total
 FROM nodes
 GROUP BY node_type

@@ -31,14 +31,18 @@ fixed and verified live:
   (a separate `ringmaster_test` database, now genuinely created and
   confirmed present on the running Postgres), then enforced for backend tests
   by [ADR-0057](adr.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md).
-  **Remaining caveat, measured 2026-08-18:** before this pass, Playwright was
-  outside that guard and wrote through the development backend. The live
-  database still has 392 Person nodes, including at least 374 known
-  browser-test fixtures written before the fix.
-  [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md) is now
-  implemented and verified: Playwright starts its own backend/Vite pair on
-  dedicated ports against `ringmaster_test`, so it can no longer write to this
-  database. No cleanup of the existing 392 nodes has been authorized or run.
+  [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md) closed the
+  browser-test path: Playwright starts its own backend/Vite pair on
+  dedicated ports against `ringmaster_test`, so it can no longer write to
+  this database. **Update, 2026-08-18 (later pass):** the ~392 pre-fix
+  Person-node fixtures (plus 1 stray `meeting` fixture and 3
+  `trailtest*`-typed nodes the original heuristic didn't cover) were
+  cleaned via [ADR-0056](adr.d/0056-local-test-database-isolation-and-dev-data-cleanup.md)'s
+  already-drafted `scripts/dev-data-cleanup.sql`, after a `pg_dump` backup,
+  a read-only `dev-data-report.sql` review, and a concurrency check
+  (`pg_stat_activity`). 383 fixture nodes and 7 referencing edges removed;
+  13 real Person nodes remain. Candidates/Obligations/source_fragments were
+  untouched (out of this script's scope by design).
 - **FocusBlocks cap + no raw id** ([ADR-0050](adr.d/0050-today-attention-budget.md)):
   confirmed live — "Do these together" now shows at most 3 blocks with a
   "Show all N" control, zero raw ids anywhere.
@@ -151,11 +155,11 @@ Primary nav: `Today / Timeline / People / Inbox`, secondary/"Developer":
 ## The database, right now (a snapshot that's already changing)
 
 The first audit's reduction was real, and backend test isolation remains
-enforced, but the database is no longer staying down: on 2026-08-18 it held
-392 Person nodes, of which 357 matched `Pagination Test Person`, 8 matched
-`Needs Attention Filter Bare`, 5 matched `Recent Interaction Person`, and 4
-matched `Capped Recent Interactions Person`. These are browser fixtures
-written through the development backend, outside the unit-test guard. The
+enforced. On 2026-08-18 (later pass) the dev-data cleanup was actually run
+for the first time: 383 fixture nodes (person-fixture prefixes, one stray
+`meeting` fixture, and 3 `trailtest*`-typed nodes a heuristic gap missed)
+and their 7 referencing edges were removed after a backup, a read-only
+report review, and a concurrency check. 13 real Person nodes remain. The
 `ringmaster_test` database genuinely exists on the running Postgres, and as of
 [ADR-0057](adr.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md)
 it is now *enforced*, not merely documented: every backend `test_pool()`
@@ -184,10 +188,10 @@ mid-audit HEAD movements are just the latest instance of that.
   ([VISION.md](VISION.md#open-questions-for-future-adrs)).
 - Playwright previously ran against the development backend/database and
   repopulated the People list with hundreds of fixtures.
-  [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md) now moves
+  [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md) moved
   browser tests to dedicated ports over `ringmaster_test`; the existing
-  polluted rows still require separately confirmed cleanup, which remains
-  out of scope for that ADR.
+  polluted rows were cleaned separately on 2026-08-18 (see "The database,
+  right now" above) — no longer an open item.
 - Participant/speaker names now resolve to existing Person nodes by exact,
   case-insensitive name during new ingestion and create `participated_in`
   edges. `last_interaction_at` now uses those identity edges while retaining

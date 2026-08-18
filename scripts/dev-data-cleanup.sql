@@ -16,6 +16,10 @@
 --
 -- Heuristic (intentionally conservative; NOT identical to
 -- dev-data-report.sql's generic preview -- see below):
+--   * nodes, any type: node_type itself ILIKE '%test%' (e.g. a Playwright
+--     fixture literally typed "trailtest18546" -- found live 2026-08-18
+--     against this database; no legitimate business node type is ever
+--     named this way).
 --   * nodes, non-person: canonical_text ILIKE '%test%'.
 --   * nodes, person: canonical_text ILIKE '%test%' OR a known ADR-0073
 --     Playwright browser-fixture name prefix (some don't contain "test").
@@ -62,7 +66,8 @@ CREATE TEMP TABLE _cleanup_candidate_ids AS
 
 CREATE TEMP TABLE _cleanup_node_ids AS
     SELECT id FROM nodes
-    WHERE (node_type <> 'person' AND canonical_text ILIKE '%test%')
+    WHERE node_type ILIKE '%test%'
+       OR (node_type <> 'person' AND canonical_text ILIKE '%test%')
        OR (node_type = 'person' AND (
               canonical_text ILIKE '%test%'
            OR canonical_text LIKE 'Needs Attention Filter Bare%'
