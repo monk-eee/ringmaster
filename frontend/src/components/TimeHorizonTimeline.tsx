@@ -134,6 +134,11 @@ export default function TimeHorizonTimeline({ horizon }: Props) {
                                   </code>
                                 </div>
                                 <span className="daily-brief-reason">{item.reason}</span>
+                                {item.source_occurred_at && (
+                                  <span className="time-horizon-source-occurred-at">
+                                    Source occurred {new Date(item.source_occurred_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                                  </span>
+                                )}
                               </li>
                             ))}
                           </ol>

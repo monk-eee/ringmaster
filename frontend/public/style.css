@@ -508,6 +508,15 @@ td.evidence-cell .no-evidence {
   line-height: 1.45;
 }
 
+/* ADR-0079: the linked source's own occurred_at, shown as a small caption
+   distinct from the due-date-driven bucket/reason text above it. */
+.time-horizon-source-occurred-at {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
 .activity-action {
   font-weight: 650;
   font-size: 0.85rem;

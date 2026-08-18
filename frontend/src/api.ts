@@ -50,6 +50,9 @@ export type TimeHorizonItem = {
   hard_due_at: string | null;
   soft_due_at: string | null;
   source_fragment_id: string | null;
+  // ADR-0079: when the linked source itself occurred, distinct from the
+  // due date -- null when there is no linked source, or it predates this ADR.
+  source_occurred_at: string | null;
   reason: string;
   risk_signals: RiskSignal[];
 };

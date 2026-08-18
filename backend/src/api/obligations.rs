@@ -443,11 +443,12 @@ pub(super) async fn time_horizon(
         Option<chrono::DateTime<chrono::Utc>>,
         Option<uuid::Uuid>,
         Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
         bool,
         bool,
     )> = sqlx::query_as(
         "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
-                op.source_fragment_id, sf.text, \
+                op.source_fragment_id, sf.text, sn.occurred_at, \
                 EXISTS ( \
                     SELECT 1 FROM edges e JOIN nodes n ON n.id = e.from_id \
                     WHERE e.to_id = op.obligation_id AND e.edge_type = 'owns' AND n.node_type = 'person' \
@@ -457,6 +458,7 @@ pub(super) async fn time_horizon(
                 ) AS has_edges \
          FROM obligation_projection op \
          LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         LEFT JOIN nodes sn ON sn.id = sf.source_id \
          WHERE op.status <> 'closed' \
          ORDER BY COALESCE(op.hard_due_at, op.soft_due_at) ASC NULLS LAST, op.updated_at DESC",
     )
@@ -474,6 +476,7 @@ pub(super) async fn time_horizon(
         soft_due_at,
         source_fragment_id,
         source_text,
+        source_occurred_at,
         has_owner,
         has_edges,
     ) in rows
@@ -495,6 +498,10 @@ pub(super) async fn time_horizon(
             "hard_due_at": hard_due_at.map(|value| value.to_rfc3339()),
             "soft_due_at": soft_due_at.map(|value| value.to_rfc3339()),
             "source_fragment_id": source_fragment_id,
+            // ADR-0079: when the linked source itself occurred, distinct
+            // from the due date -- Timeline can now show both instead of
+            // only the due-date bucket placement.
+            "source_occurred_at": source_occurred_at.map(|value| value.to_rfc3339()),
             "reason": reason,
             "health": obligation_health(&status, hard_due_at, &signals),
             "risk_signals": signals,
@@ -1658,6 +1665,105 @@ mod tests {
         // ADR-0061: health is attached alongside risk_signals here too --
         // overdue, open, freshly-created (not stale) reads Broken.
         assert_eq!(row["health"], "Broken");
+    }
+
+    /// ADR-0079: the linked source's own occurred_at surfaces alongside the
+    /// due-date-driven bucket placement -- additive, never changes which
+    /// bucket the obligation lands in.
+    #[tokio::test]
+    async fn time_horizon_includes_source_occurred_at_without_changing_bucket_placement() {
+        let pool = test_pool().await;
+
+        let source_occurred_at = chrono::DateTime::parse_from_rfc3339("2026-01-15T09:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let source_node_id = graph::create_node(&pool, "meeting", "planning sync", json!({}))
+            .await
+            .expect("create source node");
+        sqlx::query("UPDATE nodes SET occurred_at = $1 WHERE id = $2")
+            .bind(source_occurred_at)
+            .bind(source_node_id)
+            .execute(&pool)
+            .await
+            .expect("set source node occurred_at");
+        let fragment_id = graph::create_source_fragment(
+            &pool,
+            source_node_id,
+            "we will migrate the pipeline",
+            "time-horizon-source-occurred-at-hash",
+        )
+        .await
+        .expect("create source fragment");
+
+        let with_source = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            with_source,
+            crate::obligation::ObligationEventType::Created,
+            json!({
+                "status": "open",
+                "hard_due_at": (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339(),
+                "source_fragment_id": fragment_id,
+            }),
+        )
+        .await
+        .expect("append obligation with a linked source");
+
+        let without_source = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            without_source,
+            crate::obligation::ObligationEventType::Created,
+            json!({
+                "status": "open",
+                "hard_due_at": (chrono::Utc::now() + chrono::Duration::days(3)).to_rfc3339(),
+            }),
+        )
+        .await
+        .expect("append obligation with no linked source");
+
+        crate::obligation::rebuild_projection(&pool)
+            .await
+            .expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/time-horizon")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let parsed: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let bucket = parsed["next_7_days"]
+            .as_array()
+            .expect("next_7_days bucket must be present");
+
+        let with_source_row = bucket
+            .iter()
+            .find(|row| row["obligation_id"] == with_source.to_string())
+            .expect("must still land in next_7_days, driven by hard_due_at");
+        let got = chrono::DateTime::parse_from_rfc3339(
+            with_source_row["source_occurred_at"]
+                .as_str()
+                .expect("source_occurred_at must be present when a source is linked"),
+        )
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+        assert_eq!(got, source_occurred_at);
+
+        let without_source_row = bucket
+            .iter()
+            .find(|row| row["obligation_id"] == without_source.to_string())
+            .expect("must also land in next_7_days");
+        assert!(
+            without_source_row["source_occurred_at"].is_null(),
+            "no linked source must mean a null source_occurred_at, never a fabricated date"
+        );
     }
 
     /// ADR-0046: mirrors the Daily Brief's own unowned proof, scoped to the
