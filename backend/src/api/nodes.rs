@@ -465,6 +465,149 @@ pub(super) async fn get_node_detail(
     })))
 }
 
+#[derive(Debug, FromRow)]
+struct BriefObligationRow {
+    obligation_id: Uuid,
+    status: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    hard_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    soft_due_at: Option<chrono::DateTime<chrono::Utc>>,
+    source_fragment_id: Option<Uuid>,
+    source_text: Option<String>,
+    has_owner: bool,
+    has_edges: bool,
+}
+
+#[derive(Debug, FromRow)]
+struct RecentAskRow {
+    candidate_id: Uuid,
+    candidate_type: String,
+    statement: String,
+    validation_state: String,
+    confidence: Option<f32>,
+    source_text: Option<String>,
+    speaker: Option<String>,
+    occurred_at: Option<chrono::DateTime<chrono::Utc>>,
+    total_count: i64,
+}
+
+/// ADR-0083: composes a person's open commitments, recent asks, and
+/// outstanding risks into one read -- reusing `risk_signals`/
+/// `daily_brief_reason` verbatim for the same "outstanding risk" and
+/// "reason" definitions Daily Brief/Time Horizon/Person detail already
+/// share, plus one genuinely new join for "recent asks" (candidate ->
+/// source fragment -> meeting -> `participated_in` -> person) that exists
+/// nowhere else. Exposed over both HTTP (this function is the route
+/// handler directly) and the `prepare_meeting_brief` MCP tool, which calls
+/// this exact function rather than duplicating the queries.
+pub async fn person_brief(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let node = graph::get_node(&pool, id).await.map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "person not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+    if node.node_type != "person" {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("node {id} is a {:?}, not a person", node.node_type),
+        ));
+    }
+
+    let mut obligation_rows: Vec<BriefObligationRow> = sqlx::query_as(
+        "SELECT op.obligation_id, op.status, op.updated_at, op.hard_due_at, op.soft_due_at, \
+                op.source_fragment_id, sf.text AS source_text, \
+                EXISTS ( \
+                    SELECT 1 FROM edges oe JOIN nodes on2 ON on2.id = oe.from_id \
+                    WHERE oe.to_id = op.obligation_id AND oe.edge_type = 'owns' AND on2.node_type = 'person' \
+                ) AS has_owner, \
+                EXISTS ( \
+                    SELECT 1 FROM edges oe WHERE oe.from_id = op.obligation_id OR oe.to_id = op.obligation_id \
+                ) AS has_edges \
+         FROM edges e \
+         JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE (e.from_id = $1 OR e.to_id = $1) AND op.status != 'closed'",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    obligation_rows.sort_by_key(|row| (due_date_sort_key(row.hard_due_at), due_date_sort_key(row.soft_due_at)));
+
+    let open_commitments: Vec<JsonValue> = obligation_rows
+        .iter()
+        .map(|row| {
+            json!({
+                "obligation_id": row.obligation_id,
+                "status": row.status,
+                "hard_due_at": row.hard_due_at.map(|value| value.to_rfc3339()),
+                "soft_due_at": row.soft_due_at.map(|value| value.to_rfc3339()),
+                "reason": daily_brief_reason(&row.status, row.hard_due_at, row.soft_due_at, row.source_text.as_deref()),
+                "risk_signals": risk_signals(
+                    row.hard_due_at,
+                    row.soft_due_at,
+                    row.updated_at,
+                    row.source_fragment_id,
+                    row.has_owner,
+                    row.has_edges,
+                ),
+            })
+        })
+        .collect();
+
+    // ADR-0083: candidates from meetings this person participated in, still
+    // open to action -- excludes rejected (not a genuine management object,
+    // ADR-0045) and promoted (already represented in open_commitments).
+    // Capped at 10 with an honest total, matching ADR-0071's precedent.
+    let ask_rows: Vec<RecentAskRow> = sqlx::query_as(
+        "WITH evidence AS ( \
+             SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
+                    sf.text AS source_text, sf.speaker, src.occurred_at \
+             FROM candidate_projection cp \
+             JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
+             JOIN edges e ON e.to_id = sf.source_id AND e.edge_type = 'participated_in' \
+             JOIN nodes src ON src.id = sf.source_id \
+             WHERE e.from_id = $1 AND cp.validation_state NOT IN ('rejected', 'promoted') \
+         ) \
+         SELECT candidate_id, candidate_type, statement, validation_state, confidence, source_text, speaker, occurred_at, \
+                COUNT(*) OVER() AS total_count \
+         FROM evidence \
+         ORDER BY occurred_at DESC NULLS LAST, candidate_id \
+         LIMIT 10",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let recent_asks_total = ask_rows.first().map(|row| row.total_count).unwrap_or(0);
+    let recent_asks: Vec<JsonValue> = ask_rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "candidate_id": row.candidate_id,
+                "candidate_type": row.candidate_type,
+                "statement": row.statement,
+                "validation_state": row.validation_state,
+                "confidence": row.confidence,
+                "source_text": row.source_text,
+                "speaker": row.speaker,
+                "occurred_at": row.occurred_at.map(|value| value.to_rfc3339()),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "person": { "id": node.id, "canonical_text": node.canonical_text },
+        "open_commitments": open_commitments,
+        "recent_asks": recent_asks,
+        "recent_asks_total": recent_asks_total,
+    })))
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateNodeRequest {
     canonical_text: Option<String>,
@@ -1758,6 +1901,240 @@ mod tests {
             detail["relationship"].is_null(),
             "a non-person node must not get a relationship grouping"
         );
+    }
+
+    /// ADR-0083: open_commitments carries the same risk_signals computation
+    /// as the existing relationship grouping, and excludes closed obligations.
+    #[tokio::test]
+    async fn person_brief_returns_open_commitments_with_risk_signals() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Brief Open Commitments Person", json!({}))
+            .await
+            .expect("create person");
+
+        let open_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            open_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open"}),
+        )
+        .await
+        .expect("append an open obligation");
+        graph::create_edge(&pool, person_id, open_id, "owns", None)
+            .await
+            .expect("link person to the open obligation");
+
+        let closed_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            closed_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "closed"}),
+        )
+        .await
+        .expect("append a closed obligation");
+        graph::create_edge(&pool, person_id, closed_id, "owns", None)
+            .await
+            .expect("link person to the closed obligation");
+        crate::obligation::rebuild_projection(&pool)
+            .await
+            .expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{person_id}/brief"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let brief: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let commitments = brief["open_commitments"].as_array().unwrap();
+        assert_eq!(commitments.len(), 1, "the closed obligation must be excluded");
+        assert_eq!(commitments[0]["obligation_id"], open_id.to_string());
+        assert!(
+            commitments[0]["risk_signals"].is_array(),
+            "each open commitment must carry risk_signals"
+        );
+    }
+
+    /// ADR-0083: recent_asks draws from candidates whose meeting the person
+    /// participated in, excluding rejected and already-promoted candidates.
+    #[tokio::test]
+    async fn recent_asks_excludes_rejected_and_promoted_candidates() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Brief Recent Asks Person", json!({}))
+            .await
+            .expect("create person");
+        let meeting_id = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'meeting', 'Brief Test Meeting', '{}'::jsonb, now())")
+            .bind(meeting_id)
+            .execute(&pool)
+            .await
+            .expect("create meeting node");
+        graph::create_edge(&pool, person_id, meeting_id, "participated_in", Some(1.0))
+            .await
+            .expect("link person to the meeting");
+
+        let pending_id = uuid::Uuid::new_v4();
+        let pending_fragment = graph::create_source_fragment(&pool, meeting_id, "pending ask", "brief-pending-hash")
+            .await
+            .expect("create pending fragment");
+        crate::extraction::extract_candidate(&pool, pending_id, "risk", "a pending ask", pending_fragment, Some(0.7), None)
+            .await
+            .expect("extract pending candidate");
+
+        let rejected_id = uuid::Uuid::new_v4();
+        let rejected_fragment = graph::create_source_fragment(&pool, meeting_id, "rejected ask", "brief-rejected-hash")
+            .await
+            .expect("create rejected fragment");
+        crate::extraction::extract_candidate(&pool, rejected_id, "risk", "a rejected ask", rejected_fragment, Some(0.7), None)
+            .await
+            .expect("extract rejected candidate");
+        crate::extraction::transition_candidate(&pool, rejected_id, "rejected", json!({}))
+            .await
+            .expect("reject candidate");
+
+        let promoted_id = uuid::Uuid::new_v4();
+        let promoted_fragment = graph::create_source_fragment(&pool, meeting_id, "promoted ask", "brief-promoted-hash")
+            .await
+            .expect("create promoted fragment");
+        crate::extraction::extract_candidate(&pool, promoted_id, "commitment", "a promoted ask", promoted_fragment, Some(0.8), None)
+            .await
+            .expect("extract promoted candidate");
+        crate::extraction::transition_candidate(&pool, promoted_id, "accepted", json!({}))
+            .await
+            .expect("accept candidate");
+        crate::extraction::transition_candidate(&pool, promoted_id, "promoted", json!({"obligation_id": uuid::Uuid::new_v4()}))
+            .await
+            .expect("promote candidate");
+        crate::extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{person_id}/brief"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let brief: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let asks = brief["recent_asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 1, "only the still-pending candidate must be included");
+        assert_eq!(asks[0]["candidate_id"], pending_id.to_string());
+        assert_eq!(brief["recent_asks_total"], 1);
+    }
+
+    /// ADR-0083: recent_asks is capped at 10 with an honest total, newest
+    /// source meeting first -- matching ADR-0071's precedent exactly.
+    #[tokio::test]
+    async fn recent_asks_are_capped_with_an_honest_total() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Brief Capped Asks Person", json!({}))
+            .await
+            .expect("create person");
+
+        for offset in 0..12i64 {
+            let meeting_id = uuid::Uuid::new_v4();
+            let occurred_at = chrono::Utc::now() - chrono::Duration::days(offset);
+            sqlx::query("INSERT INTO nodes (id, node_type, canonical_text, attributes, occurred_at) VALUES ($1, 'meeting', 'Capped Ask Meeting', '{}'::jsonb, $2)")
+                .bind(meeting_id)
+                .bind(occurred_at)
+                .execute(&pool)
+                .await
+                .expect("create dated meeting");
+            graph::create_edge(&pool, person_id, meeting_id, "participated_in", Some(1.0))
+                .await
+                .expect("link person to meeting");
+            let candidate_id = uuid::Uuid::new_v4();
+            let fragment_id = graph::create_source_fragment(&pool, meeting_id, "an ask", &format!("brief-capped-hash-{offset}"))
+                .await
+                .expect("create fragment");
+            crate::extraction::extract_candidate(&pool, candidate_id, "risk", &format!("ask {offset}"), fragment_id, Some(0.7), None)
+                .await
+                .expect("extract candidate");
+        }
+        crate::extraction::rebuild_candidate_projection(&pool)
+            .await
+            .expect("rebuild candidate projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{person_id}/brief"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let brief: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+
+        let asks = brief["recent_asks"].as_array().unwrap();
+        assert_eq!(asks.len(), 10, "recent_asks must be capped at 10");
+        assert_eq!(brief["recent_asks_total"], 12, "the total must honestly reflect every match");
+        assert_eq!(asks[0]["statement"], "ask 0", "the most recent meeting's ask must come first");
+    }
+
+    #[tokio::test]
+    async fn person_brief_rejects_a_non_person_node() {
+        let pool = test_pool().await;
+        let risk_id = graph::create_node(&pool, "risk", "Brief Non-Person Test", json!({}))
+            .await
+            .expect("create risk node");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{risk_id}/brief"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn person_brief_returns_honest_empty_lists_with_no_data() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Brief Empty Person", json!({}))
+            .await
+            .expect("create person");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{person_id}/brief"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let brief: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(brief["open_commitments"].as_array().unwrap().len(), 0);
+        assert_eq!(brief["recent_asks"].as_array().unwrap().len(), 0);
+        assert_eq!(brief["recent_asks_total"], 0);
     }
 
     #[tokio::test]

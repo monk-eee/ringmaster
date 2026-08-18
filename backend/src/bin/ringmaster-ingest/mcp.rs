@@ -1,6 +1,8 @@
+use ringmaster_backend::api;
 use ringmaster_backend::embedding_adapter::EmbeddingConfig;
 use ringmaster_backend::graph;
 use ringmaster_backend::transcript::{ingest_source, SourceMetadata};
+use axum::extract::{Path, State};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{schemars, tool, tool_router, transport::stdio, ServiceExt};
@@ -76,6 +78,12 @@ pub struct ListEntitiesParams {
 pub struct GetEntityParams {
     /// Entity UUID.
     pub id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PrepareMeetingBriefParams {
+    /// Person entity UUID.
+    pub person_id: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -393,6 +401,23 @@ impl RingmasterIngestServer {
                 serde_json::json!({ "entity": node, "relationships": relationships }),
             )),
             Err(error) => Ok(tool_error(error.to_string())),
+        }
+    }
+
+    #[tool(
+        description = "Prepare a factual 1:1 brief for one person (PRODUCT-SPEC.md SS8.3): their open commitments with risk signals, plus recent asks (candidates from meetings they participated in, not yet rejected or promoted), each with a source citation. Composition over already-ingested/extracted data; no new extraction is triggered."
+    )]
+    async fn prepare_meeting_brief(
+        &self,
+        Parameters(params): Parameters<PrepareMeetingBriefParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let person_id = match parse_uuid("person_id", &params.person_id) {
+            Ok(value) => value,
+            Err(message) => return Ok(tool_error(message)),
+        };
+        match api::person_brief(State(self.pool.clone()), Path(person_id)).await {
+            Ok(axum::Json(value)) => Ok(json_success(value)),
+            Err((_, message)) => Ok(tool_error(message)),
         }
     }
 

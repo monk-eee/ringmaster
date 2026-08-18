@@ -95,3 +95,4 @@ accepted and implemented.
 | [ADR-0080: Promote Graph Explorer to primary navigation](0080-promote-graph-explorer-to-primary-navigation.md) | Accepted | [EV-0080](../evidence.d/0080-promote-graph-explorer-to-primary-navigation.md) |
 | [ADR-0081: Add an Actions lens to Graph Explorer's neighbourhood view](0081-graph-explorer-actions-lens.md) | Accepted | [EV-0081](../evidence.d/0081-graph-explorer-actions-lens.md) |
 | [ADR-0082: Repeated-concern signal — the same risk raised in multiple meetings, still unpromoted](0082-repeated-concern-risk-signal.md) | Accepted | [EV-0082](../evidence.d/0082-repeated-concern-risk-signal.md) |
+| [ADR-0083: Meeting-brief generation — a person's open commitments, recent asks, and risks in one call](0083-meeting-brief-generation.md) | Accepted | [EV-0083](../evidence.d/0083-meeting-brief-generation.md) |
