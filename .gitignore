@@ -24,3 +24,6 @@ frontend/dist/
 
 # macOS
 .DS_Store
+
+# No PowerShell scripts in this repository.
+*.ps1
