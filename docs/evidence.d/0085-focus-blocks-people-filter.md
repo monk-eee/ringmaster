@@ -37,7 +37,26 @@ Implemented: `frontend/src/components/FocusBlocks.tsx` adds a
 hasNonPeopleBlocks` (both truthy), filtering the already-fetched `blocks`
 array by `node_type === "person"` before the existing rank/cap logic
 runs. No backend change -- `GET /api/focus-blocks` already returns
-`node_type` per block (ADR-0031).
+`node_type` per block (ADR-0031). `frontend/public/style.css` adds
+`.focus-blocks-people-toggle`, matching the existing
+`.people-attention-toggle` convention exactly (a single button that flips
+its own label, not a two-pill group).
+
+Verified: `npx tsc --noEmit` and `npm run build` clean. Two new
+Playwright tests, both passing: one mocks `GET /api/focus-blocks` with
+one person-linked and one non-person-linked block, toggles "Show people
+only"/"Show all", and asserts the non-person block is hidden/shown
+accordingly; the other mocks two non-person blocks and asserts neither
+toggle button renders. Ran the full Playwright suite against the isolated
+stack: 0 failures related to this change. Two unrelated Graph Explorer
+tests (`graph trail: traversing two edges...` ADR-0033,
+`Actions lens filters neighbours...` ADR-0081) failed once on a full-suite
+run and passed cleanly on immediate retry in isolation, twice; manually
+reproduced the underlying "create node" flow directly against the live
+app and confirmed it works correctly (the new node's detail view opens
+with its `h3` populated) -- this is pre-existing test-timing flakiness
+under full-suite load, not a regression from this change.
+
 
 Verified: `npx tsc --noEmit` and `npm run build` both clean. Two
 Playwright tests in `frontend/tests/obligations.spec.ts` --
