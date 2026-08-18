@@ -162,7 +162,10 @@ struct RingmasterIngestServer {
 
 /// Parses an optional RFC3339 argument for an MCP tool: absent is `Ok(None)`,
 /// present-but-unparseable is `Err` with a human-readable message (ADR-0042).
-fn parse_optional_rfc3339(label: &str, raw: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+fn parse_optional_rfc3339(
+    label: &str,
+    raw: Option<&str>,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
     match raw.map(str::trim).filter(|value| !value.is_empty()) {
         None => Ok(None),
         Some(value) => chrono::DateTime::parse_from_rfc3339(value)
@@ -172,7 +175,8 @@ fn parse_optional_rfc3339(label: &str, raw: Option<&str>) -> Result<Option<chron
 }
 
 fn parse_uuid(label: &str, raw: &str) -> Result<uuid::Uuid, String> {
-    uuid::Uuid::parse_str(raw.trim()).map_err(|_| format!("{label} must be a valid UUID, got: {raw}"))
+    uuid::Uuid::parse_str(raw.trim())
+        .map_err(|_| format!("{label} must be a valid UUID, got: {raw}"))
 }
 
 fn required_text<'a>(label: &str, raw: &'a str) -> Result<&'a str, String> {
@@ -209,7 +213,9 @@ fn tool_error(message: impl Into<String>) -> CallToolResult {
 }
 
 fn json_success(value: impl serde::Serialize) -> CallToolResult {
-    CallToolResult::success(vec![ContentBlock::text(serde_json::json!(value).to_string())])
+    CallToolResult::success(vec![ContentBlock::text(
+        serde_json::json!(value).to_string(),
+    )])
 }
 
 #[tool_router(server_handler)]
@@ -220,7 +226,10 @@ impl RingmasterIngestServer {
     #[tool(
         description = "Ingest a dated source (meeting, email, note, Teams message, ...) into Ringmaster's graph as a node with ordered, hashed, immutable evidence fragments. Never triggers extraction or embedding."
     )]
-    async fn ingest_source(&self, Parameters(params): Parameters<IngestSourceParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn ingest_source(
+        &self,
+        Parameters(params): Parameters<IngestSourceParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let occurred_at = match chrono::DateTime::parse_from_rfc3339(&params.occurred_at) {
             Ok(value) => value.with_timezone(&chrono::Utc),
             Err(_) => {
@@ -231,7 +240,12 @@ impl RingmasterIngestServer {
             }
         };
 
-        let metadata = SourceMetadata { source_type: params.source_type, title: params.title, occurred_at, participants: params.participants };
+        let metadata = SourceMetadata {
+            source_type: params.source_type,
+            title: params.title,
+            occurred_at,
+            participants: params.participants,
+        };
 
         match ingest_source(&self.pool, &metadata, &params.text).await {
             Ok(ingested) => Ok(CallToolResult::success(vec![ContentBlock::text(
@@ -244,26 +258,50 @@ impl RingmasterIngestServer {
     #[tool(
         description = "Recall previously-ingested dated sources (nodes), optionally filtered by node_type and/or an occurred_at range. Requires no embedding model -- a plain date-range/type read, not similarity search."
     )]
-    async fn recall_sources(&self, Parameters(params): Parameters<RecallSourcesParams>) -> Result<CallToolResult, rmcp::ErrorData> {
-        let occurred_from = match parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref()) {
-            Ok(value) => value,
-            Err(message) => return Ok(CallToolResult::error(vec![ContentBlock::text(message)])),
-        };
-        let occurred_to = match parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref()) {
+    async fn recall_sources(
+        &self,
+        Parameters(params): Parameters<RecallSourcesParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let occurred_from =
+            match parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref()) {
+                Ok(value) => value,
+                Err(message) => {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(message)]))
+                }
+            };
+        let occurred_to = match parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref())
+        {
             Ok(value) => value,
             Err(message) => return Ok(CallToolResult::error(vec![ContentBlock::text(message)])),
         };
 
-        match graph::list_nodes(&self.pool, params.node_type.as_deref(), occurred_from, occurred_to, false, None, None).await {
-            Ok(nodes) => Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::json!(nodes).to_string())])),
-            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
+        match graph::list_nodes(
+            &self.pool,
+            params.node_type.as_deref(),
+            occurred_from,
+            occurred_to,
+            false,
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(nodes) => Ok(CallToolResult::success(vec![ContentBlock::text(
+                serde_json::json!(nodes).to_string(),
+            )])),
+            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(
+                error.to_string(),
+            )])),
         }
     }
 
     #[tool(
         description = "Search previously-ingested evidence by meaning: ranks source fragments by semantic similarity to a natural-language query. Requires an embedding model to be configured; returns a clear error if one is not."
     )]
-    async fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn search(
+        &self,
+        Parameters(params): Parameters<SearchParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let Some(config) = EmbeddingConfig::from_env() else {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
                 "RINGMASTER_EMBEDDING_URL is not set; semantic search is disabled".to_string(),
@@ -271,15 +309,22 @@ impl RingmasterIngestServer {
         };
         let limit = params.limit.filter(|value| *value > 0).unwrap_or(5);
         match graph::search_source_fragments(&self.pool, &config, &params.query, limit).await {
-            Ok(results) => Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::json!(results).to_string())])),
-            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(error.to_string())])),
+            Ok(results) => Ok(CallToolResult::success(vec![ContentBlock::text(
+                serde_json::json!(results).to_string(),
+            )])),
+            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(
+                error.to_string(),
+            )])),
         }
     }
 
     #[tool(
         description = "List Ringmaster graph entities with optional exact type/name and occurred-at filters. Use this to discover entity UUIDs before id-based updates or relationship writes."
     )]
-    async fn list_entities(&self, Parameters(params): Parameters<ListEntitiesParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn list_entities(
+        &self,
+        Parameters(params): Parameters<ListEntitiesParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let node_type = match optional_text("node_type", params.node_type) {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
@@ -288,15 +333,20 @@ impl RingmasterIngestServer {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        let occurred_from = match parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref()) {
+        let occurred_from =
+            match parse_optional_rfc3339("occurred_from", params.occurred_from.as_deref()) {
+                Ok(value) => value,
+                Err(message) => return Ok(tool_error(message)),
+            };
+        let occurred_to = match parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref())
+        {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        let occurred_to = match parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref()) {
-            Ok(value) => value,
-            Err(message) => return Ok(tool_error(message)),
-        };
-        if params.limit.is_some_and(|value| !(1..=500).contains(&value)) {
+        if params
+            .limit
+            .is_some_and(|value| !(1..=500).contains(&value))
+        {
             return Ok(tool_error("limit must be between 1 and 500 when supplied"));
         }
         if params.offset.is_some_and(|value| value < 0) {
@@ -320,25 +370,39 @@ impl RingmasterIngestServer {
         }
     }
 
-    #[tool(description = "Get one Ringmaster graph entity by UUID together with every relationship touching it.")]
-    async fn get_entity(&self, Parameters(params): Parameters<GetEntityParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    #[tool(
+        description = "Get one Ringmaster graph entity by UUID together with every relationship touching it."
+    )]
+    async fn get_entity(
+        &self,
+        Parameters(params): Parameters<GetEntityParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let id = match parse_uuid("id", &params.id) {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
         let node = match graph::get_node(&self.pool, id).await {
             Ok(node) => node,
-            Err(sqlx::Error::RowNotFound) => return Ok(tool_error(format!("entity not found: {id}"))),
+            Err(sqlx::Error::RowNotFound) => {
+                return Ok(tool_error(format!("entity not found: {id}")))
+            }
             Err(error) => return Ok(tool_error(error.to_string())),
         };
         match graph::list_edges_for_node(&self.pool, id, None, false).await {
-            Ok(relationships) => Ok(json_success(serde_json::json!({ "entity": node, "relationships": relationships }))),
+            Ok(relationships) => Ok(json_success(
+                serde_json::json!({ "entity": node, "relationships": relationships }),
+            )),
             Err(error) => Ok(tool_error(error.to_string())),
         }
     }
 
-    #[tool(description = "Create one generic Ringmaster graph entity. Attributes must be a JSON object.")]
-    async fn create_entity(&self, Parameters(params): Parameters<CreateEntityParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    #[tool(
+        description = "Create one generic Ringmaster graph entity. Attributes must be a JSON object."
+    )]
+    async fn create_entity(
+        &self,
+        Parameters(params): Parameters<CreateEntityParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let node_type = match required_text("node_type", &params.node_type) {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
@@ -364,7 +428,10 @@ impl RingmasterIngestServer {
     #[tool(
         description = "Update one Ringmaster graph entity by UUID. Supplied attributes shallow-merge and never clobber other existing keys."
     )]
-    async fn update_entity(&self, Parameters(params): Parameters<UpdateEntityParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn update_entity(
+        &self,
+        Parameters(params): Parameters<UpdateEntityParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let id = match parse_uuid("id", &params.id) {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
@@ -381,7 +448,9 @@ impl RingmasterIngestServer {
             return Ok(tool_error(message));
         }
         if canonical_text.is_none() && lifecycle_state.is_none() && params.attributes.is_none() {
-            return Ok(tool_error("supply canonical_text, lifecycle_state, attributes, or a combination to update"));
+            return Ok(tool_error(
+                "supply canonical_text, lifecycle_state, attributes, or a combination to update",
+            ));
         }
 
         match graph::update_node(
@@ -402,7 +471,10 @@ impl RingmasterIngestServer {
     #[tool(
         description = "Atomically create or enrich 1-100 graph entities. Exact case-sensitive (node_type, canonical_text) identity only; ambiguous duplicates fail the whole batch. Attributes shallow-merge."
     )]
-    async fn upsert_entities(&self, Parameters(params): Parameters<UpsertEntitiesParams>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn upsert_entities(
+        &self,
+        Parameters(params): Parameters<UpsertEntitiesParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let entities = params
             .entities
             .into_iter()
@@ -436,10 +508,14 @@ impl RingmasterIngestServer {
         };
         match graph::get_node(&self.pool, id).await {
             Ok(_) => {}
-            Err(sqlx::Error::RowNotFound) => return Ok(tool_error(format!("entity not found: {id}"))),
+            Err(sqlx::Error::RowNotFound) => {
+                return Ok(tool_error(format!("entity not found: {id}")))
+            }
             Err(error) => return Ok(tool_error(error.to_string())),
         }
-        match graph::list_edges_for_node(&self.pool, id, edge_type.as_deref(), params.current_only).await {
+        match graph::list_edges_for_node(&self.pool, id, edge_type.as_deref(), params.current_only)
+            .await
+        {
             Ok(relationships) => Ok(json_success(relationships)),
             Err(error) => Ok(tool_error(error.to_string())),
         }
@@ -464,8 +540,13 @@ impl RingmasterIngestServer {
             Ok(value) => value,
             Err(message) => return Ok(tool_error(message)),
         };
-        if params.confidence.is_some_and(|value| !(0.0..=1.0).contains(&value)) {
-            return Ok(tool_error("confidence must be between 0.0 and 1.0 when supplied"));
+        if params
+            .confidence
+            .is_some_and(|value| !(0.0..=1.0).contains(&value))
+        {
+            return Ok(tool_error(
+                "confidence must be between 0.0 and 1.0 when supplied",
+            ));
         }
         let valid_from = match parse_optional_rfc3339("valid_from", params.valid_from.as_deref()) {
             Ok(value) => value,
@@ -496,7 +577,10 @@ impl RingmasterIngestServer {
 /// disconnects, matching how MindLeak/Lodestar are already launched locally.
 pub async fn run(pool: PgPool) -> Result<(), String> {
     let server = RingmasterIngestServer { pool };
-    let service = server.serve(stdio()).await.map_err(|error| error.to_string())?;
+    let service = server
+        .serve(stdio())
+        .await
+        .map_err(|error| error.to_string())?;
     service.waiting().await.map_err(|error| error.to_string())?;
     Ok(())
 }

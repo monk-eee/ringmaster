@@ -10,13 +10,21 @@ fn assert_test_database(database_url: &str) {
         .next()
         .map(|tail| tail.split(['?', '#']).next().unwrap_or(tail))
         .unwrap_or("");
-    assert_eq!(database_name, "ringmaster_test", "refusing to run graph integration tests against {database_name:?}");
+    assert_eq!(
+        database_name, "ringmaster_test",
+        "refusing to run graph integration tests against {database_name:?}"
+    );
 }
 
 async fn test_pool() -> sqlx::PgPool {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set to run graph integration tests");
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set to run graph integration tests");
     assert_test_database(&database_url);
-    PgPoolOptions::new().max_connections(2).connect(&database_url).await.expect("connect to test database")
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .expect("connect to test database")
 }
 
 #[tokio::test]
@@ -25,9 +33,14 @@ async fn upsert_nodes_updates_an_exact_match_and_creates_a_missing_entity() {
     let marker = uuid::Uuid::new_v4();
     let existing_name = format!("Existing Person {marker}");
     let new_name = format!("New Person {marker}");
-    let existing_id = graph::create_node(&pool, "person", &existing_name, json!({ "email": "old@example.com", "team": "Alpha" }))
-        .await
-        .expect("create existing person");
+    let existing_id = graph::create_node(
+        &pool,
+        "person",
+        &existing_name,
+        json!({ "email": "old@example.com", "team": "Alpha" }),
+    )
+    .await
+    .expect("create existing person");
 
     let results = graph::upsert_nodes(
         &pool,
@@ -72,8 +85,12 @@ async fn upsert_nodes_rejects_ambiguous_identity_and_rolls_back_the_batch() {
     let marker = uuid::Uuid::new_v4();
     let duplicate_name = format!("Duplicate Person {marker}");
     let rolled_back_name = format!("Rolled Back Person {marker}");
-    let duplicate_one = graph::create_node(&pool, "person", &duplicate_name, json!({})).await.expect("create first duplicate");
-    let duplicate_two = graph::create_node(&pool, "person", &duplicate_name, json!({})).await.expect("create second duplicate");
+    let duplicate_one = graph::create_node(&pool, "person", &duplicate_name, json!({}))
+        .await
+        .expect("create first duplicate");
+    let duplicate_two = graph::create_node(&pool, "person", &duplicate_name, json!({}))
+        .await
+        .expect("create second duplicate");
 
     let error = graph::upsert_nodes(
         &pool,
@@ -95,11 +112,26 @@ async fn upsert_nodes_rejects_ambiguous_identity_and_rolls_back_the_batch() {
     .await
     .expect_err("ambiguous identity must fail the whole batch");
 
-    assert!(matches!(error, UpsertNodesError::AmbiguousIdentity { matches: 2, .. }));
-    let rolled_back = graph::list_nodes_filtered(&pool, Some("person"), Some(&rolled_back_name), None, None, false, None, None)
-        .await
-        .expect("look for rolled-back node");
-    assert!(rolled_back.is_empty(), "the earlier create in the failed batch must be rolled back");
+    assert!(matches!(
+        error,
+        UpsertNodesError::AmbiguousIdentity { matches: 2, .. }
+    ));
+    let rolled_back = graph::list_nodes_filtered(
+        &pool,
+        Some("person"),
+        Some(&rolled_back_name),
+        None,
+        None,
+        false,
+        None,
+        None,
+    )
+    .await
+    .expect("look for rolled-back node");
+    assert!(
+        rolled_back.is_empty(),
+        "the earlier create in the failed batch must be rolled back"
+    );
 
     sqlx::query("DELETE FROM nodes WHERE id = ANY($1)")
         .bind(vec![duplicate_one, duplicate_two])

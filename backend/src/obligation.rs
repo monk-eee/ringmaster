@@ -59,7 +59,10 @@ impl ObligationStatus {
 }
 
 fn payload_status(payload: &Json) -> Option<ObligationStatus> {
-    payload.get("status").and_then(|value| value.as_str()).and_then(ObligationStatus::parse)
+    payload
+        .get("status")
+        .and_then(|value| value.as_str())
+        .and_then(ObligationStatus::parse)
 }
 
 /// Reads an optional due-date field from an event payload (ADR-0020).
@@ -78,7 +81,9 @@ fn payload_timestamp(payload: &Json, key: &str) -> Option<Option<chrono::DateTim
 /// Reads an optional source_fragment_id field from an event payload
 /// (ADR-0023), same carry-forward semantics as `payload_timestamp`.
 fn payload_uuid(payload: &Json, key: &str) -> Option<Option<Uuid>> {
-    payload.get(key).map(|value| value.as_str().and_then(|text| Uuid::parse_str(text).ok()))
+    payload
+        .get(key)
+        .map(|value| value.as_str().and_then(|text| Uuid::parse_str(text).ok()))
 }
 
 /// Rejected before any row is written, so an invalid payload never reaches
@@ -186,12 +191,15 @@ pub async fn rebuild_projection(pool: &PgPool) -> Result<u64, sqlx::Error> {
         match ObligationEventType::parse(&event.event_type) {
             Some(ObligationEventType::Created) | Some(ObligationEventType::StatusChanged) => {
                 if let Some(status) = payload_status(&event.payload) {
-                    let entry = latest_status.entry(event.obligation_id).or_insert(ObligationState {
-                        status,
-                        hard_due_at: None,
-                        soft_due_at: None,
-                        source_fragment_id: None,
-                    });
+                    let entry =
+                        latest_status
+                            .entry(event.obligation_id)
+                            .or_insert(ObligationState {
+                                status,
+                                hard_due_at: None,
+                                soft_due_at: None,
+                                source_fragment_id: None,
+                            });
                     entry.status = status;
                     if let Some(hard_due_at) = payload_timestamp(&event.payload, "hard_due_at") {
                         entry.hard_due_at = hard_due_at;
@@ -199,7 +207,9 @@ pub async fn rebuild_projection(pool: &PgPool) -> Result<u64, sqlx::Error> {
                     if let Some(soft_due_at) = payload_timestamp(&event.payload, "soft_due_at") {
                         entry.soft_due_at = soft_due_at;
                     }
-                    if let Some(source_fragment_id) = payload_uuid(&event.payload, "source_fragment_id") {
+                    if let Some(source_fragment_id) =
+                        payload_uuid(&event.payload, "source_fragment_id")
+                    {
                         entry.source_fragment_id = source_fragment_id;
                     }
                 }
@@ -224,7 +234,9 @@ pub async fn rebuild_projection(pool: &PgPool) -> Result<u64, sqlx::Error> {
     }
 
     let mut tx = pool.begin().await?;
-    sqlx::query("TRUNCATE obligation_projection").execute(&mut *tx).await?;
+    sqlx::query("TRUNCATE obligation_projection")
+        .execute(&mut *tx)
+        .await?;
     let mut written = 0u64;
     for (obligation_id, state) in &latest_status {
         sqlx::query(
@@ -251,8 +263,8 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
 
     async fn test_pool() -> PgPool {
-        let database_url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set to run obligation tests");
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set to run obligation tests");
         crate::guard_test_database(&database_url);
         PgPoolOptions::new()
             .max_connections(2)
@@ -266,10 +278,17 @@ mod tests {
         let pool = test_pool().await;
         let obligation_id = Uuid::new_v4();
 
-        append_event(&pool, obligation_id, ObligationEventType::Created, json!({"status": "open"}))
+        append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::Created,
+            json!({"status": "open"}),
+        )
+        .await
+        .expect("append created event");
+        rebuild_projection(&pool)
             .await
-            .expect("append created event");
-        rebuild_projection(&pool).await.expect("rebuild after created");
+            .expect("rebuild after created");
 
         let after_created: ObligationProjection = sqlx::query_as(
             "SELECT obligation_id, status, hard_due_at, soft_due_at, source_fragment_id FROM obligation_projection WHERE obligation_id = $1",
@@ -280,10 +299,17 @@ mod tests {
         .expect("projection row after created");
         assert_eq!(after_created.status, "open");
 
-        append_event(&pool, obligation_id, ObligationEventType::StatusChanged, json!({"status": "at_risk"}))
+        append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::StatusChanged,
+            json!({"status": "at_risk"}),
+        )
+        .await
+        .expect("append status_changed event");
+        rebuild_projection(&pool)
             .await
-            .expect("append status_changed event");
-        rebuild_projection(&pool).await.expect("rebuild after status change");
+            .expect("rebuild after status change");
 
         let after_status_change: ObligationProjection = sqlx::query_as(
             "SELECT obligation_id, status, hard_due_at, soft_due_at, source_fragment_id FROM obligation_projection WHERE obligation_id = $1",
@@ -302,21 +328,33 @@ mod tests {
     async fn event_rows_cannot_be_mutated_or_deleted() {
         let pool = test_pool().await;
         let obligation_id = Uuid::new_v4();
-        let event_id = append_event(&pool, obligation_id, ObligationEventType::Created, json!({"status": "open"}))
-            .await
-            .expect("append created event");
+        let event_id = append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::Created,
+            json!({"status": "open"}),
+        )
+        .await
+        .expect("append created event");
 
-        let update_result = sqlx::query("UPDATE obligation_events SET event_type = 'tampered' WHERE id = $1")
-            .bind(event_id)
-            .execute(&pool)
-            .await;
-        assert!(update_result.is_err(), "UPDATE must be rejected by the append-only trigger");
+        let update_result =
+            sqlx::query("UPDATE obligation_events SET event_type = 'tampered' WHERE id = $1")
+                .bind(event_id)
+                .execute(&pool)
+                .await;
+        assert!(
+            update_result.is_err(),
+            "UPDATE must be rejected by the append-only trigger"
+        );
 
         let delete_result = sqlx::query("DELETE FROM obligation_events WHERE id = $1")
             .bind(event_id)
             .execute(&pool)
             .await;
-        assert!(delete_result.is_err(), "DELETE must be rejected by the append-only trigger");
+        assert!(
+            delete_result.is_err(),
+            "DELETE must be rejected by the append-only trigger"
+        );
     }
 
     #[tokio::test]
@@ -324,7 +362,13 @@ mod tests {
         let pool = test_pool().await;
         let obligation_id = Uuid::new_v4();
 
-        let result = append_event(&pool, obligation_id, ObligationEventType::Created, json!({})).await;
+        let result = append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::Created,
+            json!({}),
+        )
+        .await;
         assert!(
             matches!(result, Err(AppendEventError::InvalidPayload(_))),
             "a created event with no status must be rejected before it reaches the log"
@@ -337,7 +381,10 @@ mod tests {
         .fetch_all(&pool)
         .await
         .expect("query obligation_events");
-        assert!(rows.is_empty(), "a rejected payload must never be written to the append-only log");
+        assert!(
+            rows.is_empty(),
+            "a rejected payload must never be written to the append-only log"
+        );
     }
 
     #[tokio::test]
@@ -360,13 +407,20 @@ mod tests {
         let pool = test_pool().await;
         let obligation_id = Uuid::new_v4();
 
-        append_event(&pool, obligation_id, ObligationEventType::Created, json!({"status": "open"}))
-            .await
-            .expect("append created event");
+        append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::Created,
+            json!({"status": "open"}),
+        )
+        .await
+        .expect("append created event");
         append_event(&pool, obligation_id, ObligationEventType::Closed, json!({}))
             .await
             .expect("closed event needs no status field");
-        rebuild_projection(&pool).await.expect("rebuild after closed");
+        rebuild_projection(&pool)
+            .await
+            .expect("rebuild after closed");
 
         let projection: ObligationProjection = sqlx::query_as(
             "SELECT obligation_id, status, hard_due_at, soft_due_at, source_fragment_id FROM obligation_projection WHERE obligation_id = $1",
@@ -393,9 +447,14 @@ mod tests {
         )
         .await
         .expect("append created event with a due date");
-        append_event(&pool, obligation_id, ObligationEventType::StatusChanged, json!({"status": "at_risk"}))
-            .await
-            .expect("append status_changed event naming no due date");
+        append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::StatusChanged,
+            json!({"status": "at_risk"}),
+        )
+        .await
+        .expect("append status_changed event naming no due date");
         rebuild_projection(&pool).await.expect("rebuild projection");
 
         let projection: ObligationProjection = sqlx::query_as(
@@ -428,9 +487,14 @@ mod tests {
         )
         .await
         .expect("append created event with evidence");
-        append_event(&pool, obligation_id, ObligationEventType::StatusChanged, json!({"status": "at_risk"}))
-            .await
-            .expect("append status_changed event naming no evidence");
+        append_event(
+            &pool,
+            obligation_id,
+            ObligationEventType::StatusChanged,
+            json!({"status": "at_risk"}),
+        )
+        .await
+        .expect("append status_changed event naming no evidence");
         rebuild_projection(&pool).await.expect("rebuild projection");
 
         let projection: ObligationProjection = sqlx::query_as(
