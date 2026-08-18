@@ -14,8 +14,8 @@ mod search;
 
 use audit_events::list_audit_events;
 use candidates::{
-    accept_candidate, correct_candidate, extract_source_fragment, list_candidates,
-    promote_candidate, reject_candidate,
+    accept_candidate, batch_promote_candidates, batch_transition_candidates, correct_candidate,
+    extract_source_fragment, list_candidates, promote_candidate, reject_candidate,
 };
 use ingestion::{get_meeting_candidates, get_meeting_detail, ingest_meeting, ingest_source_route};
 use nodes::{
@@ -74,10 +74,15 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/meetings/:id/candidates", get(get_meeting_candidates))
         .route("/api/sources/ingest", post(ingest_source_route))
         .route("/api/candidates", get(list_candidates))
+        .route("/api/candidates/batch", post(batch_transition_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))
         .route("/api/candidates/:id/reject", post(reject_candidate))
         .route("/api/candidates/:id/correct", post(correct_candidate))
         .route("/api/candidates/:id/promote", post(promote_candidate))
+        .route(
+            "/api/candidates/batch-promote",
+            post(batch_promote_candidates),
+        )
         .route(
             "/api/source-fragments/:id/extract",
             post(extract_source_fragment),

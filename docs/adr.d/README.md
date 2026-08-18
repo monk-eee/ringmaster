@@ -88,3 +88,5 @@ accepted and implemented.
 | [ADR-0073: Isolate Playwright from the development database](0073-isolate-playwright-from-dev-database.md) | Accepted | [EV-0073](../evidence.d/0073-isolate-playwright-from-dev-database.md) |
 | [ADR-0074: Visual design system refresh — a considered look, zero behavior change](0074-visual-design-system-refresh.md) | Accepted | [EV-0074](../evidence.d/0074-visual-design-system-refresh.md) |
 | [ADR-0075: Restore the mascot logo in the app header](0075-restore-mascot-logo-in-header.md) | Accepted | [EV-0075](../evidence.d/0075-restore-mascot-logo-in-header.md) |
+| [ADR-0076: Bulk candidate triage — multi-select accept/reject, confidence-first ordering](0076-bulk-candidate-triage.md) | Accepted | [EV-0076](../evidence.d/0076-bulk-candidate-triage.md) |
+| [ADR-0077: Bulk candidate promotion — complete the triage loop ADR-0076 started](0077-bulk-candidate-promotion.md) | Accepted | [EV-0077](../evidence.d/0077-bulk-candidate-promotion.md) |

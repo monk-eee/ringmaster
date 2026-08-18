@@ -674,6 +674,85 @@ td.evidence-cell .no-evidence {
   cursor: default;
 }
 
+/* ADR-0076: bulk accept/reject bar shown above the table once anything is selected. */
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-wash);
+}
+
+.bulk-action-count {
+  font-weight: 650;
+  font-size: 0.85rem;
+  color: var(--accent-strong);
+  margin-right: auto;
+}
+
+.bulk-accept-button,
+.bulk-reject-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.bulk-accept-button {
+  background: var(--accent);
+  color: #fff;
+}
+
+.bulk-accept-button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.bulk-reject-button {
+  background: var(--at-risk-bg);
+  color: var(--at-risk-fg);
+}
+
+.bulk-reject-button:hover:not(:disabled) {
+  opacity: 0.75;
+}
+
+.bulk-accept-button:disabled,
+.bulk-reject-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.bulk-promote-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--accent-strong);
+  background: var(--surface);
+  color: var(--accent-strong);
+}
+
+.bulk-promote-button:hover:not(:disabled) {
+  background: var(--accent-wash);
+}
+
+.bulk-promote-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.bulk-action-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
 .correct-button {
   font: inherit;
   font-weight: 600;

@@ -294,6 +294,30 @@ test("primary navigation is Today/Timeline/People/Inbox; Obligations/Search/Grap
   await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Graph", "Meetings", "Activity"]);
 });
 
+test("primary navigation scrolls internally without widening a narrow viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const tabList = page.getByRole("tablist", { name: "Views" });
+  const tabListWidths = await tabList.evaluate((element) => ({
+    client: element.clientWidth,
+    scroll: element.scrollWidth,
+  }));
+  expect(tabListWidths.scroll).toBeGreaterThan(tabListWidths.client);
+
+  const documentWidths = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(documentWidths.scroll).toBeLessThanOrEqual(documentWidths.client);
+
+  const activity = page.getByRole("tab", { name: "Activity", exact: true });
+  await activity.scrollIntoViewIfNeeded();
+  await activity.click();
+  await expect(activity).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("h1")).toHaveText("Activity");
+});
+
 // ADR-0039: People is a first-class primary tab over already-existing data
 // (GET /api/nodes?node_type=person, GET /api/nodes/:id) -- not a new route.
 // ADR-0051: People defaults to who-needs-attention; a bare person with no
@@ -543,8 +567,126 @@ test("inbox tab: correcting a candidate edits its statement and shows Corrected 
 
   const row = page.locator("tr", { has: page.getByText(correctedStatement) });
   await expect(row).toBeVisible();
-  await expect(row.locator("td").nth(2)).toHaveText("corrected");
+  // ADR-0076 added a leading select-checkbox column, shifting this index.
+  await expect(row.locator("td").nth(3)).toHaveText("corrected");
   await expect(row.getByRole("button", { name: "Promote to Obligation" })).toBeVisible();
+});
+
+// ADR-0076: proves bulk select + Accept transitions multiple candidates in
+// one request -- via its own POST /api/candidates/batch call, not N calls
+// to the single-item accept route. Mocks GET/POST so it's deterministic
+// regardless of whatever the shared development database currently holds.
+test("inbox tab: bulk-select and Accept transitions multiple candidates in one request (ADR-0076)", async ({ page }) => {
+  const unique = Date.now();
+  const candidates = Array.from({ length: 3 }, (_, index) => ({
+    candidate_id: `10000000-0000-4000-9000-${String(unique + index).padStart(12, "0")}`,
+    candidate_type: "decision",
+    statement: `Bulk triage candidate ${unique}-${index}`,
+    validation_state: "candidate",
+    confidence: 0.9,
+    source_fragment_id: null as string | null,
+    promoted_obligation_id: null as string | null,
+    source_text: null as string | null,
+    speaker: null as string | null,
+  }));
+
+  let batchRequestBody: { candidate_ids: string[]; action: string } | null = null;
+  await page.route("**/api/candidates?**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(candidates) });
+  });
+  await page.route("**/api/candidates/batch", async (route) => {
+    batchRequestBody = route.request().postDataJSON();
+    const acceptedIds = new Set(batchRequestBody!.candidate_ids);
+    const updated = candidates.filter((c) => acceptedIds.has(c.candidate_id));
+    for (const candidate of updated) candidate.validation_state = "accepted";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ updated, errors: [] }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Inbox" }).click();
+  await expect(page.getByText(`Bulk triage candidate ${unique}-0`)).toBeVisible();
+
+  await page.getByLabel(`Select candidate: Bulk triage candidate ${unique}-0`).check();
+  await page.getByLabel(`Select candidate: Bulk triage candidate ${unique}-1`).check();
+  await expect(page.getByText("2 selected", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Accept 2 selected" }).click();
+
+  await expect.poll(() => batchRequestBody?.action).toBe("accept");
+  expect(batchRequestBody?.candidate_ids).toHaveLength(2);
+
+  const firstRow = page.locator("tr", { has: page.getByText(`Bulk triage candidate ${unique}-0`, { exact: true }) });
+  await expect(firstRow.locator("td").nth(3)).toHaveText("accepted");
+  const untouchedRow = page.locator("tr", { has: page.getByText(`Bulk triage candidate ${unique}-2`, { exact: true }) });
+  await expect(untouchedRow.locator("td").nth(3)).toHaveText("candidate");
+});
+
+// ADR-0077: proves bulk-select and Promote creates Obligations for multiple
+// accepted candidates in one request -- completing the triage loop
+// ADR-0076 started (Accept alone never made a candidate actionable).
+test("inbox tab: bulk-select and Promote creates Obligations for multiple accepted candidates in one request (ADR-0077)", async ({
+  page,
+}) => {
+  const unique = Date.now();
+  const candidates = Array.from({ length: 2 }, (_, index) => ({
+    candidate_id: `20000000-0000-4000-9000-${String(unique + index).padStart(12, "0")}`,
+    candidate_type: "commitment",
+    statement: `Bulk promote candidate ${unique}-${index}`,
+    validation_state: "accepted",
+    confidence: 0.85,
+    source_fragment_id: null as string | null,
+    promoted_obligation_id: null as string | null,
+    source_text: null as string | null,
+    speaker: null as string | null,
+  }));
+
+  let batchPromoteRequestBody: { candidate_ids: string[] } | null = null;
+  await page.route("**/api/candidates?**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(candidates) });
+  });
+  await page.route("**/api/candidates/batch-promote", async (route) => {
+    batchPromoteRequestBody = route.request().postDataJSON();
+    const promotedIds = new Set(batchPromoteRequestBody!.candidate_ids);
+    const promoted = candidates
+      .filter((c) => promotedIds.has(c.candidate_id))
+      .map((c, index) => {
+        c.validation_state = "promoted";
+        c.promoted_obligation_id = `30000000-0000-4000-9000-${String(unique + index).padStart(12, "0")}`;
+        return {
+          obligation_id: c.promoted_obligation_id,
+          status: "open",
+          updated_at: new Date().toISOString(),
+          hard_due_at: null,
+          soft_due_at: null,
+          source_fragment_id: null,
+          source_text: null,
+        };
+      });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ promoted, errors: [] }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Inbox" }).click();
+  await expect(page.getByText(`Bulk promote candidate ${unique}-0`)).toBeVisible();
+
+  await page.getByLabel(`Select candidate: Bulk promote candidate ${unique}-0`).check();
+  await page.getByLabel(`Select candidate: Bulk promote candidate ${unique}-1`).check();
+  await expect(page.getByText("2 selected", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Promote 2 selected" }).click();
+
+  await expect.poll(() => batchPromoteRequestBody?.candidate_ids.length).toBe(2);
+
+  const firstRow = page.locator("tr", { has: page.getByText(`Bulk promote candidate ${unique}-0`, { exact: true }) });
+  await expect(firstRow.locator("td").nth(3)).toHaveText("promoted");
 });
 
 // ADR-0049: proves the Activity tab surfaces a real, just-recorded audit
