@@ -85,3 +85,6 @@ accepted and implemented.
 | [ADR-0070: Derive Person interaction recency from identity edges with a legacy fallback](0070-edge-backed-person-interaction-recency.md) | Accepted | [EV-0070](../evidence.d/0070-edge-backed-person-interaction-recency.md) |
 | [ADR-0071: Surface recent interaction sources on Person detail](0071-person-detail-recent-interactions.md) | Accepted | [EV-0071](../evidence.d/0071-person-detail-recent-interactions.md) |
 | [ADR-0072: Split oversized, low-cohesion backend modules with no behavior change](0072-split-oversized-low-cohesion-backend-modules.md) | Accepted | [EV-0072](../evidence.d/0072-split-oversized-low-cohesion-backend-modules.md) |
+| [ADR-0073: Isolate Playwright from the development database](0073-isolate-playwright-from-dev-database.md) | Accepted | [EV-0073](../evidence.d/0073-isolate-playwright-from-dev-database.md) |
+| [ADR-0074: Visual design system refresh — a considered look, zero behavior change](0074-visual-design-system-refresh.md) | Accepted | [EV-0074](../evidence.d/0074-visual-design-system-refresh.md) |
+| [ADR-0075: Restore the mascot logo in the app header](0075-restore-mascot-logo-in-header.md) | Accepted | [EV-0075](../evidence.d/0075-restore-mascot-logo-in-header.md) |
