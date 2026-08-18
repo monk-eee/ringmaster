@@ -13,21 +13,21 @@ id = "focus-blocks-route-groups-by-shared-node"
 invariant = "GET /api/focus-blocks groups non-closed Obligations that share a linked node."
 type = "present"
 pattern = '"/api/focus-blocks"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "single-linked-obligation-forms-no-block"
 invariant = "A node linked to fewer than two non-closed Obligations forms no block."
 type = "present"
 pattern = 'block.obligations.len\(\) >= 2'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "closed-excluded-from-focus-blocks"
 invariant = "A closed Obligation is never counted or shown in any block."
 type = "present"
 pattern = "op.status <> 'closed'"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "focus-blocks-card-exists"

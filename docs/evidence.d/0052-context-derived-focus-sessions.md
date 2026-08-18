@@ -13,21 +13,21 @@ id = "focus-blocks-split-by-time-horizon-bucket"
 invariant = "A shared node's Obligations spanning two Time Horizon buckets form two separate blocks."
 type = "present"
 pattern = 'fn focus_blocks_route_splits_by_time_horizon_bucket'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "focus-blocks-single-bucket-unchanged"
 invariant = "A shared node's Obligations all in one bucket still form exactly one block."
 type = "present"
 pattern = 'fn focus_blocks_route_groups_by_shared_node'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "focus-block-label-names-node-and-bucket"
 invariant = "Each block's response includes both the node's canonical_text and its Time Horizon bucket."
 type = "present"
 pattern = '"time_horizon_bucket": block\.bucket'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 ```
 
 ## Notes

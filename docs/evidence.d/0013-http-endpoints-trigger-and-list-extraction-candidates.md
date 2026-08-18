@@ -13,14 +13,14 @@ id = "extract-route-exists"
 invariant = "A route triggers extract_candidate_via_model for one named source_fragment_id and translates every model-adapter outcome into a typed HTTP status without panicking."
 type = "present"
 pattern = '"/api/source-fragments/:id/extract"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "candidates-route-exists"
 invariant = "A read-only route returns current candidate_projection rows as JSON."
 type = "present"
 pattern = '"/api/candidates"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 ```
 
 ## Notes

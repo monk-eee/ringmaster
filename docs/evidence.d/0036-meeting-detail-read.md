@@ -20,21 +20,21 @@ id = "list-source-fragments-orders-by-sequence"
 invariant = "Fragments are read back ordered by sequence, not raw created_at."
 type = "present"
 pattern = 'ORDER BY sequence ASC NULLS LAST, created_at ASC, id ASC'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/source_fragment.rs"]
 
 [[check]]
 id = "meeting-detail-route-returns-ordered-fragments"
 invariant = "GET /api/meetings/:id returns the meeting plus its ordered fragments."
 type = "present"
 pattern = 'async fn get_meeting_detail'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-detail-route-404s-for-non-meeting"
 invariant = "GET /api/meetings/:id returns 404 for an unknown id or a non-meeting node."
 type = "present"
 pattern = 'meeting_detail_route_404s_for_a_non_meeting_node'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 ```
 
 ## Notes

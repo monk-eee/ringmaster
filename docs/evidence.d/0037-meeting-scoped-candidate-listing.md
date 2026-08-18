@@ -13,35 +13,35 @@ id = "meeting-candidates-route-lists-all-fragments"
 invariant = "GET /api/meetings/:id/candidates lists every fragment, including those with zero candidates."
 type = "present"
 pattern = 'async fn get_meeting_candidates'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-candidates-route-includes-candidate-state"
 invariant = "A fragment's extracted candidates appear with their real validation state."
 type = "present"
 pattern = 'meeting_candidates_route_lists_extracted_and_pending_fragments'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-candidates-route-computes-fragment-progress"
 invariant = "progress counts fragments (extracted/pending), not candidates."
 type = "present"
 pattern = 'extracted_fragment_count'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-candidates-route-404s-for-non-meeting"
 invariant = "The route 404s for an unknown id or a non-meeting node."
 type = "present"
 pattern = 'meeting_candidates_route_404s_for_a_non_meeting_node'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-candidates-route-never-triggers-extraction"
 invariant = "No extraction is triggered by this route."
 type = "present"
 pattern = 'meeting_candidates_route_never_triggers_extraction'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 ```
 
 ## Notes

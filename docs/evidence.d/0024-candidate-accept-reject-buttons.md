@@ -13,14 +13,14 @@ id = "accept-route-exists"
 invariant = "A route accepts a candidate still in the candidate state and rejects an already-transitioned one with 409."
 type = "present"
 pattern = '"/api/candidates/:id/accept"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "reject-route-exists"
 invariant = "A route rejects a candidate the same way."
 type = "present"
 pattern = '"/api/candidates/:id/reject"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "candidates-table-has-action-buttons"

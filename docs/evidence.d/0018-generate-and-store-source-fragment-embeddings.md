@@ -27,7 +27,7 @@ id = "embed-source-fragment-function-exists"
 invariant = "A function reads one source fragment's text, embeds it, and stores the result in the embeddings table."
 type = "present"
 pattern = 'fn embed_source_fragment'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/source_fragment.rs"]
 ```
 
 ## Notes

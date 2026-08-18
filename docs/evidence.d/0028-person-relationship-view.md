@@ -13,21 +13,21 @@ id = "obligation-neighbor-resolves"
 invariant = "GET /api/nodes/:id resolves an Obligation-typed edge target's status/dates/reason instead of returning a null neighbor."
 type = "present"
 pattern = '"type": "obligation"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "unknown-neighbor-still-null"
 invariant = "A genuinely unknown neighbor id (neither nodes nor obligation_projection) still reports null."
 type = "present"
 pattern = 'node_detail_includes_neighbor_summary_and_handles_a_non_node_edge_target'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "person-relationship-grouping"
 invariant = "A person node's response includes an at_risk/open grouped relationship object; other node types omit it."
 type = "present"
 pattern = 'node_detail_omits_relationship_grouping_for_non_person_nodes'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "relationship-view-component-exists"

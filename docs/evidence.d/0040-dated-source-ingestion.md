@@ -27,14 +27,14 @@ id = "sources-ingest-route-exists"
 invariant = "POST /api/sources/ingest calls the shared function, rejecting a missing/blank occurred_at with 400."
 type = "present"
 pattern = '"/api/sources/ingest"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "meeting-ingest-requires-occurred-at"
 invariant = "POST /api/meetings/ingest now requires occurred_at and rejects its absence with 400, all other behavior unchanged."
 type = "present"
 pattern = 'ingest_meeting_route_rejects_a_missing_occurred_at_with_no_writes'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "cli-binary-ingests-via-shared-function"
@@ -47,7 +47,7 @@ paths = ["backend/src/bin/ringmaster-ingest/main.rs"]
 id = "mcp-tool-exposes-ingest-source"
 invariant = "The mcp-serve subcommand exposes exactly one MCP tool, ingest_source, over stdio, calling the same shared function."
 type = "present"
-pattern = 'async fn ingest_source\(&self, Parameters\(params\): Parameters<IngestSourceParams>\)'
+pattern = 'async fn ingest_source\(\s*&self,\s*Parameters\(params\): Parameters<IngestSourceParams>'
 paths = ["backend/src/bin/ringmaster-ingest/mcp.rs"]
 
 [[check]]
@@ -55,7 +55,7 @@ id = "ingestion-never-triggers-extraction-or-embedding"
 invariant = "None of the three surfaces (API, CLI, MCP) triggers extraction or embedding implicitly."
 type = "present"
 pattern = 'ingest_source_route_never_creates_a_candidate_implicitly'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 ```
 
 ## Notes

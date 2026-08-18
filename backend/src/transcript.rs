@@ -169,7 +169,7 @@ pub async fn ingest_transcript(
         .cloned()
         .chain(turns.iter().map(|turn| turn.speaker.clone()))
         .collect();
-    link_participants(&mut *tx, meeting_id, &names).await?;
+    link_participants(&mut tx, meeting_id, &names).await?;
 
     tx.commit().await?;
 
@@ -268,7 +268,7 @@ pub async fn ingest_source(
         .cloned()
         .chain(speaker_names)
         .collect();
-    link_participants(&mut *tx, node_id, &names).await?;
+    link_participants(&mut tx, node_id, &names).await?;
 
     tx.commit().await?;
 

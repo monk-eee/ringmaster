@@ -13,7 +13,7 @@ id = "api-route-exists"
 invariant = "The Rust backend declares a GET /api/obligations route."
 type = "present"
 pattern = '"/api/obligations"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "axum-dependency-declared"

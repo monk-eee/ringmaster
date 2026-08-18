@@ -20,14 +20,14 @@ id = "obligations-route-includes-source-fields"
 invariant = "GET /api/obligations includes source_fragment_id and source_text for each row."
 type = "present"
 pattern = '"source_text": source_text'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "daily-brief-reason-cites-evidence"
 invariant = "GET /api/daily-brief's reason states the linked source evidence, or that none is recorded."
 type = "present"
 pattern = 'No evidence recorded\.'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 ```
 
 ## Notes

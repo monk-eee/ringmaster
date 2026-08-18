@@ -27,7 +27,7 @@ id = "obligations-route-includes-due-dates"
 invariant = "GET /api/obligations includes hard_due_at and soft_due_at for each row."
 type = "present"
 pattern = '"hard_due_at"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 ```
 
 ## Notes

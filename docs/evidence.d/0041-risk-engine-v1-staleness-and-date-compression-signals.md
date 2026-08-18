@@ -13,28 +13,28 @@ id = "risk-signals-function-exists"
 invariant = "A risk_signals function computes signals independently of the ranking/bucketing routes."
 type = "present"
 pattern = 'fn risk_signals\('
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "date-compression-reuses-the-7-day-window"
 invariant = "Date compression fires within the same 7-day window Time Horizon already uses, not a second invented number."
 type = "present"
 pattern = "DATE_COMPRESSION_WINDOW_DAYS"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "stale-signal-has-a-disclosed-threshold"
 invariant = "Staleness fires past a disclosed, hardcoded threshold."
 type = "present"
 pattern = "STALE_THRESHOLD_DAYS"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "daily-brief-and-time-horizon-expose-risk-signals-field"
 invariant = "Both GET /api/daily-brief and GET /api/time-horizon attach a risk_signals field per row."
 type = "present"
-pattern = '"risk_signals": risk_signals\('
-paths = ["backend/src/api.rs"]
+pattern = '"risk_signals": signals,'
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "frontend-renders-risk-signals-list"
