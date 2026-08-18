@@ -20,7 +20,7 @@ id = "candidates-route-includes-source-fields"
 invariant = "GET /api/candidates includes source_fragment_id, source_text, and speaker for each row via a read-only join against source_fragments."
 type = "present"
 pattern = 'LEFT JOIN source_fragments'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 ```
 
 ## Notes

@@ -34,7 +34,7 @@ id = "graph-module-exists"
 invariant = "A Rust module can create and read nodes, edges, and source fragments."
 type = "present"
 pattern = 'pub async fn create_node'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/node.rs"]
 ```
 
 ## Notes

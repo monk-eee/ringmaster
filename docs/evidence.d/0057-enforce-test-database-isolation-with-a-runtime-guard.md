@@ -20,7 +20,7 @@ id = "every-test-pool-invokes-the-guard"
 invariant = "Every backend test_pool() helper invokes guard_test_database before connecting."
 type = "present"
 pattern = "guard_test_database"
-paths = ["backend/src/api.rs", "backend/src/audit.rs", "backend/src/extraction.rs", "backend/src/graph.rs", "backend/src/obligation.rs", "backend/src/transcript.rs"]
+paths = ["backend/src/api/mod.rs", "backend/src/audit.rs", "backend/src/extraction.rs", "backend/src/graph/edge.rs", "backend/src/graph/node.rs", "backend/src/graph/source_fragment.rs", "backend/src/obligation.rs", "backend/src/transcript.rs"]
 
 [[check]]
 id = "guard-behavior-is-unit-tested"

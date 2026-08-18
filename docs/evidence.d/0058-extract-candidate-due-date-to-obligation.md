@@ -20,14 +20,14 @@ id = "promote-carries-due-date-to-soft-due-at"
 invariant = "promote_candidate carries a candidate's extracted due_at into the Obligation created event as soft_due_at."
 type = "present"
 pattern = "candidate_extracted_due_at"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "due-date-carry-is-tested"
 invariant = "A deterministic test proves the extracted due_at reaches the promoted Obligation's soft_due_at."
 type = "present"
 pattern = "promote_carries_extracted_due_date_into_soft_due_at"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "backend-suite-passes-with-due-date-carry"

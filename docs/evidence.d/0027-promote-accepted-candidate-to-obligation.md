@@ -13,7 +13,7 @@ id = "promote-route-exists"
 invariant = "A route promotes an accepted candidate into a new Obligation and rejects any other validation_state with 409."
 type = "present"
 pattern = '"/api/candidates/:id/promote"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "promoted-obligation-id-column-exists"

@@ -20,7 +20,7 @@ id = "audit-events-route-exists"
 invariant = "GET /api/audit-events exists."
 type = "present"
 pattern = '"/api/audit-events"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "limit-is-clamped-not-rejected"

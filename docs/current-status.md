@@ -29,16 +29,16 @@ fixed and verified live:
   candidates) to single/low-double-digits, via
   [ADR-0056](adr.d/0056-local-test-database-isolation-and-dev-data-cleanup.md)
   (a separate `ringmaster_test` database, now genuinely created and
-  confirmed present on the running Postgres). **Caveat, found this pass**:
-  the fix is a *documented convention*
-  ([CONTRIBUTING.md](CONTRIBUTING.md)), not an enforced one — nothing stops
-  a `cargo test` invocation from still pointing at the dev database by
-  habit or mistake. I personally ran `cargo test` against the dev database
-  for this entire session before noticing the new convention existed;
-  several of the "real-looking" fixtures currently on the live Today page
-  (e.g., a person node named "Bucket Split Test Person") are residue from
-  my own test runs, not monk-eee's work. The prevention is real; the
-  discipline to actually use it isn't automatic yet.
+  confirmed present on the running Postgres), then enforced for backend tests
+  by [ADR-0057](adr.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md).
+  **Remaining caveat, measured 2026-08-18:** before this pass, Playwright was
+  outside that guard and wrote through the development backend. The live
+  database still has 392 Person nodes, including at least 374 known
+  browser-test fixtures written before the fix.
+  [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md) is now
+  implemented and verified: Playwright starts its own backend/Vite pair on
+  dedicated ports against `ringmaster_test`, so it can no longer write to this
+  database. No cleanup of the existing 392 nodes has been authorized or run.
 - **FocusBlocks cap + no raw id** ([ADR-0050](adr.d/0050-today-attention-budget.md)):
   confirmed live — "Do these together" now shows at most 3 blocks with a
   "Show all N" control, zero raw ids anywhere.
@@ -91,12 +91,16 @@ fixed and verified live:
 - **Retrieval** ([ADR-0042](adr.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md)):
   `occurred_at` is readable and date-range filterable on `GET /api/nodes`;
   the MCP server's `recall_sources` tool needs no embedding model.
+- **Graph management over MCP** ([ADR-0066](adr.d/0066-non-destructive-graph-management-over-mcp.md)):
+  entity list/get/create/update, atomic exact-match batch upsert, and
+  relationship list/create are first-class tools. Attributes shallow-merge;
+  ambiguous identities fail rather than being silently combined.
 - **Semantic search** ([ADR-0018](adr.d/0018-generate-and-store-source-fragment-embeddings.md)/[ADR-0019](adr.d/0019-semantic-search-over-source-fragments.md)):
-  infrastructurally real (Ollama + `nomic-embed-text` configured,
-  `/api/search` responds `200`), but **currently 0 embeddings exist** (the
-  database reset wiped the 25 that existed at the last audit; embedding is
-  a deliberate manual step, never automatic) — right now, search would
-  return nothing for any query, worth knowing before demoing it.
+  live and populated: the accepted reindex operation appended embeddings for
+  all 358 source fragments using local `nomic-embed-text`, and
+  `/api/search?q=deployment%20risk&limit=3` returned ranked, relevant source
+  fragments. New ingests auto-embed best-effort; reindex remains available to
+  backfill fragments created while no embedding model was configured.
 - **Risk signals, now four**: `stale`/`date_compression`
   ([ADR-0041](adr.d/0041-risk-engine-v1-staleness-and-date-compression-signals.md)),
   `unowned` ([ADR-0046](adr.d/0046-unowned-obligation-risk-signal.md)),
@@ -128,8 +132,13 @@ Primary nav: `Today / Timeline / People / Inbox`, secondary/"Developer":
   audit.
 - **People**: defaults to who-needs-attention (verified via direct API
   call: `?needs_attention=true` returns a strict subset of the unfiltered
-  list). Detail view shows `last_interaction_at` as a relative phrase and
-  risk signals per linked obligation.
+  list). Detail view shows `last_interaction_at` as a relative phrase,
+  risk signals per linked obligation, and a capped, source-cited Recent
+  interactions section covering both identity edges and the legacy speaker
+  fallback ([ADR-0071](adr.d/0071-person-detail-recent-interactions.md)).
+- **Navigation on narrow screens**: all nine destinations remain reachable
+  through horizontal scrolling contained inside the tab list; the document
+  itself stays viewport-width at 390px.
 - **Timeline**: unchanged since last audit — still bucket-based, still not
   aware of a linked source's `occurred_at` (named out of scope in
   [ADR-0042](adr.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md),
@@ -141,18 +150,23 @@ Primary nav: `Today / Timeline / People / Inbox`, secondary/"Developer":
 
 ## The database, right now (a snapshot that's already changing)
 
-At the moment of writing: single-digit-to-thirties counts across
-obligations/people/candidates (9 obligations / 21 nodes / 24 candidates
-on this pass) — down from the ~2,025/1,007/1,008 the first audit found,
-and now staying down. The reduction is real, the isolation mechanism
-(`ringmaster_test`) genuinely exists on the running Postgres, and as of
+The first audit's reduction was real, and backend test isolation remains
+enforced, but the database is no longer staying down: on 2026-08-18 it held
+392 Person nodes, of which 357 matched `Pagination Test Person`, 8 matched
+`Needs Attention Filter Bare`, 5 matched `Recent Interaction Person`, and 4
+matched `Capped Recent Interactions Person`. These are browser fixtures
+written through the development backend, outside the unit-test guard. The
+`ringmaster_test` database genuinely exists on the running Postgres, and as of
 [ADR-0057](adr.d/0057-enforce-test-database-isolation-with-a-runtime-guard.md)
 it is now *enforced*, not merely documented: every backend `test_pool()`
 calls a runtime guard (`backend/src/lib.rs`) that panics unless
 `DATABASE_URL` targets `ringmaster_test`, so a stray `cargo test` against
-the long-lived `ringmaster` database a person reads at `localhost:3000`
-now fails loudly instead of silently polluting it. The residue the first
-audit found has been cleared and the guard stops it recurring.
+the long-lived `ringmaster` database a person reads at `localhost:3001`
+now fails loudly instead of silently polluting it. Browser-test prevention is
+now closed by [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md):
+Playwright's backend and Vite instance run on dedicated ports (18080/13001)
+against `ringmaster_test`, with the backend refusing to start against any
+other database when `RINGMASTER_REQUIRE_TEST_DATABASE=true`.
 
 ## Why it's built this way
 
@@ -168,9 +182,19 @@ mid-audit HEAD movements are just the latest instance of that.
 - Live Outlook/Teams/Calendar/SharePoint connectors — deliberately deferred
   pending an access-control decision for sensitive data
   ([VISION.md](VISION.md#open-questions-for-future-adrs)).
-- Person/participant-to-Person-node linking at ingestion time — participant
-  names, and `last_interaction_at`'s speaker match, are still plain-string
-  based, not resolved graph edges.
+- Playwright previously ran against the development backend/database and
+  repopulated the People list with hundreds of fixtures.
+  [ADR-0073](adr.d/0073-isolate-playwright-from-dev-database.md) now moves
+  browser tests to dedicated ports over `ringmaster_test`; the existing
+  polluted rows still require separately confirmed cleanup, which remains
+  out of scope for that ADR.
+- Participant/speaker names now resolve to existing Person nodes by exact,
+  case-insensitive name during new ingestion and create `participated_in`
+  edges. `last_interaction_at` now uses those identity edges while retaining
+  the legacy speaker fallback for older sources. Fuzzy matching, Person-node
+  creation for unknown names, and backfill of older sources remain deliberately
+  out of scope. Person detail now exposes the readable Past interaction list
+  through [ADR-0071](adr.d/0071-person-detail-recent-interactions.md).
 - Natural-language date parsing ("last week") anywhere — every date
   boundary is RFC3339, supplied by the caller.
 - "Upcoming conversation" on a person's page — no calendar/future-meeting
@@ -180,7 +204,7 @@ mid-audit HEAD movements are just the latest instance of that.
   Engine — [ADR-0054](adr.d/0054-congruence-engine-v1-isolated-commitment-signal.md)
   only ships the narrow, honest slice (zero linked edges at all); checking
   against real delivery work needs ADO ingestion that doesn't exist yet.
-- A pagination/cap policy for the People/Obligations/Candidates *list*
-  views (as opposed to Today's sections, which are now all capped) —
-  still fetch-all, per the first audit's finding.
+- People, Obligations, and Candidates list views now page in batches of 50
+  with an explicit Load more control ([ADR-0059](adr.d/0059-list-view-pagination.md));
+  the earlier fetch-all audit finding is no longer current.
 

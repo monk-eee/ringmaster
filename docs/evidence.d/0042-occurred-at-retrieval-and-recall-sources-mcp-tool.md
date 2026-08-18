@@ -13,14 +13,14 @@ id = "node-responses-include-occurred-at"
 invariant = "Node carries occurred_at, selected by get_node and list_nodes, so every existing response serializing a Node includes it."
 type = "present"
 pattern = 'pub occurred_at: Option<chrono::DateTime<chrono::Utc>>,'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/node.rs"]
 
 [[check]]
 id = "nodes-route-filters-by-occurred-at-range"
 invariant = "GET /api/nodes filters by occurred_from/occurred_to and rejects an unparseable bound with 400."
 type = "present"
 pattern = 'nodes_route_filters_by_occurred_at_range_and_rejects_an_unparseable_bound'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "nodes-route-unchanged-without-date-params"
@@ -33,7 +33,7 @@ last_verified = "2026-08-17"
 id = "mcp-exposes-recall-sources-tool"
 invariant = "The ringmaster-ingest MCP server exposes a second tool, recall_sources, filtering by the same range/type without requiring an embedding model."
 type = "present"
-pattern = 'async fn recall_sources\(&self, Parameters\(params\): Parameters<RecallSourcesParams>\)'
+pattern = 'async fn recall_sources\(\s*&self,\s*Parameters\(params\): Parameters<RecallSourcesParams>'
 paths = ["backend/src/bin/ringmaster-ingest/mcp.rs"]
 ```
 

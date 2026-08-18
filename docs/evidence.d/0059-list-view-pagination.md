@@ -12,22 +12,22 @@ adr = "0059-list-view-pagination"
 id = "obligations-route-accepts-limit-and-offset"
 invariant = "GET /api/obligations accepts limit/offset and applies them as SQL LIMIT/OFFSET, clamped rather than rejected."
 type = "present"
-pattern = 'fn list_obligations\(State\(pool\): State<PgPool>, Query\(params\): Query<ListQuery>\)'
-paths = ["backend/src/api.rs"]
+pattern = '(?:pub\(super\)\s+)?async fn list_obligations\([\s\S]*?State\(pool\): State<PgPool>,[\s\S]*?Query\(params\): Query<ListQuery>,?[\s\S]*?\)'
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "candidates-route-accepts-limit-and-offset"
 invariant = "GET /api/candidates accepts limit/offset and applies them as SQL LIMIT/OFFSET, clamped rather than rejected."
 type = "present"
-pattern = 'fn list_candidates\(State\(pool\): State<PgPool>, Query\(params\): Query<ListQuery>\)'
-paths = ["backend/src/api.rs"]
+pattern = '(?:pub\(super\)\s+)?async fn list_candidates\([\s\S]*?State\(pool\): State<PgPool>,[\s\S]*?Query\(params\): Query<ListQuery>,?[\s\S]*?\)'
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "nodes-route-limit-offset-is-additive"
 invariant = "GET /api/nodes accepts limit/offset; omitting both preserves exact current behavior."
 type = "present"
 pattern = 'const MAX_LIST_LIMIT: i64 = 200;'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "list-views-offer-load-more"

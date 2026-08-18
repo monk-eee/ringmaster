@@ -13,28 +13,28 @@ id = "supersede-defaults-false-and-is-unchanged"
 invariant = "POST /api/edges with supersede omitted/false stores valid_from/valid_to as NULL, unchanged from today."
 type = "present"
 pattern = 'edge_create_route_without_supersede_leaves_valid_from_and_valid_to_null'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "supersede-closes-prior-current-edge"
 invariant = "POST /api/edges with supersede: true closes the prior current edge's valid_to and inserts the new edge as current."
 type = "present"
 pattern = 'edge_create_route_with_supersede_closes_the_prior_current_edge'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "supersede-matches-from-id-and-edge-type"
 invariant = "Supersede matching keys on (from_id, edge_type) only, not to_id."
 type = "present"
 pattern = 'WHERE from_id = \$2 AND edge_type = \$3 AND valid_to IS NULL'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/edge.rs"]
 
 [[check]]
 id = "edge-reads-include-validity-window"
 invariant = "GET /api/nodes/:id neighbors and the POST /api/edges response both include valid_from/valid_to."
 type = "present"
 pattern = 'e\.valid_from, e\.valid_to'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "graph-explorer-renders-temporal-edges"

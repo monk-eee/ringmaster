@@ -13,7 +13,7 @@ id = "obligation-health-returns-fixed-five-values"
 invariant = "obligation_health returns exactly one of Completed/At Risk/Broken/Stalled/Healthy, never a sixth value or a number."
 type = "present"
 pattern = 'fn obligation_health\('
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "obligation-health-attached-at-existing-call-sites"
@@ -27,7 +27,7 @@ id = "obligation-health-distinguishes-broken-from-stalled"
 invariant = "An overdue, still-open Obligation with no stale signal returns Broken, not Stalled."
 type = "present"
 pattern = "obligation_health_distinguishes_broken_from_stalled"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 ```
 
 ## Notes

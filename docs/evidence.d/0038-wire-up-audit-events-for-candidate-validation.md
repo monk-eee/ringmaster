@@ -13,28 +13,28 @@ id = "accept-writes-audit-row"
 invariant = "Accepting a candidate writes an immutable audit row in the same transaction as the state change."
 type = "present"
 pattern = 'accept_route_writes_an_audit_row_with_the_honest_placeholder_actor'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "reject-writes-audit-row"
 invariant = "Rejecting a candidate writes an immutable audit row in the same transaction as the state change."
 type = "present"
 pattern = 'reject_route_writes_an_audit_row'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "promote-writes-audit-row"
 invariant = "Promoting a candidate writes an immutable audit row in the same transaction as the state change."
 type = "present"
 pattern = 'promote_route_writes_an_audit_row'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "actor-is-honest-placeholder"
 invariant = "The recorded actor is the literal local-operator placeholder, not a fabricated per-request identity."
 type = "present"
 pattern = '"local-operator"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 ```
 
 ## Notes

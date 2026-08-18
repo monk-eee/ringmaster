@@ -116,10 +116,20 @@ export type RelationshipObligation = {
   risk_signals: RiskSignal[];
 };
 
+export type RecentInteraction = {
+  source_id: string;
+  source_type: string;
+  title: string;
+  occurred_at: string;
+  evidence_mode: "participated_in" | "legacy_speaker";
+};
+
 export type NodeDetail = GraphNode & {
   neighbors: NodeNeighbor[];
   relationship: { at_risk: RelationshipObligation[]; open: RelationshipObligation[] } | null;
   last_interaction_at: string | null;
+  recent_interactions: RecentInteraction[];
+  recent_interactions_total: number;
 };
 
 export type Edge = {
@@ -233,6 +243,25 @@ export function correctCandidate(candidateId: string, correction: { candidate_ty
 
 export function promoteCandidate(candidateId: string): Promise<Obligation> {
   return postJson<Obligation>(`/api/candidates/${encodeURIComponent(candidateId)}/promote`);
+}
+
+export type BatchTransitionError = { candidate_id: string; error: string };
+export type BatchTransitionResult = { updated: Candidate[]; errors: BatchTransitionError[] };
+
+// ADR-0076: transitions many candidates in one request instead of one HTTP
+// round trip per candidate -- still the same human accept/reject gate,
+// just exercised in bulk.
+export function batchTransitionCandidates(candidateIds: string[], action: "accept" | "reject"): Promise<BatchTransitionResult> {
+  return postJson<BatchTransitionResult>("/api/candidates/batch", { candidate_ids: candidateIds, action });
+}
+
+export type BatchPromoteResult = { promoted: Obligation[]; errors: BatchTransitionError[] };
+
+// ADR-0077: promotes many accepted/corrected candidates to their own new
+// Obligations in one request -- completes the bulk triage loop ADR-0076
+// started, since Accept alone doesn't make a candidate actionable.
+export function batchPromoteCandidates(candidateIds: string[]): Promise<BatchPromoteResult> {
+  return postJson<BatchPromoteResult>("/api/candidates/batch-promote", { candidate_ids: candidateIds });
 }
 
 export function fetchNodes(nodeType?: string, needsAttention?: boolean, limit?: number, offset?: number): Promise<GraphNode[]> {

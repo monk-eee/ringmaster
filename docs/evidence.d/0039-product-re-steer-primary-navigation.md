@@ -23,6 +23,20 @@ pattern = 'const SECONDARY_TABS: Tab\[\] = \["obligations", "search", "graph"'
 paths = ["frontend/src/App.tsx"]
 
 [[check]]
+id = "narrow-nav-scrolls-within-tab-list"
+invariant = "On narrow viewports, the complete primary/secondary navigation scrolls inside its tab list instead of widening the document."
+type = "present"
+pattern = '\.tabs\s*\{[\s\S]*?max-width: 100%;[\s\S]*?overflow-x: auto;'
+paths = ["frontend/public/style.css"]
+
+[[check]]
+id = "playwright-proves-narrow-nav-remains-reachable"
+invariant = "Focused browser coverage proves the document stays viewport-wide at 390px and the final Activity tab remains reachable."
+type = "present"
+pattern = 'primary navigation scrolls internally without widening a narrow viewport[\s\S]*?scrollWidth[\s\S]*?Activity'
+paths = ["frontend/tests/obligations.spec.ts"]
+
+[[check]]
 id = "today-page-renders-required-sections"
 invariant = "The Today page renders a greeting, the capped ranked list, a labeled \"Do these together\" section, and a compact coming-soon strip, in that order (robust to DailyBrief's props being reformatted across multiple lines, e.g. ADR-0047's onSelect prop)."
 type = "present"
@@ -63,7 +77,9 @@ reusing the same relationship-group rendering the Graph Explorer already
 had), and the Inbox relabel of Candidates. Verified with
 `npx tsc --noEmit`, `npm run build`, and Playwright coverage exercising
 the new tab labels, the primary/secondary grouping, and the People list/
-detail flow. `no-new-backend-or-dependency` stays a reasoned `manual`
+detail flow. Narrow-viewport coverage also proves the tab list contains its
+own horizontal scroll at 390px while Activity remains reachable, without
+widening the document. `no-new-backend-or-dependency` stays a reasoned `manual`
 check for the same reason EV-0021/EV-0033 keep an equivalent claim
 manual; confirmed by diff review that `backend/` changes in this slice
 are comment-only (correcting a stale ADR-number reference) and

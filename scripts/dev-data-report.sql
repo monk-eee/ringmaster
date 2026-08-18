@@ -52,3 +52,26 @@ SELECT count(*) AS total FROM source_fragments;
 
 \echo '--- audit_events: total count (immutable/append-only, ADR-0008; not itself deleted by the paired cleanup script) ---'
 SELECT count(*) AS total FROM audit_events;
+
+\echo '--- nodes (person): known Playwright browser-test fixture name prefixes (ADR-0073) ---'
+-- Disclosed, conservative heuristic: these are the exact fixture-name
+-- prefixes obligations.spec.ts uses when it creates Person nodes against
+-- whatever database the app under test is pointed at. Before ADR-0073,
+-- that was the real ringmaster database; this section exists to make that
+-- pollution visible and measurable, not to justify deleting it here -- this
+-- script makes no writes of any kind.
+WITH classified AS (
+    SELECT
+        canonical_text LIKE 'Pagination Test Person%'
+        OR canonical_text LIKE 'Needs Attention Filter Bare%'
+        OR canonical_text LIKE 'Recent Interaction Person%'
+        OR canonical_text LIKE 'Capped Recent Interactions Person%'
+            AS matches_known_playwright_prefix
+    FROM nodes
+    WHERE node_type = 'person'
+)
+SELECT
+    count(*) FILTER (WHERE matches_known_playwright_prefix) AS known_playwright_fixture,
+    count(*) FILTER (WHERE NOT matches_known_playwright_prefix) AS not_matching,
+    count(*) AS total
+FROM classified;

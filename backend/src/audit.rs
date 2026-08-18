@@ -53,7 +53,9 @@ where
 /// clamped to `[1, 200]` (default 50 for `None`) rather than rejected --
 /// this is a read-only diagnostic feed, not a validated write.
 pub async fn recent(pool: &PgPool, limit: Option<i64>) -> Result<Vec<AuditEvent>, sqlx::Error> {
-    let limit = limit.unwrap_or(DEFAULT_RECENT_LIMIT).clamp(1, MAX_RECENT_LIMIT);
+    let limit = limit
+        .unwrap_or(DEFAULT_RECENT_LIMIT)
+        .clamp(1, MAX_RECENT_LIMIT);
     sqlx::query_as(
         "SELECT id, actor, action, previous_state, new_state, source, policy_outcome, recorded_at \
          FROM audit_events ORDER BY recorded_at DESC LIMIT $1",
@@ -95,26 +97,39 @@ mod tests {
         .await
         .expect("append audit row");
 
-        let update_result = sqlx::query("UPDATE audit_events SET action = 'tampered' WHERE id = $1")
-            .bind(event_id)
-            .execute(&pool)
-            .await;
-        assert!(update_result.is_err(), "UPDATE must be rejected by the append-only trigger");
+        let update_result =
+            sqlx::query("UPDATE audit_events SET action = 'tampered' WHERE id = $1")
+                .bind(event_id)
+                .execute(&pool)
+                .await;
+        assert!(
+            update_result.is_err(),
+            "UPDATE must be rejected by the append-only trigger"
+        );
 
         let delete_result = sqlx::query("DELETE FROM audit_events WHERE id = $1")
             .bind(event_id)
             .execute(&pool)
             .await;
-        assert!(delete_result.is_err(), "DELETE must be rejected by the append-only trigger");
+        assert!(
+            delete_result.is_err(),
+            "DELETE must be rejected by the append-only trigger"
+        );
     }
 
     #[tokio::test]
     async fn recent_orders_newest_first_and_respects_limit() {
         let pool = test_pool().await;
         let rows = recent(&pool, Some(5)).await.expect("read recent");
-        assert!(rows.len() <= 5, "must never return more than the requested limit");
+        assert!(
+            rows.len() <= 5,
+            "must never return more than the requested limit"
+        );
         for pair in rows.windows(2) {
-            assert!(pair[0].recorded_at >= pair[1].recorded_at, "rows must be ordered newest first");
+            assert!(
+                pair[0].recorded_at >= pair[1].recorded_at,
+                "rows must be ordered newest first"
+            );
         }
     }
 
@@ -122,7 +137,10 @@ mod tests {
     async fn recent_clamps_a_limit_above_the_maximum() {
         let pool = test_pool().await;
         let rows = recent(&pool, Some(10_000)).await.expect("read recent");
-        assert!(rows.len() <= 200, "limit must be clamped to the maximum of 200");
+        assert!(
+            rows.len() <= 200,
+            "limit must be clamped to the maximum of 200"
+        );
     }
 
     #[tokio::test]
@@ -136,21 +154,36 @@ mod tests {
     async fn recent_defaults_to_fifty_when_no_limit_given() {
         let pool = test_pool().await;
         let rows = recent(&pool, None).await.expect("read recent");
-        assert!(rows.len() <= 50, "omitting limit must default to at most 50");
+        assert!(
+            rows.len() <= 50,
+            "omitting limit must default to at most 50"
+        );
     }
 
     #[tokio::test]
     async fn a_newly_recorded_row_is_findable_via_recent() {
         let pool = test_pool().await;
         let marker = format!("recent-marker-{}", Uuid::new_v4());
-        record(&pool, "test-actor", "test-action", None, Some(json!({"marker": marker})), "test", "advise")
-            .await
-            .expect("append row");
+        record(
+            &pool,
+            "test-actor",
+            "test-action",
+            None,
+            Some(json!({"marker": marker})),
+            "test",
+            "advise",
+        )
+        .await
+        .expect("append row");
 
         let rows = recent(&pool, Some(200)).await.expect("read recent");
         assert!(
-            rows.iter()
-                .any(|row| row.new_state.as_ref().and_then(|value| value.get("marker")).and_then(|value| value.as_str()) == Some(marker.as_str())),
+            rows.iter().any(|row| row
+                .new_state
+                .as_ref()
+                .and_then(|value| value.get("marker"))
+                .and_then(|value| value.as_str())
+                == Some(marker.as_str())),
             "a just-recorded row must appear in the 200-row window (it is the newest possible row)"
         );
     }

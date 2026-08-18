@@ -3,8 +3,14 @@ use serde_json::{json, Value as Json};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-pub const ALLOWED_CANDIDATE_TYPES: [&str; 6] =
-    ["commitment", "request", "risk", "follow_up", "decision", "expectation"];
+pub const ALLOWED_CANDIDATE_TYPES: [&str; 6] = [
+    "commitment",
+    "request",
+    "risk",
+    "follow_up",
+    "decision",
+    "expectation",
+];
 
 /// Rejected before any row is written, so an invalid candidate never
 /// reaches the append-only event log (ADR-0011).
@@ -31,7 +37,10 @@ impl From<sqlx::Error> for ExtractionError {
     }
 }
 
-fn validate_candidate_payload(candidate_type: &str, confidence: Option<f32>) -> Result<(), ExtractionError> {
+fn validate_candidate_payload(
+    candidate_type: &str,
+    confidence: Option<f32>,
+) -> Result<(), ExtractionError> {
     if !ALLOWED_CANDIDATE_TYPES.contains(&candidate_type) {
         return Err(ExtractionError::InvalidPayload(format!(
             "candidate_type must be one of {ALLOWED_CANDIDATE_TYPES:?}, got {candidate_type:?}"
@@ -222,18 +231,32 @@ pub async fn extract_candidate_via_model(
         "{EXTRACTION_PROMPT_PREAMBLE}\n\nReference date: {}\n\nFragment: {fragment_text}",
         reference_date.to_rfc3339()
     );
-    let raw_response = model_adapter::complete(config, &prompt).await.map_err(ModelExtractionError::Model)?;
+    let raw_response = model_adapter::complete(config, &prompt)
+        .await
+        .map_err(ModelExtractionError::Model)?;
 
-    let json_text = extract_json_object(&raw_response)
-        .ok_or_else(|| ModelExtractionError::Parse(format!("no JSON object found in: {raw_response:?}")))?;
-    let parsed: Json = serde_json::from_str(json_text)
-        .map_err(|error| ModelExtractionError::Parse(format!("invalid JSON from model: {error}")))?;
+    let json_text = extract_json_object(&raw_response).ok_or_else(|| {
+        ModelExtractionError::Parse(format!("no JSON object found in: {raw_response:?}"))
+    })?;
+    let parsed: Json = serde_json::from_str(json_text).map_err(|error| {
+        ModelExtractionError::Parse(format!("invalid JSON from model: {error}"))
+    })?;
 
-    let Some(candidate_type) = parsed.get("candidate_type").and_then(|value| value.as_str()) else {
+    let Some(candidate_type) = parsed
+        .get("candidate_type")
+        .and_then(|value| value.as_str())
+    else {
         return Ok(None);
     };
-    let statement = parsed.get("statement").and_then(|value| value.as_str()).unwrap_or("").to_string();
-    let confidence = parsed.get("confidence").and_then(|value| value.as_f64()).map(|value| value as f32);
+    let statement = parsed
+        .get("statement")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let confidence = parsed
+        .get("confidence")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32);
     // ADR-0058: a malformed or absent due_at degrades to None, never an error.
     let due_at = parsed
         .get("due_at")
@@ -244,9 +267,19 @@ pub async fn extract_candidate_via_model(
     let owner_name = parsed.get("owner_name").and_then(|value| value.as_str());
 
     let candidate_id = Uuid::new_v4();
-    extract_candidate_with_due_at(pool, candidate_id, candidate_type, &statement, source_fragment_id, confidence, Some(&config.model), due_at, owner_name)
-        .await
-        .map_err(ModelExtractionError::Persist)?;
+    extract_candidate_with_due_at(
+        pool,
+        candidate_id,
+        candidate_type,
+        &statement,
+        source_fragment_id,
+        confidence,
+        Some(&config.model),
+        due_at,
+        owner_name,
+    )
+    .await
+    .map_err(ModelExtractionError::Persist)?;
     Ok(Some(candidate_id))
 }
 
@@ -266,7 +299,12 @@ pub async fn candidate_extracted_due_at(
     .fetch_optional(pool)
     .await?;
     Ok(row
-        .and_then(|(payload,)| payload.get("due_at").and_then(|v| v.as_str()).map(str::to_string))
+        .and_then(|(payload,)| {
+            payload
+                .get("due_at")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .and_then(|text| chrono::DateTime::parse_from_rfc3339(&text).ok())
         .map(|value| value.with_timezone(&chrono::Utc)))
 }
@@ -275,7 +313,10 @@ pub async fn candidate_extracted_due_at(
 /// original `extracted` event, if any. Returns `None` when the candidate has
 /// no stated owner or no extracted event. Used at promotion to resolve an
 /// `owns` edge from the source's stated responsible party.
-pub async fn candidate_extracted_owner_name(pool: &PgPool, candidate_id: Uuid) -> Result<Option<String>, sqlx::Error> {
+pub async fn candidate_extracted_owner_name(
+    pool: &PgPool,
+    candidate_id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
     let row: Option<(Json,)> = sqlx::query_as(
         "SELECT payload FROM candidate_events WHERE candidate_id = $1 AND event_type = 'extracted' \
          ORDER BY recorded_at, id LIMIT 1",
@@ -283,7 +324,12 @@ pub async fn candidate_extracted_owner_name(pool: &PgPool, candidate_id: Uuid) -
     .bind(candidate_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.and_then(|(payload,)| payload.get("owner_name").and_then(|v| v.as_str()).map(str::to_string)))
+    Ok(row.and_then(|(payload,)| {
+        payload
+            .get("owner_name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    }))
 }
 
 /// Derives current candidate state from the full event log alone
@@ -298,13 +344,28 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
     .fetch_all(pool)
     .await?;
 
-    let mut states: std::collections::HashMap<Uuid, CandidateState> = std::collections::HashMap::new();
+    let mut states: std::collections::HashMap<Uuid, CandidateState> =
+        std::collections::HashMap::new();
     for event in &events {
         match event.event_type.as_str() {
             "extracted" => {
-                let candidate_type = event.payload.get("candidate_type").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let statement = event.payload.get("statement").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let confidence = event.payload.get("confidence").and_then(|v| v.as_f64()).map(|v| v as f32);
+                let candidate_type = event
+                    .payload
+                    .get("candidate_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let statement = event
+                    .payload
+                    .get("statement")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let confidence = event
+                    .payload
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32);
                 let source_fragment_id = event
                     .payload
                     .get("source_fragment_id")
@@ -322,18 +383,25 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
                     },
                 );
             }
-            transition @ ("accepted" | "corrected" | "rejected" | "superseded" | "observed_complete" | "closed" | "promoted") => {
+            transition @ ("accepted" | "corrected" | "rejected" | "superseded"
+            | "observed_complete" | "closed" | "promoted") => {
                 if let Some(state) = states.get_mut(&event.candidate_id) {
                     state.validation_state = transition.to_string();
-                    if let Some(statement) = event.payload.get("statement").and_then(|v| v.as_str()) {
+                    if let Some(statement) = event.payload.get("statement").and_then(|v| v.as_str())
+                    {
                         state.statement = statement.to_string();
                     }
-                    if let Some(candidate_type) = event.payload.get("candidate_type").and_then(|v| v.as_str()) {
+                    if let Some(candidate_type) =
+                        event.payload.get("candidate_type").and_then(|v| v.as_str())
+                    {
                         state.candidate_type = candidate_type.to_string();
                     }
                     if transition == "promoted" {
-                        if let Some(obligation_id) =
-                            event.payload.get("obligation_id").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())
+                        if let Some(obligation_id) = event
+                            .payload
+                            .get("obligation_id")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| Uuid::parse_str(s).ok())
                         {
                             state.promoted_obligation_id = Some(obligation_id);
                         }
@@ -345,7 +413,9 @@ pub async fn rebuild_candidate_projection(pool: &PgPool) -> Result<u64, sqlx::Er
     }
 
     let mut tx = pool.begin().await?;
-    sqlx::query("TRUNCATE candidate_projection").execute(&mut *tx).await?;
+    sqlx::query("TRUNCATE candidate_projection")
+        .execute(&mut *tx)
+        .await?;
     let mut written = 0u64;
     for (candidate_id, state) in &states {
         sqlx::query(
@@ -373,8 +443,8 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
 
     async fn test_pool() -> PgPool {
-        let database_url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set to run extraction tests");
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set to run extraction tests");
         crate::guard_test_database(&database_url);
         PgPoolOptions::new()
             .max_connections(2)
@@ -386,7 +456,16 @@ mod tests {
     #[tokio::test]
     async fn deterministic_validation_rejects_an_unrecognized_candidate_type() {
         let pool = test_pool().await;
-        let result = extract_candidate(&pool, Uuid::new_v4(), "not_a_real_type", "x", Uuid::new_v4(), None, None).await;
+        let result = extract_candidate(
+            &pool,
+            Uuid::new_v4(),
+            "not_a_real_type",
+            "x",
+            Uuid::new_v4(),
+            None,
+            None,
+        )
+        .await;
         assert!(matches!(result, Err(ExtractionError::InvalidPayload(_))));
     }
 
@@ -411,13 +490,26 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok(), "live extraction call failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "live extraction call failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
     async fn deterministic_validation_rejects_out_of_range_confidence() {
         let pool = test_pool().await;
-        let result = extract_candidate(&pool, Uuid::new_v4(), "risk", "x", Uuid::new_v4(), Some(1.5), None).await;
+        let result = extract_candidate(
+            &pool,
+            Uuid::new_v4(),
+            "risk",
+            "x",
+            Uuid::new_v4(),
+            Some(1.5),
+            None,
+        )
+        .await;
         assert!(matches!(result, Err(ExtractionError::InvalidPayload(_))));
     }
 
@@ -428,17 +520,39 @@ mod tests {
         let pool = test_pool().await;
 
         let with_owner = Uuid::new_v4();
-        extract_candidate_with_due_at(&pool, with_owner, "request", "send the plan", Uuid::new_v4(), Some(0.8), None, None, Some("Roopa"))
+        extract_candidate_with_due_at(
+            &pool,
+            with_owner,
+            "request",
+            "send the plan",
+            Uuid::new_v4(),
+            Some(0.8),
+            None,
+            None,
+            Some("Roopa"),
+        )
+        .await
+        .expect("extract candidate with a stated owner");
+        let owner = candidate_extracted_owner_name(&pool, with_owner)
             .await
-            .expect("extract candidate with a stated owner");
-        let owner = candidate_extracted_owner_name(&pool, with_owner).await.expect("read owner_name");
+            .expect("read owner_name");
         assert_eq!(owner.as_deref(), Some("Roopa"));
 
         let without_owner = Uuid::new_v4();
-        extract_candidate(&pool, without_owner, "request", "send the plan", Uuid::new_v4(), Some(0.8), None)
+        extract_candidate(
+            &pool,
+            without_owner,
+            "request",
+            "send the plan",
+            Uuid::new_v4(),
+            Some(0.8),
+            None,
+        )
+        .await
+        .expect("extract candidate without a stated owner");
+        let owner = candidate_extracted_owner_name(&pool, without_owner)
             .await
-            .expect("extract candidate without a stated owner");
-        let owner = candidate_extracted_owner_name(&pool, without_owner).await.expect("read owner_name");
+            .expect("read owner_name");
         assert_eq!(owner, None);
     }
 
@@ -446,31 +560,56 @@ mod tests {
     async fn candidate_events_cannot_be_mutated_or_deleted() {
         let pool = test_pool().await;
         let candidate_id = Uuid::new_v4();
-        let event_id = extract_candidate(&pool, candidate_id, "risk", "stated risk", Uuid::new_v4(), Some(0.7), Some("test-model"))
-            .await
-            .expect("extract candidate");
+        let event_id = extract_candidate(
+            &pool,
+            candidate_id,
+            "risk",
+            "stated risk",
+            Uuid::new_v4(),
+            Some(0.7),
+            Some("test-model"),
+        )
+        .await
+        .expect("extract candidate");
 
-        let update_result = sqlx::query("UPDATE candidate_events SET event_type = 'tampered' WHERE id = $1")
-            .bind(event_id)
-            .execute(&pool)
-            .await;
-        assert!(update_result.is_err(), "UPDATE must be rejected by the append-only trigger");
+        let update_result =
+            sqlx::query("UPDATE candidate_events SET event_type = 'tampered' WHERE id = $1")
+                .bind(event_id)
+                .execute(&pool)
+                .await;
+        assert!(
+            update_result.is_err(),
+            "UPDATE must be rejected by the append-only trigger"
+        );
 
         let delete_result = sqlx::query("DELETE FROM candidate_events WHERE id = $1")
             .bind(event_id)
             .execute(&pool)
             .await;
-        assert!(delete_result.is_err(), "DELETE must be rejected by the append-only trigger");
+        assert!(
+            delete_result.is_err(),
+            "DELETE must be rejected by the append-only trigger"
+        );
     }
 
     #[tokio::test]
     async fn correction_preserves_provenance_and_projection_reflects_it_after_rebuild() {
         let pool = test_pool().await;
         let candidate_id = Uuid::new_v4();
-        extract_candidate(&pool, candidate_id, "request", "send the commitments", Uuid::new_v4(), Some(0.6), Some("test-model"))
+        extract_candidate(
+            &pool,
+            candidate_id,
+            "request",
+            "send the commitments",
+            Uuid::new_v4(),
+            Some(0.6),
+            Some("test-model"),
+        )
+        .await
+        .expect("extract candidate");
+        rebuild_candidate_projection(&pool)
             .await
-            .expect("extract candidate");
-        rebuild_candidate_projection(&pool).await.expect("rebuild after extraction");
+            .expect("rebuild after extraction");
 
         let after_extraction: CandidateProjection =
             sqlx::query_as("SELECT candidate_id, candidate_type, statement, validation_state, confidence FROM candidate_projection WHERE candidate_id = $1")
@@ -481,10 +620,17 @@ mod tests {
         assert_eq!(after_extraction.validation_state, "candidate");
         assert_eq!(after_extraction.candidate_type, "request");
 
-        transition_candidate(&pool, candidate_id, "corrected", json!({"candidate_type": "commitment"}))
+        transition_candidate(
+            &pool,
+            candidate_id,
+            "corrected",
+            json!({"candidate_type": "commitment"}),
+        )
+        .await
+        .expect("append corrected event");
+        rebuild_candidate_projection(&pool)
             .await
-            .expect("append corrected event");
-        rebuild_candidate_projection(&pool).await.expect("rebuild after correction");
+            .expect("rebuild after correction");
 
         let after_correction: CandidateProjection =
             sqlx::query_as("SELECT candidate_id, candidate_type, statement, validation_state, confidence FROM candidate_projection WHERE candidate_id = $1")
@@ -504,9 +650,19 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .expect("query candidate_events");
-        assert_eq!(events.len(), 2, "the original extracted event must still exist alongside the correction");
+        assert_eq!(
+            events.len(),
+            2,
+            "the original extracted event must still exist alongside the correction"
+        );
         assert_eq!(events[0].event_type, "extracted");
-        assert_eq!(events[0].payload.get("candidate_type").and_then(|v| v.as_str()), Some("request"));
+        assert_eq!(
+            events[0]
+                .payload
+                .get("candidate_type")
+                .and_then(|v| v.as_str()),
+            Some("request")
+        );
     }
 
     #[tokio::test]
@@ -514,17 +670,28 @@ mod tests {
         let pool = test_pool().await;
         let candidate_id = Uuid::new_v4();
         let source_fragment_id = Uuid::new_v4();
-        extract_candidate(&pool, candidate_id, "risk", "stated risk", source_fragment_id, Some(0.7), Some("test-model"))
+        extract_candidate(
+            &pool,
+            candidate_id,
+            "risk",
+            "stated risk",
+            source_fragment_id,
+            Some(0.7),
+            Some("test-model"),
+        )
+        .await
+        .expect("extract candidate");
+        rebuild_candidate_projection(&pool)
             .await
-            .expect("extract candidate");
-        rebuild_candidate_projection(&pool).await.expect("rebuild after extraction");
+            .expect("rebuild after extraction");
 
-        let (stored,): (Option<Uuid>,) =
-            sqlx::query_as("SELECT source_fragment_id FROM candidate_projection WHERE candidate_id = $1")
-                .bind(candidate_id)
-                .fetch_one(&pool)
-                .await
-                .expect("projection row after extraction");
+        let (stored,): (Option<Uuid>,) = sqlx::query_as(
+            "SELECT source_fragment_id FROM candidate_projection WHERE candidate_id = $1",
+        )
+        .bind(candidate_id)
+        .fetch_one(&pool)
+        .await
+        .expect("projection row after extraction");
         assert_eq!(stored, Some(source_fragment_id));
     }
 }

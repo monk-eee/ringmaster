@@ -13,7 +13,9 @@ pub enum ModelAdapterError {
 impl std::fmt::Display for ModelAdapterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotConfigured => write!(f, "RINGMASTER_LLM_URL is not set; extraction is disabled"),
+            Self::NotConfigured => {
+                write!(f, "RINGMASTER_LLM_URL is not set; extraction is disabled")
+            }
             Self::Request(error) => write!(f, "model request failed: {error}"),
             Self::UnexpectedResponse(reason) => write!(f, "unexpected model response: {reason}"),
         }
@@ -39,8 +41,14 @@ impl ModelConfig {
     pub fn from_env() -> Option<Self> {
         let url = env::var("RINGMASTER_LLM_URL").ok()?;
         let model = env::var("RINGMASTER_MODEL").unwrap_or_else(|_| "default".to_string());
-        let api_key = env::var("RINGMASTER_LLM_API_KEY").ok().filter(|key| !key.trim().is_empty());
-        Some(Self { url, model, api_key })
+        let api_key = env::var("RINGMASTER_LLM_API_KEY")
+            .ok()
+            .filter(|key| !key.trim().is_empty());
+        Some(Self {
+            url,
+            model,
+            api_key,
+        })
     }
 }
 
@@ -80,13 +88,24 @@ pub async fn complete(config: &ModelConfig, prompt: &str) -> Result<String, Mode
     let client = reqwest::Client::new();
     let request = ChatRequest {
         model: &config.model,
-        messages: vec![ChatMessage { role: "user", content: prompt }],
+        messages: vec![ChatMessage {
+            role: "user",
+            content: prompt,
+        }],
     };
-    let mut request_builder = client.post(format!("{}/chat/completions", config.url.trim_end_matches('/'))).json(&request);
+    let mut request_builder = client
+        .post(format!(
+            "{}/chat/completions",
+            config.url.trim_end_matches('/')
+        ))
+        .json(&request);
     if let Some(api_key) = &config.api_key {
         request_builder = request_builder.bearer_auth(api_key);
     }
-    let response = request_builder.send().await.map_err(ModelAdapterError::Request)?;
+    let response = request_builder
+        .send()
+        .await
+        .map_err(ModelAdapterError::Request)?;
     let parsed: ChatResponse = response.json().await.map_err(ModelAdapterError::Request)?;
     parsed
         .choices

@@ -13,14 +13,14 @@ id = "meeting-ingest-route-creates-ordered-fragments"
 invariant = "POST /api/meetings/ingest creates one Meeting and ordered source fragments, returning their identifiers with 201."
 type = "present"
 pattern = '"/api/meetings/ingest"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "meeting-ingest-validates-before-write"
 invariant = "Blank required fields return 400 and create no Meeting or source fragments."
 type = "present"
 pattern = 'title must not be blank'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-ingest-is-atomic"
@@ -34,14 +34,14 @@ id = "meeting-ingest-reuses-transcript-module"
 invariant = "The route delegates to the transcript module rather than duplicating parsing or persistence logic."
 type = "present"
 pattern = 'crate::transcript::ingest_transcript'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-ingest-does-not-run-models"
 invariant = "Successful meeting ingestion creates no extraction candidate or embedding implicitly."
 type = "present"
 pattern = 'ingest_meeting_route_never_creates_a_candidate_implicitly'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/ingestion.rs"]
 ```
 
 ## Notes

@@ -13,7 +13,7 @@ id = "daily-brief-returns-source-text"
 invariant = "GET /api/daily-brief returns the already-selected source_text on each item, matching GET /api/obligations."
 type = "present"
 pattern = '"source_text": source_text'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/obligations.rs"]
 
 [[check]]
 id = "today-row-hides-raw-id"

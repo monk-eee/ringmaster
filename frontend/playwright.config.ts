@@ -1,21 +1,52 @@
 import { defineConfig } from "@playwright/test";
 
-// ADR-0014: assumes `podman compose up -d` already has Postgres + the Rust
-// backend running and reachable at BACKEND_URL; this only launches Vite's
-// own dev server for the test run.
+// ADR-0073: Playwright never talks to the development backend/frontend
+// (8080/3001) -- it starts its own dedicated pair against the isolated
+// ringmaster_test database, so a browser test run can never write fixture
+// data into the database the running app and real ingestion read from.
+// Neither process is reused across runs (reuseExistingServer: false): if
+// something is already on 18080/13001, that is a stale process from a prior
+// run, not a server safe to attach to, and startup should fail loudly.
+const testDatabaseUrl =
+  process.env.PLAYWRIGHT_DATABASE_URL ||
+  "postgres://ringmaster:ringmaster-dev@localhost:5432/ringmaster_test";
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
-  webServer: {
-    command: "npx vite",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
-    env: {
-      BACKEND_URL: process.env.BACKEND_URL || "http://localhost:8080",
+  webServer: [
+    {
+      command:
+        "cargo run --manifest-path ../backend/Cargo.toml --bin ringmaster-backend",
+      url: "http://127.0.0.1:18080/health",
+      reuseExistingServer: false,
+      timeout: 180_000,
+      name: "Backend",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        DATABASE_URL: testDatabaseUrl,
+        RINGMASTER_BIND_ADDR: "127.0.0.1:18080",
+        RINGMASTER_REQUIRE_TEST_DATABASE: "true",
+        CARGO_TARGET_DIR: "../target/playwright-backend",
+      },
     },
-  },
+    {
+      command: "npx vite",
+      url: "http://127.0.0.1:13001",
+      reuseExistingServer: false,
+      timeout: 120_000,
+      name: "Frontend",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        BACKEND_URL: "http://127.0.0.1:18080",
+        VITE_PORT: "13001",
+      },
+    },
+  ],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: "http://127.0.0.1:13001",
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });

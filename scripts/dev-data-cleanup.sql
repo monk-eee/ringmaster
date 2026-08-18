@@ -14,12 +14,18 @@
 -- not just before a final irreversible step (ADR-0056).
 -- =====================================================================
 --
--- Heuristic (same as dev-data-report.sql, intentionally conservative):
---   * nodes: canonical_text ILIKE '%test%'.
---   * candidate_projection: statement ILIKE '%test%'.
---   * obligation_projection: source_fragment_id IS NULL (the only real
---     Obligation-creation path, ADR-0027's candidate promotion, always
---     carries one forward).
+-- Heuristic (intentionally conservative; NOT identical to
+-- dev-data-report.sql's generic preview -- see below):
+--   * nodes, non-person: canonical_text ILIKE '%test%'.
+--   * nodes, person: canonical_text ILIKE '%test%' OR a known ADR-0073
+--     Playwright browser-fixture name prefix (some don't contain "test").
+--   * candidate_projection / obligation_events: NOT bulk-deleted by
+--     content heuristic. Verified live 2026-08-18 against this database
+--     that "%test%" matches genuine extracted content (see below);
+--     obligation_projection's source_fragment_id IS NULL heuristic is
+--     kept (the only real Obligation-creation path, ADR-0027's candidate
+--     promotion, always carries one forward), but currently matches zero
+--     rows here.
 --
 -- obligation_events / candidate_events / source_fragments are append-only
 -- by design (ADR-0005/ADR-0008/ADR-0010): a DB-level trigger rejects any
@@ -43,11 +49,26 @@ BEGIN;
 CREATE TEMP TABLE _cleanup_obligation_ids AS
     SELECT obligation_id FROM obligation_projection WHERE source_fragment_id IS NULL;
 
+-- candidate_projection.statement ILIKE '%test%' is NOT used here: verified
+-- live 2026-08-18 that it matches genuine extracted content that merely
+-- discusses testing (e.g. "Please test the PubDev (pre-prod) environment.",
+-- "...no production-code-for-tests..."), not fixture pollution. Playwright
+-- has no known candidate-fixture naming convention the way it does for
+-- Person/Meeting nodes (see the prefixes below), so there is currently no
+-- safe automated heuristic for candidates -- any candidate cleanup must be
+-- reviewed statement-by-statement by hand, not deleted in bulk here.
 CREATE TEMP TABLE _cleanup_candidate_ids AS
-    SELECT candidate_id FROM candidate_projection WHERE statement ILIKE '%test%';
+    SELECT candidate_id FROM candidate_projection WHERE false;
 
 CREATE TEMP TABLE _cleanup_node_ids AS
-    SELECT id FROM nodes WHERE canonical_text ILIKE '%test%';
+    SELECT id FROM nodes
+    WHERE (node_type <> 'person' AND canonical_text ILIKE '%test%')
+       OR (node_type = 'person' AND (
+              canonical_text ILIKE '%test%'
+           OR canonical_text LIKE 'Needs Attention Filter Bare%'
+           OR canonical_text LIKE 'Recent Interaction Person%'
+           OR canonical_text LIKE 'Capped Recent Interactions Person%'
+       ));
 
 -- Append-only tables: disable the rejection triggers for this transaction
 -- only, to remove exactly the identified rows.

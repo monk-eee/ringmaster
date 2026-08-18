@@ -20,7 +20,17 @@ function parseStaleDays(argumentsList) {
 }
 
 function read(filePath) {
-  return fs.readFileSync(filePath, "utf8");
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    // A file listed moments earlier by allFiles()/recordFiles() can vanish
+    // or get renamed before this read (a concurrent commit/build/editor is
+    // common in this repo) -- treat that exactly like an empty file rather
+    // than crashing the whole check with an uncaught exception. Every
+    // caller already handles "no match"/"not accepted" correctly for "".
+    if (error.code === "ENOENT") return "";
+    throw error;
+  }
 }
 
 function relative(filePath) {
@@ -103,10 +113,23 @@ function wildcardExpression(pattern) {
   return new RegExp(`${expression}$`);
 }
 
+// Directories that are gitignored build/dependency output (see .gitignore):
+// never a legitimate source for an evidence pattern, and -- for target/ in
+// particular -- subject to concurrent mutation by a running cargo build,
+// which can otherwise crash this scan mid-walk with an ENOENT race.
+const IGNORED_DIRECTORY_NAMES = new Set([".git", ".mindleak", ".lodestar", "target", "node_modules", "test-results", "playwright-report", "dist"]);
+
 function allFiles(directory) {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  let entries;
+  try {
+    entries = fs.readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries.flatMap((entry) => {
     const entryPath = path.join(directory, entry.name);
-    if (entry.name === ".git" || entry.name === ".mindleak") return [];
+    if (IGNORED_DIRECTORY_NAMES.has(entry.name)) return [];
     return entry.isDirectory() ? allFiles(entryPath) : [entryPath];
   });
 }

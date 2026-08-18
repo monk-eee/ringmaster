@@ -13,28 +13,28 @@ id = "person-list-filters-by-needs-attention"
 invariant = "GET /api/nodes?node_type=person&needs_attention=true returns only people with a linked open/at-risk Obligation."
 type = "present"
 pattern = "needs_attention"
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/node.rs"]
 
 [[check]]
 id = "person-list-unchanged-without-filter"
 invariant = "Omitting needs_attention preserves the person list route's prior default behavior."
 type = "present"
 pattern = 'needs_attention: Option<bool>'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "person-detail-includes-last-interaction-at"
 invariant = "GET /api/nodes/:id (person) includes last_interaction_at derived from matching source_fragments.occurred_at."
 type = "present"
 pattern = "last_interaction_at"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "person-detail-relationship-includes-risk-signals"
 invariant = "Each Obligation in a person's relationship grouping includes risk_signals."
 type = "present"
 pattern = '"risk_signals": risk_signals\('
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "people-tab-defaults-to-needing-attention"

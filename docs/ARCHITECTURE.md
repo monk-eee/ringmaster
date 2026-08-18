@@ -185,16 +185,16 @@ flowchart TB
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Connects to Postgres, runs `sqlx::migrate!`, rebuilds the Obligation projection once at boot, serves the HTTP API on `:8080`. |
-| `api.rs` | All HTTP routes (axum `Router`), request/response shaping, error→status-code translation. |
+| `api/` | Split by responsibility (ADR-0072): `mod.rs` (`app()` router wiring, shared `ListQuery`/`clamp_list_params`, `/health`), `obligations.rs` (Daily Brief, Time Horizon, Focus Blocks, obligation detail/list routes), `ingestion.rs` (meeting/source ingestion + detail routes), `candidates.rs` (candidate list/accept/reject/correct/promote + extraction trigger), `search.rs` (semantic search route), `audit_events.rs` (audit feed route), `nodes.rs` (node/edge CRUD + traversal routes). Every route path and handler is unchanged; only file layout moved. |
 | `obligation.rs` | Obligation event vocabulary (`created`/`status_changed`/`closed`), append + projection rebuild, due-date and source-fragment carry-forward. |
 | `extraction.rs` | Candidate event vocabulary, deterministic validation, `extract_candidate_via_model` (calls `model_adapter`), `transition_candidate` (accept/reject). |
-| `graph.rs` | `nodes`/`edges`/`source_fragments` CRUD (including `list_nodes`/`update_node` for the write API), `embed_source_fragment`, `search_source_fragments`. |
+| `graph/` | Split by responsibility (ADR-0072): `node.rs` (`nodes` CRUD, `list_nodes`/`update_node`/`upsert_nodes`), `edge.rs` (`edges` CRUD, including temporal-validity supersede), `source_fragment.rs` (`source_fragments` CRUD, `embed_source_fragment`, `search_source_fragments`). `mod.rs` re-exports every item under `crate::graph::*` unchanged. |
 | `transcript.rs` | `ingest_transcript`: parses `Speaker: text` turns (explicitly provisional placeholder format), creates a meeting node + hashed fragments. |
 | `model_adapter.rs` | Optional OpenAI-compatible chat-completion client (`RINGMASTER_LLM_URL`/`RINGMASTER_MODEL`); typed error, never panics, never blocks when unconfigured. |
 | `embedding_adapter.rs` | Same pattern for embeddings (`RINGMASTER_EMBEDDING_URL`/`RINGMASTER_EMBEDDING_MODEL`), independently configurable from the chat model. |
 | `audit.rs` | `record()` — append one immutable audit row. Not yet called from anywhere. |
 
-**HTTP API surface** (all under the single `axum::Router` in `api.rs`):
+**HTTP API surface** (all under the single `axum::Router` built by `app()` in `api/mod.rs`):
 
 | Route | Method | Behavior |
 |---|---|---|
@@ -227,7 +227,7 @@ tests that need no live model.
 
 ## 6. Frontend architecture (`frontend/`)
 
-React 18 + Vite 5 SPA, `npm run dev` on `:3000`. Vite's dev server proxies
+React 18 + Vite 5 SPA, `npm run dev` on `:3001`. Vite's dev server proxies
 `/api/*` to the backend (`BACKEND_URL`, read server-side only — same-origin
 from the browser's perspective, no CORS needed).
 

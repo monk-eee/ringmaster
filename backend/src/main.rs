@@ -7,6 +7,7 @@ use sqlx::postgres::PgPoolOptions;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL")?;
+    ringmaster_backend::enforce_test_database_if_required(&database_url)?;
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -21,8 +22,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // ADR-0012: serves the read-only HTTP API instead of idling.
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
-    println!("ringmaster-backend: listening on :8080");
+    let bind_addr = ringmaster_backend::backend_bind_addr();
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    println!("ringmaster-backend: listening on {bind_addr}");
     axum::serve(listener, api::app(pool)).await?;
     Ok(())
 }

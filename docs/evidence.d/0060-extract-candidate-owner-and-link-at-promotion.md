@@ -20,14 +20,14 @@ id = "promotion-creates-owns-edge-on-exact-match"
 invariant = "Promoting a candidate whose owner_name exactly matches an existing Person node creates an owns edge in the same transaction."
 type = "present"
 pattern = "owner_person_id"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "promotion-unchanged-without-a-match"
 invariant = "Promoting a candidate with no owner_name, or one matching no existing Person, promotes exactly as before -- no new Person node, no edge."
 type = "present"
 pattern = "promotion_creates_no_owns_edge_without_an_exact_match"
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/candidates.rs"]
 
 [[check]]
 id = "backend-suite-passes-with-owner-extraction"

@@ -133,6 +133,10 @@ export default function App() {
     load();
   }, []);
 
+  useEffect(() => {
+    document.title = `Ringmaster — ${TAB_TITLES[tab]}`;
+  }, [tab]);
+
   const statuses = useMemo(() => Array.from(new Set(obligations.map((o) => o.status))).sort(), [obligations]);
 
   // ADR-0047: a Today/Obligations row opens the same shared detail view in

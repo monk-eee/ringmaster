@@ -13,35 +13,35 @@ id = "nodes-create-route-exists"
 invariant = "A route creates a node."
 type = "present"
 pattern = '"/api/nodes"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "edges-create-route-exists"
 invariant = "A route creates an edge."
 type = "present"
 pattern = '"/api/edges"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 
 [[check]]
 id = "nodes-list-route-exists"
 invariant = "A route lists nodes, optionally filtered by node_type."
 type = "present"
 pattern = 'fn list_nodes_route\('
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "nodes-detail-route-includes-neighbors"
 invariant = "A route reads one node plus its one-hop neighborhood of edges."
 type = "present"
 pattern = 'fn get_node_detail\('
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/nodes.rs"]
 
 [[check]]
 id = "nodes-patch-route-merges-attributes"
 invariant = "A route enriches a node's attributes via a shallow merge, never a wholesale replace."
 type = "present"
 pattern = 'attributes = attributes \|\|'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/node.rs"]
 ```
 
 ## Notes

@@ -13,14 +13,14 @@ id = "search-function-exists"
 invariant = "A function embeds a query and ranks embedded source fragments by cosine similarity to it."
 type = "present"
 pattern = 'fn search_source_fragments'
-paths = ["backend/src/graph.rs"]
+paths = ["backend/src/graph/source_fragment.rs"]
 
 [[check]]
 id = "search-route-exists"
 invariant = "A read-only route returns ranked search results, or a typed error for every embedding-adapter/validation outcome."
 type = "present"
 pattern = '"/api/search"'
-paths = ["backend/src/api.rs"]
+paths = ["backend/src/api/mod.rs"]
 ```
 
 ## Notes

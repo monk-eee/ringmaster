@@ -13,6 +13,26 @@
         "LODESTAR_AGENT": "copilot",
         "MINDLEAK_WORKSPACE": "${workspaceFolder}"
       }
+    },
+    "ringmaster": {
+      "type": "stdio",
+      "command": "cargo",
+      "args": [
+        "run",
+        "--quiet",
+        "--release",
+        "--manifest-path",
+        "${workspaceFolder}/backend/Cargo.toml",
+        "--bin",
+        "ringmaster-ingest",
+        "--",
+        "mcp-serve"
+      ],
+      "env": {
+        "DATABASE_URL": "postgres://ringmaster:ringmaster-dev@localhost:5432/ringmaster",
+        "RINGMASTER_EMBEDDING_URL": "http://localhost:11434/v1",
+        "RINGMASTER_EMBEDDING_MODEL": "nomic-embed-text"
+      }
     }
   }
 }

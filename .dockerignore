@@ -3,6 +3,8 @@
 .vscode
 docs
 target
+backend/target
+**/target
 
 # frontend/node_modules is .gitignored but must reach the build context
 # (frontend/Dockerfile COPYs it from the host; the container can't reach

@@ -78,3 +78,15 @@ accepted and implemented.
 | [ADR-0060: Extract an owner name from a candidate and link it at promotion](0060-extract-candidate-owner-and-link-at-promotion.md) | Accepted | [EV-0060](../evidence.d/0060-extract-candidate-owner-and-link-at-promotion.md) |
 | [ADR-0061: A derived Obligation health label — composing existing status and signals, not a new score](0061-obligation-health-label.md) | Accepted | [EV-0061](../evidence.d/0061-obligation-health-label.md) |
 | [ADR-0062: Auto-embed fragments on ingest (best-effort), so search has data](0062-auto-embed-fragments-on-ingest.md) | Accepted | [EV-0062](../evidence.d/0062-auto-embed-fragments-on-ingest.md) |
+| [ADR-0066: Expose non-destructive graph management over MCP](0066-non-destructive-graph-management-over-mcp.md) | Accepted | [EV-0066](../evidence.d/0066-non-destructive-graph-management-over-mcp.md) |
+| [ADR-0067: Pin the local frontend to port 3001](0067-pin-local-frontend-to-port-3001.md) | Accepted | [EV-0067](../evidence.d/0067-pin-local-frontend-to-port-3001.md) |
+| [ADR-0068: Add an optional API key to the embedding adapter](0068-embedding-adapter-optional-api-key.md) | Accepted | [EV-0068](../evidence.d/0068-embedding-adapter-optional-api-key.md) |
+| [ADR-0069: Resolve participant/speaker names to existing Person nodes at ingestion](0069-resolve-participants-to-person-nodes-at-ingestion.md) | Accepted | [EV-0069](../evidence.d/0069-resolve-participants-to-person-nodes-at-ingestion.md) |
+| [ADR-0070: Derive Person interaction recency from identity edges with a legacy fallback](0070-edge-backed-person-interaction-recency.md) | Accepted | [EV-0070](../evidence.d/0070-edge-backed-person-interaction-recency.md) |
+| [ADR-0071: Surface recent interaction sources on Person detail](0071-person-detail-recent-interactions.md) | Accepted | [EV-0071](../evidence.d/0071-person-detail-recent-interactions.md) |
+| [ADR-0072: Split oversized, low-cohesion backend modules with no behavior change](0072-split-oversized-low-cohesion-backend-modules.md) | Accepted | [EV-0072](../evidence.d/0072-split-oversized-low-cohesion-backend-modules.md) |
+| [ADR-0073: Isolate Playwright from the development database](0073-isolate-playwright-from-dev-database.md) | Accepted | [EV-0073](../evidence.d/0073-isolate-playwright-from-dev-database.md) |
+| [ADR-0074: Visual design system refresh — a considered look, zero behavior change](0074-visual-design-system-refresh.md) | Accepted | [EV-0074](../evidence.d/0074-visual-design-system-refresh.md) |
+| [ADR-0075: Restore the mascot logo in the app header](0075-restore-mascot-logo-in-header.md) | Accepted | [EV-0075](../evidence.d/0075-restore-mascot-logo-in-header.md) |
+| [ADR-0076: Bulk candidate triage — multi-select accept/reject, confidence-first ordering](0076-bulk-candidate-triage.md) | Accepted | [EV-0076](../evidence.d/0076-bulk-candidate-triage.md) |
+| [ADR-0077: Bulk candidate promotion — complete the triage loop ADR-0076 started](0077-bulk-candidate-promotion.md) | Accepted | [EV-0077](../evidence.d/0077-bulk-candidate-promotion.md) |
