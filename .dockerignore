@@ -1,10 +1,14 @@
-.git
 .mindleak
 .vscode
 docs
 target
 backend/target
 **/target
+
+# ADR-0078: .git is deliberately available to both Dockerfiles' build
+# contexts (read-only commit metadata only) so build-provenance logging
+# can report which commit a running container was built from. This stack
+# is local dev only, not a deployment artifact (ADR-0006).
 
 # frontend/node_modules is .gitignored but must reach the build context
 # (frontend/Dockerfile COPYs it from the host; the container can't reach

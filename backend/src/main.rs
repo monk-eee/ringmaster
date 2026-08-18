@@ -20,6 +20,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "ringmaster-backend: connected to Postgres, migrations applied, projection rebuilt ({projected} obligation(s))"
     );
+    // ADR-0078: build provenance, so a stale container is visible in
+    // `podman compose logs` instead of requiring a manual `podman inspect`.
+    println!(
+        "ringmaster-backend: built from {} ({})",
+        env!("RINGMASTER_GIT_SHA"),
+        env!("RINGMASTER_GIT_COMMIT_TIME")
+    );
 
     // ADR-0012: serves the read-only HTTP API instead of idling.
     let bind_addr = ringmaster_backend::backend_bind_addr();

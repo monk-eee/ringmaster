@@ -90,3 +90,5 @@ accepted and implemented.
 | [ADR-0075: Restore the mascot logo in the app header](0075-restore-mascot-logo-in-header.md) | Accepted | [EV-0075](../evidence.d/0075-restore-mascot-logo-in-header.md) |
 | [ADR-0076: Bulk candidate triage — multi-select accept/reject, confidence-first ordering](0076-bulk-candidate-triage.md) | Accepted | [EV-0076](../evidence.d/0076-bulk-candidate-triage.md) |
 | [ADR-0077: Bulk candidate promotion — complete the triage loop ADR-0076 started](0077-bulk-candidate-promotion.md) | Accepted | [EV-0077](../evidence.d/0077-bulk-candidate-promotion.md) |
+| [ADR-0078: Log build provenance so stale containers are visible on startup](0078-log-build-provenance-to-detect-stale-containers.md) | Accepted | [EV-0078](../evidence.d/0078-log-build-provenance-to-detect-stale-containers.md) |
+| [ADR-0079: Timeline surfaces a linked source's own occurred_at](0079-timeline-surfaces-source-occurred-at.md) | Accepted | [EV-0079](../evidence.d/0079-timeline-surfaces-source-occurred-at.md) |
