@@ -63,5 +63,13 @@ Playwright tests in `frontend/tests/obligations.spec.ts` -- `workbench:
 selecting an item fills current focus and relationship context
 (ADR-0086)` and `workbench: honest empty state when the selected item
 has no linked person (ADR-0086)` -- both pass, alongside the full suite
-(22 passed, 6 pre-existing skips, 0 failed), including the pre-existing
-Today/ObligationDetail tests unmodified by this change.
+(21 passed, 5 pre-existing skips, 0 failures related to this change).
+Updating `Workbench` also added a new tab, so fixed one existing test's
+exact-tab-list assertion (`primary navigation is Today/Timeline/...`,
+ADR-0080) to include "Workbench"; confirmed passing after the fix. Two
+unrelated Graph Explorer tests (`graph trail: traversing two edges...`
+ADR-0033, `Actions lens filters neighbours...` ADR-0081) failed once
+under full-suite load and passed cleanly on immediate retry -- the same
+pre-existing timing flakiness already documented in EV-0085, now against
+a `ringmaster_test` database that has grown to 695 obligations across
+this session's accumulated runs; not caused by, or fixed by, this change.
