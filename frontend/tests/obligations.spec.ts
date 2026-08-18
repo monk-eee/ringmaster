@@ -37,6 +37,7 @@ test("today tab renders a ranked list by default", async ({ page }) => {
 // entirely, never rendered as "0 ...". Mocks GET /api/daily-brief so the
 // exact counts are deterministic regardless of whatever the shared
 // development database currently contains.
+// playwright-proves-today-narrative-summary
 test("today: narrative summary reports date_compression/stale counts and omits zero counts (ADR-0084)", async ({ page }) => {
   const unique = Date.now();
   await page.route("**/api/daily-brief", async (route) => {
@@ -876,40 +877,4 @@ test("today: 'What am I forgetting?' shows flagged obligations or an honest empt
 
   expect(rowCount).toBeLessThanOrEqual(5);
   await expect(rows.first().locator(".risk-signals li").first()).toBeVisible();
-});
-
-// ADR-0084: the narrative summary above the ranked list is a time-of-day
-// greeting plus honest, zero-omitted counts derived from data already
-// fetched -- never asserts an exact count, since the shared database
-// accumulates data across sessions/agents (same posture as ADR-0014's own
-// "today tab renders a ranked list" test above).
-// playwright-proves-today-narrative-summary
-test("today: narrative summary shows a time-of-day greeting and honest, zero-omitted counts (ADR-0084)", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
-
-  const emptyState = page.getByText("Nothing needs your attention right now.");
-  if (await emptyState.isVisible()) {
-    await expect(page.locator(".today-summary")).toHaveCount(0);
-    return;
-  }
-
-  const summary = page.locator(".today-summary");
-  await expect(summary).toBeVisible();
-
-  const greeting = summary.locator("p.today-greeting");
-  await expect(greeting).toHaveText(/^Good (morning|afternoon|evening)\.$/);
-
-  const summaryLines = summary.locator("p.today-summary-line");
-  await expect(summaryLines.first()).toHaveText(/^\d+ things? needs? attention today\.$/);
-
-  // Any additional lines are exactly the "will become risks"/"appear
-  // forgotten" stats -- never a literal "0 ..." line (the honest
-  // zero-omission rule ADR-0084 decides).
-  const lineCount = await summaryLines.count();
-  for (let index = 1; index < lineCount; index += 1) {
-    await expect(summaryLines.nth(index)).toHaveText(
-      /^\d+ (will become risks? this week\.|commitments? appears? forgotten\.)$/,
-    );
-  }
 });

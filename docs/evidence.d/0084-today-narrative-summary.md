@@ -68,6 +68,23 @@ full Playwright suite against the isolated stack: 0 failed.
 
 ## Notes
 
-Not yet implemented as of ADR acceptance; this record will be updated with
-implementation notes and verification (a live Playwright test and `npm run
-build`) once the code lands.
+Implemented: `frontend/src/App.tsx` renders a `.today-summary` block above
+the existing ranked list -- a time-of-day greeting (`p.today-greeting`,
+`getHours()`-derived) plus `p.today-summary-line` entries for the
+existing count, `date_compression` ("will become risks"), and `stale`
+("appear forgotten"), each computed with `useMemo` over the already-fetched
+`dailyBrief` array. Zero counts are omitted, never rendered as "0 ...".
+`frontend/public/style.css` adds the `.today-summary`/`.today-greeting`/
+`.today-summary-line` rules; no backend/route/schema change.
+
+Verified: `npx tsc --noEmit` and `npm run build` both clean. Two Playwright
+tests in `frontend/tests/obligations.spec.ts` cover this record --
+`today: narrative summary reports date_compression/stale counts and omits
+zero counts (ADR-0084)` mocks `GET /api/daily-brief` for two items (one
+`date_compression`, one `stale`) and asserts the exact rendered text
+("2 things need attention today.", "1 will become risk this week.", "1
+commitment appears forgotten."); `today: honest empty state renders no
+narrative summary when nothing needs attention (ADR-0084)` mocks an empty
+response and asserts the pre-existing empty state renders with zero
+`.today-summary` elements. Full suite: 19 passed, 5 skipped (pre-existing,
+unrelated to this change), 0 failed.
