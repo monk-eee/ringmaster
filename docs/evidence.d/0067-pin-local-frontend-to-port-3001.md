@@ -12,7 +12,7 @@ adr = "0067-pin-local-frontend-to-port-3001"
 id = "vite-pins-strict-port-3001"
 invariant = "Vite is pinned to port 3001 and refuses automatic port fallback."
 type = "present"
-pattern = 'port: 3001,\s+strictPort: true'
+pattern = 'Number\(process\.env\.VITE_PORT\) \|\| 3001[\s\S]*?strictPort: true'
 paths = ["frontend/vite.config.ts"]
 
 [[check]]
