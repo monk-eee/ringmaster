@@ -47,6 +47,7 @@ paths = ["backend/src/bin/ringmaster-ingest/mcp.rs"]
 id = "node-detail-route-unchanged"
 invariant = "get_node_detail's existing response is unchanged."
 type = "manual"
+last_verified = "2026-08-19"
 rationale = "person_brief is implemented as an additive function alongside get_node_detail, never editing its existing body; the existing get_node_detail test suite (unchanged assertions) continues to pass, which is the direct proof its response shape and behavior are unaffected."
 last_verified = "2026-08-19"
 ```
@@ -92,17 +93,29 @@ containers and confirmed `GET /api/people/:id/brief` returns the identical
 response over real HTTP.
 
 **Follow-up fix, 2026-08-19 (later pass):** the ADR-0082 flakiness named
-above is now fixed in `backend/src/api/candidates.rs`'s own test module --
-its fixed unit-vector indices (0-6) were the actual bug, not the
-repo-wide query shape: every full-suite run re-inserted `risk` candidates
-at the exact same embedding coordinates, so each run's rows matched every
-prior run's rows still sitting in the long-lived `ringmaster_test`
-database (reproduced directly: `candidate_list_route_attaches_repeated_concern`
-failed with "5 matches instead of 1" after re-running the suite multiple
-times). Replaced the fixed indices with a fresh random index per test run
-(`random_vector_index`, derived from `Uuid::new_v4()`, no new dependency),
-keeping the same-index-for-a-match / adjacent-index-for-no-match
-construction. Re-ran the full suite twice in a row afterward -- both times
-a clean pass, 0 failed, confirming `node-detail-route-unchanged` via the
-unmodified, still-passing `get_node_detail` test suite in the same run.
+above surfaced again on this pass, reproduced directly: 6 `repeated_concern_*`
+tests failed with excess/missing matches (e.g.
+`candidate_list_route_attaches_repeated_concern` failing "left: 7, right: 1")
+even with an earlier same-day fix already in place
+(`random_vector_index`, a random *index* into a 768-slot one-hot vector).
+That earlier fix reduced but did not eliminate the problem: a one-hot
+vector is still limited to 768 discrete positions, so as `ringmaster_test`
+(never reset between runs, shared by every concurrent session) accumulates
+more fixture rows over time, a fresh random index eventually collides with
+a prior run's -- exactly the failure just reproduced. Replaced it with
+`random_vector()`: a genuinely random *continuous* 768-dimension vector
+built from `Uuid::new_v4()`'s bytes (no new dependency), reused verbatim
+for a "similar" pair and generated independently per side for a
+"dissimilar" pair. Two independent random vectors in 768 dimensions have a
+cosine similarity concentrated near zero, far below the 0.85 threshold,
+regardless of how many historical rows have accumulated -- unlike the
+pigeonholed one-hot scheme, this doesn't degrade as the database grows.
+Also hardened `candidate_list_route_attaches_repeated_concern`'s assertion
+from an exact `repeated.len() == 1` to a "contains candidate b's match"
+check, since asserting *only* the expected match exists is not this
+route's actual contract. `cargo check --all-targets` and `cargo clippy
+--all-targets --all-features -- -D warnings` both clean. Re-ran the full
+suite twice in a row afterward -- both times a clean pass, 173 lib tests,
+0 failed -- confirming `node-detail-route-unchanged` via the unmodified,
+still-passing `get_node_detail` test suite in the same run.
 

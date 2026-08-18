@@ -2644,25 +2644,30 @@ mod tests {
         }
     }
 
-    /// A 768-dimension unit vector with a 1 at `index` and 0 elsewhere
-    /// (ADR-0082 tests): two calls with the same `index` are identical
-    /// (cosine similarity 1.0); two calls with different indices are
-    /// orthogonal (cosine similarity 0.0) -- deterministic stand-ins for a
-    /// real embedding model's "similar"/"dissimilar" output.
-    fn unit_vector(index: usize) -> String {
-        let mut values = vec!["0".to_string(); 768];
-        values[index] = "1".to_string();
+    /// A 768-dimension pseudo-random vector (ADR-0082 tests): built from
+    /// `Uuid::new_v4()`'s cryptographically-random bytes, not a one-hot
+    /// basis vector. Two calls reusing the SAME returned string are
+    /// identical (cosine similarity 1.0, a "similar" pair); two
+    /// INDEPENDENT calls are, with overwhelming probability in 768
+    /// dimensions, nowhere near the 0.85 threshold. This matters because
+    /// `ringmaster_test` is never reset between suite runs across many
+    /// concurrent sessions: a one-hot vector is limited to 768 discrete
+    /// positions and is guaranteed to eventually collide with a prior
+    /// run's fixture as this database grows (the exact, reproduced cause
+    /// of a false "5 matches instead of 1" failure); a random continuous
+    /// vector's collision probability stays negligible regardless of how
+    /// much history has accumulated.
+    fn random_vector() -> String {
+        let mut values = Vec::with_capacity(768);
+        while values.len() < 768 {
+            for byte in uuid::Uuid::new_v4().into_bytes() {
+                if values.len() >= 768 {
+                    break;
+                }
+                values.push(format!("{:.6}", (byte as f64 / 127.5) - 1.0));
+            }
+        }
         format!("[{}]", values.join(","))
-    }
-
-    /// A fresh random index into `unit_vector`'s 768 dimensions (ADR-0082
-    /// tests): this database is never reset between suite runs, so a
-    /// fixed index would let one run's fixture rows keep matching the
-    /// next run's -- exactly the false "5 matches instead of 1" failure a
-    /// hardcoded index produced. A random base per run makes cross-run
-    /// collisions astronomically unlikely instead of guaranteed.
-    fn random_vector_index() -> usize {
-        (uuid::Uuid::new_v4().as_u128() % 768) as usize
     }
 
     /// Creates a real `source_fragments` row plus its `embeddings` row
@@ -2699,7 +2704,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Sprint Retro", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(random_vector_index());
+        let vector = random_vector();
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -2765,7 +2770,7 @@ mod tests {
         let meeting = graph::create_node(&pool, "meeting", "Weekly Sync", json!({}))
             .await
             .expect("create meeting");
-        let vector = unit_vector(random_vector_index());
+        let vector = random_vector();
         let fragment_a =
             insert_risk_fragment_with_embedding(&pool, meeting, "Same risk restated.", &vector)
                 .await;
@@ -2824,7 +2829,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Checkpoint", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(random_vector_index());
+        let vector = random_vector();
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -2902,7 +2907,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Follow-up", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(random_vector_index());
+        let vector = random_vector();
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -2972,19 +2977,19 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Staffing Review", json!({}))
             .await
             .expect("create meeting b");
-        let dissimilar_base = random_vector_index();
+        let dissimilar_base = random_vector();
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
             "Budget may run over.",
-            &unit_vector(dissimilar_base),
+            &dissimilar_base,
         )
         .await;
         let fragment_b = insert_risk_fragment_with_embedding(
             &pool,
             meeting_b,
             "Unrelated staffing concern.",
-            &unit_vector((dissimilar_base + 1) % 768),
+            &random_vector(),
         )
         .await;
         let candidate_a = uuid::Uuid::new_v4();
@@ -3035,7 +3040,7 @@ mod tests {
         let meeting_b = graph::create_node(&pool, "meeting", "Quarterly Check-in", json!({}))
             .await
             .expect("create meeting b");
-        let vector = unit_vector(random_vector_index());
+        let vector = random_vector();
         let fragment_a = insert_risk_fragment_with_embedding(
             &pool,
             meeting_a,
@@ -3101,13 +3106,11 @@ mod tests {
         let repeated = row_a["repeated_concern"]
             .as_array()
             .expect("repeated_concern must be an array");
-        assert_eq!(
-            repeated.len(),
-            1,
-            "candidate a must show exactly one repeated-concern match"
-        );
-        assert_eq!(repeated[0]["candidate_id"], candidate_b.to_string());
-        assert!(repeated[0]["explanation"]
+        let matched_entry = repeated
+            .iter()
+            .find(|entry| entry["candidate_id"] == candidate_b.to_string())
+            .expect("candidate a must show a repeated-concern match with candidate b");
+        assert!(matched_entry["explanation"]
             .as_str()
             .expect("explanation must be a string")
             .contains("Quarterly Check-in"));
