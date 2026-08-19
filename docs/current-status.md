@@ -1,14 +1,13 @@
 # Ringmaster — Current status (a real audit, not a decision log)
 
-Updated 2026-08-19 (third pass — supersedes the second version of this
+Updated 2026-08-19 (fourth pass — supersedes the third version of this
 file, which is quoted below where useful) by clicking through the running
 app again, querying the live dev database again, and reading the code
 behind what's there — not by summarizing ADR titles.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) is the formal, decision-level
 snapshot; this is "what's really there right now, warts included." As of
-this pass: **85 ADRs, all 85 `PROVEN`, 0 `ASSERTED`/`BROKEN`/`STALE`/
-`DEADHEADED`** (ADR-0004's manual check was re-affirmed and now proves
-clean), CI green at `503f2d8`.
+this pass: **89 ADRs, all 89 `PROVEN`, 0 `ASSERTED`/`BROKEN`/`STALE`/
+`DEADHEADED`**, CI green at `87e75ab`.
 
 **A honest caveat before anything else**: this repo is being built by two
 concurrent AI sessions against the same working directory, right now,
@@ -72,6 +71,54 @@ Eight more ADRs landed (0080–0087), closing every bounded item in
 The second audit's specific findings (data volume, FocusBlocks cap,
 People tab, container staleness) are unchanged and still hold; quoted
 below where still useful.
+
+## What changed since the third audit
+
+Four more ADRs landed (0086–0089):
+
+- **Workbench, a three-pane view** ([ADR-0086](adr.d/0086-workbench-three-pane-view.md))
+  and **Graph Explorer reliability under concurrent load**
+  ([ADR-0087](adr.d/0087-graph-explorer-reliability-under-concurrent-load.md))
+  were already recorded in the third audit's own "since second audit"
+  section above (both landed the same pass).
+- **Career/Connect export** ([ADR-0088](adr.d/0088-career-connect-export.md))
+  — closes `docs/IMPROVEMENT-PLAN.md` Priority 4's first item. A new
+  `person_career_history` read returns every *closed* Obligation linked to
+  a person with an evidence citation — the honest opposite of
+  `person_brief`'s open-only filter and `get_node_detail`'s relationship
+  grouping, both of which explicitly exclude closed rows. Deliberately
+  unfiltered by People/Delivery/Leadership/Operational category, since no
+  such classification exists anywhere in this schema (confirmed again:
+  `obligation_projection` has no `kind` column). Rendered as a
+  copy-to-clipboard "Career export" section on Person detail.
+- **BCDR/compliance dedicated view named as honestly blocked, not
+  attempted**: a fresh audit (2026-08-19) confirmed no `service`/
+  `compliance`-style node type is actually created anywhere in this
+  codebase outside `PRODUCT-SPEC.md`'s own aspirational node-type table
+  (only `person`/`meeting`/`risk` are real in practice) — there is no
+  honest signal to build a dedicated view on without inventing a
+  classification, so `docs/IMPROVEMENT-PLAN.md` now names this blocked
+  rather than silently dropped.
+- **Stale container, found and fixed again this pass**: `ringmaster-backend-1`
+  was still serving `bb59994` (a commit from *before* ADR-0082), six ADRs
+  behind `2d548b9` — the exact recurring gotcha ADR-0078 exists to
+  surface. Confirmed live before the fix: opening a real person's detail
+  page showed the Relationship section but no Career export section at
+  all. `docker compose build backend frontend && docker compose up -d
+  --force-recreate backend frontend` fixed it (backend now logs `built
+  from 2d548b9c57ed`); reloading the same person's detail page afterward
+  showed the Career export section rendering its honest empty state
+  ("Nothing completed recorded yet.") exactly as designed.
+- **Security: two high-severity Vite/nanoid advisories patched**
+  ([ADR-0089](adr.d/0089-patch-vite-nanoid-security-advisories.md)) —
+  landed concurrently with this pass, worth flagging precisely because
+  `frontend/Dockerfile`'s `CMD ["npx", "vite"]` means the container this
+  repo actually runs *is* Vite's dev server, not a built static bundle —
+  a path-traversal/NTLM-hash-disclosure advisory in it is a live
+  vulnerability in the running app, not a deferred dev-tooling concern.
+  Fixed via a minimal `vite@^5.4.8` → `^6.4.3` bump (not the major-version-8
+  jump `npm audit fix --force` would have applied) plus a lockfile-only
+  `npm audit fix` for the transitive `nanoid` advisory.
 
 ## What changed since the first audit
 
