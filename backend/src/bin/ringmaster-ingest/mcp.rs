@@ -384,6 +384,7 @@ impl RingmasterIngestServer {
             occurred_from,
             occurred_to,
             false,
+            false,
             params.limit,
             params.offset,
         )

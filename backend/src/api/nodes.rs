@@ -17,6 +17,7 @@ pub(super) struct NodeQuery {
     occurred_from: Option<String>,
     occurred_to: Option<String>,
     needs_attention: Option<bool>,
+    has_source_fragments: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -43,9 +44,12 @@ fn parse_optional_rfc3339(
 /// Lists nodes, optionally filtered by `?node_type=` (ADR-0025), an
 /// `occurred_at` range via `?occurred_from=`/`?occurred_to=` (ADR-0042),
 /// and/or `?needs_attention=true` (ADR-0051), restricting to nodes with at
-/// least one linked open/at-risk Obligation. `?limit=`/`?offset=` (ADR-0059)
-/// page the result; omitting every param preserves this route's exact prior
-/// behavior. For `?node_type=person` specifically (ADR-0051), each row is
+/// least one linked open/at-risk Obligation, and/or `?has_source_fragments=true`
+/// (ADR-0096), restricting to nodes with at least one ingested source
+/// fragment -- the type-agnostic way to list "real ingested sources"
+/// without naming any specific `node_type` string. `?limit=`/`?offset=`
+/// (ADR-0059) page the result; omitting every param preserves this route's
+/// exact prior behavior. For `?node_type=person` specifically (ADR-0051), each row is
 /// additionally enriched with `open_count`, `at_risk_count`, and
 /// `last_interaction_at` -- three batched queries keyed by the already-fetched
 /// ids/names, never one query per row. `last_interaction_at` (ADR-0070) is the
@@ -59,12 +63,14 @@ pub(super) async fn list_nodes_route(
     let occurred_to = parse_optional_rfc3339("occurred_to", params.occurred_to.as_deref())?;
     let limit = params.limit.map(|value| value.clamp(1, MAX_LIST_LIMIT));
     let offset = params.offset.map(|value| value.max(0));
-    let nodes = graph::list_nodes(
+    let nodes = graph::list_nodes_filtered(
         &pool,
         params.node_type.as_deref(),
+        None,
         occurred_from,
         occurred_to,
         params.needs_attention.unwrap_or(false),
+        params.has_source_fragments.unwrap_or(false),
         limit,
         offset,
     )

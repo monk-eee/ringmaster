@@ -31,12 +31,16 @@ paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-detail-route-404s-for-non-meeting"
-invariant = "GET /api/meetings/:id returns 404 for an unknown id or a non-meeting node."
+invariant = "GET /api/meetings/:id returns 404 for an unknown id or a node with no ingested source fragments (ADR-0096 generalized the reasoning from \"wrong node_type\" to \"no fragments\"; the 404-on-unknown-id invariant this check names is unchanged)."
 type = "present"
-pattern = 'meeting_detail_route_404s_for_a_non_meeting_node'
+pattern = 'meeting_detail_route_404s_for_a_node_with_no_source_fragments'
 paths = ["backend/src/api/ingestion.rs"]
 ```
 
 ## Notes
 
 All four checks are automated against the implementing function/route/test.
+ADR-0096 generalized `GET /api/meetings/:id` beyond `node_type='meeting'`
+(any node with at least one ingested source fragment now qualifies); the
+last check's pattern was updated to match the renamed test proving the
+same 404 invariant under the new, broader contract.

@@ -44,7 +44,7 @@ const TAB_TITLES: Record<Tab, string> = {
   obligations: "Obligations",
   search: "Search",
   graph: "Graph",
-  meetings: "Meetings",
+  meetings: "Sources",
   activity: "Activity",
   workbench: "Workbench",
 };

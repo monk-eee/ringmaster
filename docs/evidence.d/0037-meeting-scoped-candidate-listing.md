@@ -31,9 +31,9 @@ paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]
 id = "meeting-candidates-route-404s-for-non-meeting"
-invariant = "The route 404s for an unknown id or a non-meeting node."
+invariant = "The route 404s for an unknown id or a node with no ingested source fragments (ADR-0096 generalized the reasoning from \"wrong node_type\" to \"no fragments\"; the 404-on-unknown-id invariant this check names is unchanged)."
 type = "present"
-pattern = 'meeting_candidates_route_404s_for_a_non_meeting_node'
+pattern = 'meeting_candidates_route_404s_for_a_node_with_no_source_fragments'
 paths = ["backend/src/api/ingestion.rs"]
 
 [[check]]

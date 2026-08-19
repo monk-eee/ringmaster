@@ -171,9 +171,11 @@ pub(super) async fn ingest_source_route(
         .into_response())
 }
 
-/// Reads one meeting and its transcript fragments in turn order (ADR-0036).
-/// 404s for an unknown id or a node that isn't a meeting -- this route's
-/// contract is specifically a meeting, not any node type. Read-only.
+/// Reads one source and its transcript fragments in turn order (ADR-0036,
+/// generalized beyond `node_type='meeting'` by ADR-0096). 404s for an
+/// unknown id or a node with no ingested source fragments at all -- this
+/// route's contract is "a real ingested source," not any specific
+/// `node_type`. Read-only.
 pub(super) async fn get_meeting_detail(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
@@ -183,19 +185,13 @@ pub(super) async fn get_meeting_detail(
         .map_err(|error| match error {
             sqlx::Error::RowNotFound => (
                 axum::http::StatusCode::NOT_FOUND,
-                "meeting not found".to_string(),
+                "source not found".to_string(),
             ),
             other => (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 other.to_string(),
             ),
         })?;
-    if node.node_type != "meeting" {
-        return Err((
-            axum::http::StatusCode::NOT_FOUND,
-            "meeting not found".to_string(),
-        ));
-    }
 
     let fragments = graph::list_source_fragments_by_meeting(&pool, id)
         .await
@@ -205,6 +201,12 @@ pub(super) async fn get_meeting_detail(
                 error.to_string(),
             )
         })?;
+    if fragments.is_empty() {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "source not found".to_string(),
+        ));
+    }
 
     Ok(Json(json!({
         "id": node.id,
@@ -236,33 +238,15 @@ struct MeetingFragmentCandidateRow {
     confidence: Option<f32>,
 }
 
-/// Lists one meeting's fragments with their extracted candidates, if any,
-/// plus fragment-level extraction progress (ADR-0037). 404s exactly like
-/// `GET /api/meetings/:id` (ADR-0036): unknown id or a non-meeting node.
-/// Read-only; triggers no extraction.
+/// Lists one source's fragments with their extracted candidates, if any,
+/// plus fragment-level extraction progress (ADR-0037, generalized beyond
+/// `node_type='meeting'` by ADR-0096). 404s exactly like
+/// `GET /api/meetings/:id` (ADR-0036): unknown id or no ingested source
+/// fragments for it. Read-only; triggers no extraction.
 pub(super) async fn get_meeting_candidates(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
-    let node = graph::get_node(&pool, id)
-        .await
-        .map_err(|error| match error {
-            sqlx::Error::RowNotFound => (
-                axum::http::StatusCode::NOT_FOUND,
-                "meeting not found".to_string(),
-            ),
-            other => (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                other.to_string(),
-            ),
-        })?;
-    if node.node_type != "meeting" {
-        return Err((
-            axum::http::StatusCode::NOT_FOUND,
-            "meeting not found".to_string(),
-        ));
-    }
-
     let rows: Vec<MeetingFragmentCandidateRow> = sqlx::query_as(
         "SELECT sf.id AS fragment_id, sf.sequence, sf.speaker, sf.text AS fragment_text, \
                 cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence \
@@ -275,6 +259,12 @@ pub(super) async fn get_meeting_candidates(
     .fetch_all(&pool)
     .await
     .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if rows.is_empty() {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "source not found".to_string(),
+        ));
+    }
 
     // Groups the flat join back into one entry per fragment, preserving
     // transcript order, without assuming exactly one candidate per fragment.
@@ -727,10 +717,11 @@ mod tests {
         assert_eq!(fragments[2]["sequence"], 2);
     }
 
-    /// ADR-0036: this route's contract is specifically a meeting, so an
-    /// unknown id and an existing-but-wrong-type node both 404.
+    /// ADR-0096: this route's contract is "a real ingested source" (at
+    /// least one source fragment), not any specific `node_type` -- an
+    /// unknown id and an existing node with zero fragments both 404.
     #[tokio::test]
-    async fn meeting_detail_route_404s_for_a_non_meeting_node() {
+    async fn meeting_detail_route_404s_for_a_node_with_no_source_fragments() {
         let pool = test_pool().await;
 
         let unknown_id = uuid::Uuid::new_v4();
@@ -745,10 +736,10 @@ mod tests {
             .unwrap();
         assert_eq!(unknown_response.status(), axum::http::StatusCode::NOT_FOUND);
 
-        let person_id = graph::create_node(&pool, "person", "Not A Meeting", json!({}))
+        let person_id = graph::create_node(&pool, "person", "Not A Source", json!({}))
             .await
             .expect("create person node");
-        let wrong_type_response = app(pool)
+        let no_fragments_response = app(pool)
             .oneshot(
                 Request::builder()
                     .uri(format!("/api/meetings/{person_id}"))
@@ -758,9 +749,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            wrong_type_response.status(),
+            no_fragments_response.status(),
             axum::http::StatusCode::NOT_FOUND
         );
+    }
+
+    /// ADR-0096: the whole point of the generalization -- a `1on1` source
+    /// (not `meeting`) with real fragments now reads successfully, where it
+    /// used to 404 solely for having the wrong `node_type`.
+    #[tokio::test]
+    async fn meeting_detail_route_accepts_a_non_meeting_source_type() {
+        let pool = test_pool().await;
+        let metadata = crate::transcript::SourceMetadata {
+            source_type: "1on1".to_string(),
+            title: "Roopa Venkat 1:1".to_string(),
+            occurred_at: chrono::Utc::now(),
+            participants: vec![],
+        };
+        let ingested = crate::transcript::ingest_source(&pool, &metadata, "Discussed roadmap priorities.")
+            .await
+            .expect("ingest a non-meeting source");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/meetings/{}", ingested.node_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["canonical_text"], "Roopa Venkat 1:1");
+        assert_eq!(parsed["fragments"].as_array().unwrap().len(), 1);
     }
 
     /// ADR-0037: one fragment has an extracted (still-unreviewed) candidate,
@@ -843,9 +868,10 @@ mod tests {
         assert_eq!(parsed["progress"]["by_validation_state"]["candidate"], 1);
     }
 
-    /// ADR-0037: mirrors ADR-0036's own 404 contract for this sibling route.
+    /// ADR-0096: mirrors ADR-0036's own 404 contract for this sibling route
+    /// -- "no ingested source fragments," not "wrong node_type."
     #[tokio::test]
-    async fn meeting_candidates_route_404s_for_a_non_meeting_node() {
+    async fn meeting_candidates_route_404s_for_a_node_with_no_source_fragments() {
         let pool = test_pool().await;
 
         let unknown_id = uuid::Uuid::new_v4();
@@ -860,10 +886,10 @@ mod tests {
             .unwrap();
         assert_eq!(unknown_response.status(), axum::http::StatusCode::NOT_FOUND);
 
-        let person_id = graph::create_node(&pool, "person", "Not A Meeting Either", json!({}))
+        let person_id = graph::create_node(&pool, "person", "Not A Source Either", json!({}))
             .await
             .expect("create person node");
-        let wrong_type_response = app(pool)
+        let no_fragments_response = app(pool)
             .oneshot(
                 Request::builder()
                     .uri(format!("/api/meetings/{person_id}/candidates"))
@@ -873,7 +899,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            wrong_type_response.status(),
+            no_fragments_response.status(),
             axum::http::StatusCode::NOT_FOUND
         );
     }

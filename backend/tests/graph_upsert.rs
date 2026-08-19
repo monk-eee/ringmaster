@@ -123,6 +123,7 @@ async fn upsert_nodes_rejects_ambiguous_identity_and_rolls_back_the_batch() {
         None,
         None,
         false,
+        false,
         None,
         None,
     )

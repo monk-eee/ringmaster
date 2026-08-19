@@ -38,9 +38,9 @@ paths = ["frontend/src/components/MeetingReview.tsx"]
 
 [[check]]
 id = "playwright-proves-meeting-review-flow"
-invariant = "Focused browser coverage proves viewing a meeting and triggering extraction on a fragment."
+invariant = "Focused browser coverage proves viewing a source and triggering extraction on a fragment (ADR-0096 renamed the test/tab from \"meeting\"/\"Meetings\" to \"source\"/\"Sources\" when the underlying route was generalized beyond node_type='meeting'; the flow this check proves is unchanged)."
 type = "present"
-pattern = 'meeting review:'
+pattern = 'source review:'
 paths = ["frontend/tests/obligations.spec.ts"]
 ```
 

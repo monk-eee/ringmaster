@@ -112,6 +112,7 @@ pub async fn list_nodes(
         occurred_from,
         occurred_to,
         needs_attention,
+        false,
         limit,
         offset,
     )
@@ -128,6 +129,7 @@ pub async fn list_nodes_filtered(
     occurred_from: Option<chrono::DateTime<chrono::Utc>>,
     occurred_to: Option<chrono::DateTime<chrono::Utc>>,
     needs_attention: bool,
+    has_source_fragments: bool,
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<Node>, sqlx::Error> {
@@ -147,8 +149,11 @@ pub async fn list_nodes_filtered(
                 JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = n.id THEN e.to_id ELSE e.from_id END) \
                 WHERE (e.from_id = n.id OR e.to_id = n.id) AND op.status IN ('open', 'at_risk') \
            )) \
+                     AND ($6::boolean IS NOT TRUE OR EXISTS ( \
+                SELECT 1 FROM source_fragments sf WHERE sf.source_id = n.id \
+           )) \
          {order_by} \
-                 LIMIT $6 OFFSET $7"
+                 LIMIT $7 OFFSET $8"
     );
     sqlx::query_as(&query)
         .bind(node_type)
@@ -156,6 +161,7 @@ pub async fn list_nodes_filtered(
         .bind(occurred_from)
         .bind(occurred_to)
         .bind(needs_attention)
+        .bind(has_source_fragments)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -502,6 +508,34 @@ mod tests {
         assert!(
             !filtered.iter().any(|node| node.id == closed_only_person),
             "a person linked only to a closed Obligation must be excluded"
+        );
+    }
+
+    /// ADR-0096: the type-agnostic replacement for a fixed `node_type`
+    /// allowlist -- proves it works for a non-"meeting" source type too.
+    #[tokio::test]
+    async fn list_nodes_filtered_has_source_fragments_matches_any_source_type() {
+        let pool = test_pool().await;
+        let with_fragment = create_node(&pool, "1on1", "Has A Fragment", json!({}))
+            .await
+            .expect("create source node");
+        crate::graph::create_source_fragment(&pool, with_fragment, "some text", "hash-1")
+            .await
+            .expect("create source fragment");
+        let without_fragment = create_node(&pool, "1on1", "Has No Fragment", json!({}))
+            .await
+            .expect("create fragment-less node");
+
+        let filtered = list_nodes_filtered(&pool, None, None, None, None, false, true, None, None)
+            .await
+            .expect("list nodes with source fragments");
+        assert!(
+            filtered.iter().any(|node| node.id == with_fragment),
+            "a node with at least one source fragment must be included, regardless of node_type"
+        );
+        assert!(
+            !filtered.iter().any(|node| node.id == without_fragment),
+            "a node with zero source fragments must be excluded"
         );
     }
 

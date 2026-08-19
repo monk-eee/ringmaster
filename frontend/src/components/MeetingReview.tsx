@@ -24,7 +24,9 @@ export default function MeetingReview() {
   const [extractMessage, setExtractMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchNodes("meeting")
+    // ADR-0096: hasSourceFragments=true, not node_type="meeting" -- any
+    // ingested source (1on1/note/comms/connect/perspective/...) belongs here.
+    fetchNodes(undefined, false, undefined, undefined, true)
       .then(setMeetings)
       .catch((cause) => setError((cause as Error).message));
   }, []);
@@ -95,11 +97,11 @@ export default function MeetingReview() {
       <div className="meeting-review-layout">
         <div className="card meeting-review-list">
           <div className="card-header">
-            <h2>Meetings</h2>
+            <h2>Sources</h2>
           </div>
           <div className="card-body">
             {meetings.length === 0 ? (
-              <p className="empty-state">No meetings ingested yet.</p>
+              <p className="empty-state">No sources ingested yet.</p>
             ) : (
               <ul className="node-list-items">
                 {meetings.map((meeting) => (
@@ -108,7 +110,7 @@ export default function MeetingReview() {
                       className={meeting.id === selectedId ? "node-list-button node-list-button-active" : "node-list-button"}
                       onClick={() => loadMeeting(meeting.id)}
                     >
-                      <span aria-hidden="true">{typeIcon("meeting")}</span> {meeting.canonical_text}
+                      <span aria-hidden="true">{typeIcon(meeting.node_type)}</span> {meeting.canonical_text}
                     </button>
                   </li>
                 ))}
@@ -119,11 +121,11 @@ export default function MeetingReview() {
 
         <div className="card meeting-review-detail">
           <div className="card-header">
-            <h2>Meeting review</h2>
+            <h2>Source review</h2>
           </div>
           <div className="card-body">
             {!detail || !candidates ? (
-              <p className="empty-state">Select a meeting to review its transcript and candidates.</p>
+              <p className="empty-state">Select a source to review its transcript and candidates.</p>
             ) : (
               <>
                 <h3>{detail.canonical_text}</h3>

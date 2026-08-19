@@ -267,12 +267,13 @@ export function batchPromoteCandidates(candidateIds: string[]): Promise<BatchPro
   return postJson<BatchPromoteResult>("/api/candidates/batch-promote", { candidate_ids: candidateIds });
 }
 
-export function fetchNodes(nodeType?: string, needsAttention?: boolean, limit?: number, offset?: number): Promise<GraphNode[]> {
+export function fetchNodes(nodeType?: string, needsAttention?: boolean, limit?: number, offset?: number, hasSourceFragments?: boolean): Promise<GraphNode[]> {
   const params = new URLSearchParams();
   if (nodeType) params.set("node_type", nodeType);
   if (needsAttention) params.set("needs_attention", "true");
   if (limit !== undefined) params.set("limit", String(limit));
   if (offset !== undefined) params.set("offset", String(offset));
+  if (hasSourceFragments) params.set("has_source_fragments", "true");
   const query = params.toString();
   return getJson<GraphNode[]>(query ? `/api/nodes?${query}` : "/api/nodes");
 }

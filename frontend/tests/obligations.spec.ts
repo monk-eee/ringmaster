@@ -593,9 +593,10 @@ test("time horizon: switching to Timeline view exposes Now/zoom/pan controls (AD
 });
 
 // ADR-0039: proves the primary/secondary tab regrouping is real (Today,
-// Timeline, People, Inbox as primary; Obligations, Search, Meetings,
+// Timeline, People, Inbox as primary; Obligations, Search, Sources,
 // Activity still present, just visually demoted) -- not that the old tabs
-// were deleted. Meetings joined the secondary group later (ADR-0043),
+// were deleted. Sources (labeled "Meetings" until ADR-0096 generalized it
+// beyond node_type='meeting') joined the secondary group later (ADR-0043),
 // Activity later still (ADR-0049). ADR-0080 promotes Graph to primary,
 // after it: its progressive traversal trail (ADR-0033) now answers a
 // primary management question, not a database-browser one.
@@ -603,10 +604,10 @@ test("primary navigation is Today/Timeline/People/Inbox/Graph; Obligations/Searc
   await page.goto("/");
 
   const tabs = page.getByRole("tab");
-  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Graph", "Obligations", "Search", "Meetings", "Activity", "Workbench"]);
+  await expect(tabs).toHaveText(["Today", "Timeline", "People", "Inbox", "Graph", "Obligations", "Search", "Sources", "Activity", "Workbench"]);
 
   const secondaryTabs = page.locator(".tab-secondary");
-  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Meetings", "Activity", "Workbench"]);
+  await expect(secondaryTabs).toHaveText(["Obligations", "Search", "Sources", "Activity", "Workbench"]);
 });
 
 test("primary navigation scrolls internally without widening a narrow viewport", async ({ page }) => {
@@ -894,20 +895,22 @@ test("time horizon buckets show risk-signal explanations when any obligation has
   expect(explanation).toMatch(/no evidence linked|no update in \d+ day\(s\)|no owner linked|not linked to anyone or anything/i);
 });
 
-// ADR-0043: proves the Meeting Review page renders an ingested meeting's
+// ADR-0043: proves the Source Review page renders an ingested source's
 // transcript and can trigger extraction on a fragment with nothing
-// extracted yet. Ingests its own meeting via the existing atomic ingestion
+// extracted yet. Ingests its own source via the existing atomic ingestion
 // route (ADR-0040) rather than the UI, since ingestion is deliberately an
-// API/CLI/MCP action, not a page in this app (ADR-0034/0043). Tolerant of
-// whether a model is configured in this environment -- either a real
-// candidate appears or an honest "nothing worth extracting"/"no model
-// configured" message renders, never a crash or a fabricated result.
-test("meeting review: viewing a meeting and triggering extraction on a fragment (ADR-0043)", async ({ page, request }) => {
+// API/CLI/MCP action, not a page in this app (ADR-0034/0043). Uses a
+// non-"meeting" source_type deliberately -- proves ADR-0096's
+// generalization beyond node_type='meeting', not just the original case.
+// Tolerant of whether a model is configured in this environment -- either
+// a real candidate appears or an honest "nothing worth extracting"/"no
+// model configured" message renders, never a crash or a fabricated result.
+test("source review: viewing a non-meeting source and triggering extraction on a fragment (ADR-0043/ADR-0096)", async ({ page, request }) => {
   const stamp = Date.now();
-  const title = `Meeting Review Test ${stamp}`;
+  const title = `Source Review Test ${stamp}`;
   const ingestResponse = await request.post("/api/sources/ingest", {
     data: {
-      source_type: "meeting",
+      source_type: "1on1",
       title,
       occurred_at: new Date().toISOString(),
       participants: ["Roopa"],
@@ -917,8 +920,8 @@ test("meeting review: viewing a meeting and triggering extraction on a fragment 
   expect(ingestResponse.ok()).toBeTruthy();
 
   await page.goto("/");
-  await page.getByRole("tab", { name: "Meetings" }).click();
-  await expect(page.getByRole("tab", { name: "Meetings" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Sources" }).click();
+  await expect(page.getByRole("tab", { name: "Sources" })).toHaveAttribute("aria-selected", "true");
 
   await page.locator(".node-list-button", { hasText: title }).click();
   await expect(page.locator(".meeting-review-detail h3")).toHaveText(title);
