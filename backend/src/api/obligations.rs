@@ -187,6 +187,65 @@ pub(super) async fn get_obligation_detail(
     })))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub(super) struct UpdateObligationRequest {
+    status: Option<String>,
+    hard_due_at: Option<String>,
+    soft_due_at: Option<String>,
+}
+
+/// ADR-0093: the first edit surface an Obligation has ever had -- status and
+/// due dates were previously set-once-at-creation only. Appends a
+/// `status_changed` event via `obligation::update_status`, the same
+/// function the CLI and MCP tool call, so the three surfaces cannot drift.
+/// `400` if no field actually changes; `404` for an unknown id.
+pub(super) async fn update_obligation(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateObligationRequest>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let new_status = match &body.status {
+        Some(raw) => Some(crate::obligation::ObligationStatus::parse(raw).ok_or((
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("status must be one of open/at_risk/closed, got {raw:?}"),
+        ))?),
+        None => None,
+    };
+
+    let updated = crate::obligation::update_status(
+        &pool,
+        id,
+        new_status,
+        body.hard_due_at,
+        body.soft_due_at,
+        "local-operator",
+        "http_api",
+    )
+    .await
+    .map_err(|error| match error {
+        crate::obligation::UpdateObligationError::NotFound => {
+            (axum::http::StatusCode::NOT_FOUND, "obligation not found".to_string())
+        }
+        crate::obligation::UpdateObligationError::InvalidStatus(reason) => {
+            (axum::http::StatusCode::BAD_REQUEST, reason)
+        }
+        crate::obligation::UpdateObligationError::NoChange => {
+            (axum::http::StatusCode::BAD_REQUEST, error.to_string())
+        }
+        crate::obligation::UpdateObligationError::Database(inner) => {
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, inner.to_string())
+        }
+    })?;
+
+    Ok(Json(json!({
+        "obligation_id": updated.obligation_id,
+        "status": updated.status,
+        "hard_due_at": updated.hard_due_at.map(|value| value.to_rfc3339()),
+        "soft_due_at": updated.soft_due_at.map(|value| value.to_rfc3339()),
+        "source_fragment_id": updated.source_fragment_id,
+    })))
+}
+
 /// A deterministic reason for one Daily Brief item (ADR-0022), with a second
 /// evidence clause added by ADR-0023: cites the linked source fragment's
 /// text when present, or states plainly that none is recorded. Never

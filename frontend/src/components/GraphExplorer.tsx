@@ -66,7 +66,7 @@ export function renderRelationshipGroup(title: string, entries: RelationshipObli
               <code title={entry.obligation_id}>{entry.obligation_id.slice(0, 8)}…</code>
               <StatusBadge value={entry.status} />
             </div>
-            <span className="daily-brief-reason">{entry.reason}</span>
+            <span className="daily-brief-reason">{renderBoldSegments(entry.reason)}</span>
             {entry.risk_signals.length > 0 && (
               <ul className="risk-signals">
                 {entry.risk_signals.map((signal) => (

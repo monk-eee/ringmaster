@@ -26,6 +26,7 @@ pub use nodes::person_brief;
 use nodes::person_career_history;
 use obligations::{
     daily_brief, focus_blocks, get_obligation_detail, list_obligations, time_horizon,
+    update_obligation,
 };
 use search::search;
 
@@ -68,7 +69,7 @@ pub fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/obligations", get(list_obligations))
-        .route("/api/obligations/:id", get(get_obligation_detail))
+        .route("/api/obligations/:id", get(get_obligation_detail).patch(update_obligation))
         .route("/api/daily-brief", get(daily_brief))
         .route("/api/time-horizon", get(time_horizon))
         .route("/api/focus-blocks", get(focus_blocks))

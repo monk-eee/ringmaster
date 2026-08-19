@@ -3,6 +3,7 @@ import type { TimeHorizon, TimeHorizonItem } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
 import { BUCKETS } from "./TimeHorizon";
+import { renderBoldSegments } from "../markdown";
 
 type Stack = { dateLabel: string; items: TimeHorizonItem[] };
 type Band = (typeof BUCKETS)[number] & { stacks: Stack[] };
@@ -133,7 +134,7 @@ export default function TimeHorizonTimeline({ horizon }: Props) {
                                     {item.obligation_id.slice(0, 8)}…
                                   </code>
                                 </div>
-                                <span className="daily-brief-reason">{item.reason}</span>
+                                <span className="daily-brief-reason">{renderBoldSegments(item.reason)}</span>
                                 {item.source_occurred_at && (
                                   <span className="time-horizon-source-occurred-at">
                                     Source occurred {new Date(item.source_occurred_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}

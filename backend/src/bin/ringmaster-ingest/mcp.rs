@@ -1,6 +1,7 @@
 use ringmaster_backend::api;
 use ringmaster_backend::embedding_adapter::EmbeddingConfig;
 use ringmaster_backend::graph;
+use ringmaster_backend::obligation::{self, ObligationStatus};
 use ringmaster_backend::transcript::{ingest_source, SourceMetadata};
 use axum::extract::{Path, State};
 use rmcp::handler::server::wrapper::Parameters;
@@ -161,6 +162,21 @@ pub struct CreateRelationshipParams {
     /// Close prior current relationships with the same from_id and edge_type.
     #[serde(default)]
     pub supersede: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct UpdateObligationParams {
+    /// Obligation UUID.
+    pub id: String,
+    /// New status: "open", "at_risk", or "closed". Omit to leave unchanged.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// New hard due date as RFC3339, or "" to explicitly clear it. Omit to leave unchanged.
+    #[serde(default)]
+    pub hard_due_at: Option<String>,
+    /// New soft due date as RFC3339, or "" to explicitly clear it. Omit to leave unchanged.
+    #[serde(default)]
+    pub soft_due_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -512,6 +528,50 @@ impl RingmasterIngestServer {
             .collect();
         match graph::upsert_nodes(&self.pool, entities).await {
             Ok(results) => Ok(json_success(results)),
+            Err(error) => Ok(tool_error(error.to_string())),
+        }
+    }
+
+    #[tool(
+        description = "Update an Obligation's status and/or due dates (ADR-0093) -- the only edit surface an Obligation has, otherwise set-once at creation. status must be one of open/at_risk/closed. To clear hard_due_at/soft_due_at rather than leave it unchanged, pass an empty string."
+    )]
+    async fn update_obligation(
+        &self,
+        Parameters(params): Parameters<UpdateObligationParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let id = match parse_uuid("id", &params.id) {
+            Ok(value) => value,
+            Err(message) => return Ok(tool_error(message)),
+        };
+        let new_status = match &params.status {
+            Some(raw) => match ObligationStatus::parse(raw) {
+                Some(status) => Some(status),
+                None => {
+                    return Ok(tool_error(format!(
+                        "status must be one of open/at_risk/closed, got {raw:?}"
+                    )))
+                }
+            },
+            None => None,
+        };
+
+        match obligation::update_status(
+            &self.pool,
+            id,
+            new_status,
+            params.hard_due_at,
+            params.soft_due_at,
+            "local-operator",
+            "mcp",
+        )
+        .await
+        {
+            Ok(updated) => Ok(json_success(serde_json::json!({
+                "obligation_id": updated.obligation_id,
+                "status": updated.status,
+                "hard_due_at": updated.hard_due_at.map(|value| value.to_rfc3339()),
+                "soft_due_at": updated.soft_due_at.map(|value| value.to_rfc3339()),
+            }))),
             Err(error) => Ok(tool_error(error.to_string())),
         }
     }

@@ -3,6 +3,7 @@ import type { FocusBlock, FocusBlockObligation } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
 import { BUCKETS } from "./TimeHorizon";
+import { renderBoldSegments } from "../markdown";
 
 type Props = { blocks: FocusBlock[] };
 
@@ -77,7 +78,7 @@ export default function FocusBlocks({ blocks }: Props) {
                   </span>
                   <StatusBadge value={item.status} />
                 </div>
-                <span className="daily-brief-reason">{item.reason}</span>
+                <span className="daily-brief-reason">{renderBoldSegments(item.reason)}</span>
               </li>
             ))}
           </ol>

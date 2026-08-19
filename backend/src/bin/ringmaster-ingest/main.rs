@@ -1,3 +1,4 @@
+use ringmaster_backend::obligation::{self, ObligationStatus};
 use ringmaster_backend::transcript::{ingest_source, SourceMetadata};
 use sqlx::postgres::PgPoolOptions;
 use std::io::Read;
@@ -15,6 +16,7 @@ async fn main() {
     let result = match args.first().map(String::as_str) {
         Some("mcp-serve") => run_mcp_serve().await,
         Some("reindex-embeddings") => run_reindex_embeddings().await,
+        Some("update-obligation") => run_update_obligation(args[1..].to_vec()).await,
         _ => run_ingest(args).await,
     };
 
@@ -122,6 +124,63 @@ async fn run_ingest(args: Vec<String>) -> Result<(), String> {
     println!(
         "{}",
         serde_json::json!({ "node_id": ingested.node_id, "fragment_ids": ingested.fragment_ids })
+    );
+    Ok(())
+}
+
+/// ADR-0093: the CLI edit surface, calling the exact same
+/// `obligation::update_status` function the HTTP `PATCH /api/obligations/:id`
+/// route and the `update_obligation` MCP tool call -- no separate logic to
+/// drift. To clear a due date rather than leave it unchanged, pass an empty
+/// string (e.g. `--hard-due ""`), matching the function's own contract.
+async fn run_update_obligation(args: Vec<String>) -> Result<(), String> {
+    let mut id_raw: Option<String> = None;
+    let mut status_raw: Option<String> = None;
+    let mut hard_due_at: Option<String> = None;
+    let mut soft_due_at: Option<String> = None;
+
+    let mut iter = args.into_iter();
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--id" => id_raw = Some(iter.next().ok_or("--id requires a value")?),
+            "--status" => status_raw = Some(iter.next().ok_or("--status requires a value")?),
+            "--hard-due" => hard_due_at = Some(iter.next().ok_or("--hard-due requires a value")?),
+            "--soft-due" => soft_due_at = Some(iter.next().ok_or("--soft-due requires a value")?),
+            other => return Err(format!("unknown flag: {other}")),
+        }
+    }
+
+    let id_raw = id_raw.ok_or("missing --id")?;
+    let id = uuid::Uuid::parse_str(&id_raw).map_err(|_| format!("--id is not a valid uuid: {id_raw}"))?;
+    let new_status = match status_raw {
+        Some(raw) => Some(
+            ObligationStatus::parse(&raw)
+                .ok_or(format!("--status must be one of open/at_risk/closed, got {raw:?}"))?,
+        ),
+        None => None,
+    };
+
+    let pool = connect_pool().await?;
+    let updated = obligation::update_status(
+        &pool,
+        id,
+        new_status,
+        hard_due_at,
+        soft_due_at,
+        "local-operator",
+        "cli",
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+
+    println!(
+        "{}",
+        serde_json::json!({
+            "obligation_id": updated.obligation_id,
+            "status": updated.status,
+            "hard_due_at": updated.hard_due_at.map(|value| value.to_rfc3339()),
+            "soft_due_at": updated.soft_due_at.map(|value| value.to_rfc3339()),
+        })
     );
     Ok(())
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { TimeHorizon, TimeHorizonItem } from "../api";
 import StatusBadge from "./StatusBadge";
 import TimeHorizonTimeline from "./TimeHorizonTimeline";
+import { renderBoldSegments } from "../markdown";
 
 type Props = { horizon: TimeHorizon };
 
@@ -30,7 +31,7 @@ function BucketSection({ label, accent, items }: { label: string; accent: string
               <code title={item.obligation_id}>{item.obligation_id.slice(0, 8)}…</code>
               <StatusBadge value={item.status} />
             </div>
-            <span className="daily-brief-reason">{item.reason}</span>
+            <span className="daily-brief-reason">{renderBoldSegments(item.reason)}</span>
             {item.risk_signals.length > 0 && (
               <ul className="risk-signals">
                 {item.risk_signals.map((signal) => (

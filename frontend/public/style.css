@@ -451,19 +451,19 @@ td.evidence-cell .no-evidence {
   padding: 0;
 }
 
-.daily-brief-list li {
+.daily-brief-list > li {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 1rem 1.25rem;
+  gap: 0.5rem;
+  padding: 1.15rem 1.25rem;
   border-bottom: 1px solid var(--border);
 }
 
-.daily-brief-list li:last-child {
+.daily-brief-list > li:last-child {
   border-bottom: none;
 }
 
-.daily-brief-list li:hover {
+.daily-brief-list > li:hover {
   background: var(--surface-alt);
 }
 
@@ -506,6 +506,22 @@ td.evidence-cell .no-evidence {
   font-size: 0.92rem;
   color: var(--text);
   line-height: 1.45;
+}
+
+/* ADR-0092: a quiet blockquote treatment -- the evidence quote reads as a
+   quote, distinct from the surrounding meta/reason text, instead of an
+   undifferentiated wall of body text. Explicit font-size/weight/margin so
+   this looks identical whether it's rendered in a <p> or (ObligationDetail's)
+   <h2>. */
+.today-item-title {
+  margin: 0.15rem 0;
+  padding-left: 0.9rem;
+  border-left: 3px solid var(--border);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 0.98rem;
+  line-height: 1.6;
+  color: var(--text);
 }
 
 /* ADR-0079: the linked source's own occurred_at, shown as a small caption
@@ -1137,6 +1153,60 @@ td.evidence-cell .no-evidence {
   cursor: pointer;
 }
 
+/* ADR-0093: the first edit affordance an Obligation has ever had. */
+.obligation-edit-button {
+  margin-left: auto;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.obligation-edit-button:hover {
+  background: var(--surface-alt);
+}
+
+.obligation-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.obligation-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.obligation-edit-form select,
+.obligation-edit-form input {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.obligation-edit-form-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
 .obligation-detail-section-heading {
   font-size: 0.9rem;
   font-weight: 650;
@@ -1493,17 +1563,25 @@ td.evidence-cell .no-evidence {
   background: var(--accent-wash);
 }
 
+/* ADR-0092: compact inline pills instead of a bordered vertical list -- a
+   row with two signals used to cost four lines of hairline-divided text. */
 .risk-signals {
   list-style: none;
   margin: 0.35rem 0 0;
   padding: 0;
   display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .risk-signals li {
-  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  background: var(--at-risk-bg);
   color: var(--at-risk-fg);
 }
 

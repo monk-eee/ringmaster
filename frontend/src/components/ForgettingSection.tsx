@@ -2,6 +2,7 @@ import type { DailyBriefItem } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
 import { itemTitle, duePhrase } from "./DailyBrief";
+import { renderBoldSegments } from "../markdown";
 
 type Props = { items: DailyBriefItem[]; onSelect?: (obligationId: string) => void };
 
@@ -41,7 +42,7 @@ export default function ForgettingSection({ items, onSelect }: Props) {
                 <StatusBadge value={item.status} />
                 <span className="daily-brief-reason">{duePhrase(item.hard_due_at, item.soft_due_at)}</span>
               </div>
-              <p className="today-item-title">{itemTitle(item)}</p>
+              <p className="today-item-title">{renderBoldSegments(itemTitle(item))}</p>
             </>
           );
           return (

@@ -408,6 +408,18 @@ export function fetchObligationDetail(id: string): Promise<ObligationDetail> {
   return getJson<ObligationDetail>(`/api/obligations/${encodeURIComponent(id)}`);
 }
 
+// ADR-0093: the first edit surface an Obligation has ever had. To clear
+// hard_due_at/soft_due_at rather than leave it unchanged, pass "" --
+// matches the backend's own absent-vs-clear contract.
+export const OBLIGATION_STATUSES = ["open", "at_risk", "closed"] as const;
+
+export function updateObligation(
+  id: string,
+  patch: { status?: string; hard_due_at?: string; soft_due_at?: string },
+): Promise<ObligationDetail> {
+  return patchJson<ObligationDetail>(`/api/obligations/${encodeURIComponent(id)}`, patch);
+}
+
 export type ExtractResult = { status: "created" } | { status: "empty" } | { status: "unavailable"; message: string };
 
 // ADR-0013's trigger route distinguishes created/empty/unavailable by status

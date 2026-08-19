@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchPersonBrief, type PersonBrief } from "../api";
 import { duePhrase } from "./DailyBrief";
 import StatusBadge from "./StatusBadge";
+import { renderBoldSegments } from "../markdown";
 
 type Props = { personId: string | null };
 
@@ -46,7 +47,7 @@ export default function PersonBriefPanel({ personId }: Props) {
                 <StatusBadge value={commitment.status} />
                 <span className="daily-brief-reason">{duePhrase(commitment.hard_due_at, commitment.soft_due_at)}</span>
               </div>
-              <span className="daily-brief-reason">{commitment.reason}</span>
+              <span className="daily-brief-reason">{renderBoldSegments(commitment.reason)}</span>
             </li>
           ))}
         </ul>
@@ -59,7 +60,7 @@ export default function PersonBriefPanel({ personId }: Props) {
         <ul className="person-brief-list">
           {brief.recent_asks.map((ask) => (
             <li key={ask.candidate_id}>
-              <span className="daily-brief-reason">{ask.candidate_type}: {ask.statement}</span>
+              <span className="daily-brief-reason">{ask.candidate_type}: {renderBoldSegments(ask.statement)}</span>
               {ask.source_text && (
                 <span className="person-brief-source">
                   {ask.speaker ?? "unknown"}: "{ask.source_text}"

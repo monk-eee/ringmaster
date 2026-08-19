@@ -1,6 +1,7 @@
 import type { DailyBriefItem } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
+import { renderBoldSegments } from "../markdown";
 
 // ADR-0039: Today renders a capped slice of the same ranked list, but the
 // greeting/summary sentence must still state the true total, and a capped
@@ -60,7 +61,7 @@ export default function DailyBrief({ items, totalCount, onViewMore, onSelect }: 
                 <StatusBadge value={item.status} />
                 <span className="daily-brief-reason">{duePhrase(item.hard_due_at, item.soft_due_at)}</span>
               </div>
-              <p className="today-item-title">{itemTitle(item)}</p>
+              <p className="today-item-title">{renderBoldSegments(itemTitle(item))}</p>
             </>
           );
           return (
@@ -72,7 +73,7 @@ export default function DailyBrief({ items, totalCount, onViewMore, onSelect }: 
               ) : (
                 rowContent
               )}
-              <span className="daily-brief-reason">{item.reason}</span>
+              <span className="daily-brief-reason">{renderBoldSegments(item.reason)}</span>
               {item.risk_signals.length > 0 && (
                 <ul className="risk-signals">
                   {item.risk_signals.map((signal) => (
