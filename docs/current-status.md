@@ -1,20 +1,77 @@
 # Ringmaster — Current status (a real audit, not a decision log)
 
-Updated 2026-08-17 (second pass — supersedes the first version of this
+Updated 2026-08-19 (third pass — supersedes the second version of this
 file, which is quoted below where useful) by clicking through the running
 app again, querying the live dev database again, and reading the code
 behind what's there — not by summarizing ADR titles.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) is the formal, decision-level
 snapshot; this is "what's really there right now, warts included." As of
-this pass: **56 ADRs, 54 `PROVEN`, 1 `ASSERTED` (ADR-0004, a long-standing
-manual claim), 0 `BROKEN`/`STALE`/`DEADHEADED`**, CI green at `26ab431`.
+this pass: **85 ADRs, all 85 `PROVEN`, 0 `ASSERTED`/`BROKEN`/`STALE`/
+`DEADHEADED`** (ADR-0004's manual check was re-affirmed and now proves
+clean), CI green at `503f2d8`.
 
 **A honest caveat before anything else**: this repo is being built by two
 concurrent AI sessions against the same working directory, right now,
 continuously. HEAD moved twice *while this exact audit was being written*
-(commits landed mid-investigation). Any specific row count below is
-already stale by the time you read it — the structural findings (what
-works, what doesn't, what's missing) are the durable part.
+in the second pass; the same is likely true here. Any specific row count
+below is already stale by the time you read it — the structural findings
+(what works, what doesn't, what's missing) are the durable part.
+
+## What changed since the second audit
+
+Eight more ADRs landed (0080–0087), closing every bounded item in
+`docs/IMPROVEMENT-PLAN.md`'s Priority 0–2 backlog:
+
+- **Graph Explorer promoted to primary navigation**
+  ([ADR-0080](adr.d/0080-promote-graph-explorer-to-primary-navigation.md)),
+  plus an **Actions lens** that filters the radial neighbourhood down to
+  what needs doing ([ADR-0081](adr.d/0081-graph-explorer-actions-lens.md)).
+  Primary nav is now confirmed live as `Today / Timeline / People / Inbox /
+  Graph`, not the four-tab set the second audit recorded.
+- **Repeated-concern risk signal**
+  ([ADR-0082](adr.d/0082-repeated-concern-risk-signal.md)) — the same
+  concern appearing across independent sources now surfaces as a fifth
+  risk signal. Its test flakiness was root-caused twice: an initial
+  one-hot-vector fix (`cd8f804`) still collided as the shared
+  `ringmaster_test` database grew; the real fix
+  (`1b1842c`) generates genuinely random continuous embedding vectors, no
+  discrete collision space, verified via two clean full-suite runs.
+- **Meeting-brief generation**
+  ([ADR-0083](adr.d/0083-meeting-brief-generation.md)) — a
+  `GET /api/people/:id/brief` route and a `prepare_meeting_brief` MCP tool
+  compose a person's open commitments and recent asks with source
+  citations, verified live over both HTTP and a raw MCP stdio handshake.
+- **Today's narrative summary**
+  ([ADR-0084](adr.d/0084-today-narrative-summary.md)) — a time-of-day
+  greeting plus honest date-compression/stale counts (zero counts
+  omitted, not shown as "0").
+- **Focus Blocks People/All filter**
+  ([ADR-0085](adr.d/0085-focus-blocks-people-filter.md)) — deliberately
+  scoped down from `VISION.md`'s full People/Delivery/Leadership/
+  Operations taxonomy (no `kind` field exists on `Obligation` to build
+  that honestly) to the one real, groundable split: person-linked vs.
+  everything else.
+- **Workbench, a three-pane view**
+  ([ADR-0086](adr.d/0086-workbench-three-pane-view.md)) — a new secondary
+  tab composing three already-proven reads (`DailyBrief`,
+  `ObligationDetail`, and ADR-0083's person brief) with zero backend
+  changes; ships additive, does not replace Today.
+- **Graph Explorer create-node reliability under concurrent Playwright
+  load** ([ADR-0087](adr.d/0087-graph-explorer-reliability-under-concurrent-load.md))
+  — root-caused a session-long "pre-existing flaky test" caveat
+  (mis-attributed to shared-database growth) to real worker-concurrency
+  contention against one shared Playwright backend/Vite pair, proven via
+  a `--workers=1` vs. default-worker A/B (0/6 pass → 6/6 pass after the
+  fix), plus an unrelated but genuine latency bug (an unbounded node-list
+  refresh unnecessarily blocking the new node's own detail fetch).
+- **ADR-0004 re-affirmed twice this pass** (`834cb96`, then `e67e2d3`
+  with more detail) — its `no-sensitive-data-sharing-path` manual check
+  now checker-confirms clean through ADR-0086, moving it from `ASSERTED`
+  to `PROVEN` for the first time since it was accepted.
+
+The second audit's specific findings (data volume, FocusBlocks cap,
+People tab, container staleness) are unchanged and still hold; quoted
+below where still useful.
 
 ## What changed since the first audit
 
@@ -118,39 +175,53 @@ fixed and verified live:
   new since the last audit — clicking any Today row now opens a full
   detail view (confirmed: rows render as real `<button>` elements, not
   static text).
-- **Governance**: 55 ADRs, 54 `PROVEN`, 1 `ASSERTED` (ADR-0004,
-  policy-only by design), 0 broken. CI green.
+- **Governance**: 85 ADRs, all 85 `PROVEN`, 0 broken. CI green.
 
 ## The frontend, tab by tab (what I actually saw, this pass)
 
-Primary nav: `Today / Timeline / People / Inbox`, secondary/"Developer":
-`Obligations / Search / Graph / Meetings / Activity` (Activity is new).
+Primary nav: `Today / Timeline / People / Inbox / Graph` (Graph promoted
+from secondary, ADR-0080), secondary/"Developer": `Obligations / Search /
+Meetings / Activity / Workbench` (Workbench is new, ADR-0086).
 
-- **Today**: greeting → ranked list (capped 10, "31 more in Timeline →") →
+- **Today**: greeting → narrative summary (date_compression/stale counts,
+  ADR-0084) → ranked list (capped 10, "31 more in Timeline →") →
   **"What am I forgetting?"** (capped 5, ranked by signal count — watched
   it correctly surface the most-flagged items first) → **"Do these
-  together"** (capped 3, urgency-ordered, bucket-labeled, "Show all N") →
-  "Coming soon" strip (still capped 3/window, unchanged). Every row is
-  clickable into detail. This is now a genuinely coherent attention
-  budget, not a data dump — the single biggest change since the last
-  audit.
+  together"** (capped 3, urgency-ordered, bucket-labeled, "Show all N",
+  now with a People/All filter toggle when both kinds of block are
+  present — ADR-0085) → "Coming soon" strip (still capped 3/window,
+  unchanged). Every row is clickable into detail. This is now a genuinely
+  coherent attention budget, not a data dump — the single biggest change
+  since the first audit.
 - **People**: defaults to who-needs-attention (verified via direct API
   call: `?needs_attention=true` returns a strict subset of the unfiltered
   list). Detail view shows `last_interaction_at` as a relative phrase,
   risk signals per linked obligation, and a capped, source-cited Recent
   interactions section covering both identity edges and the legacy speaker
   fallback ([ADR-0071](adr.d/0071-person-detail-recent-interactions.md)).
-- **Navigation on narrow screens**: all nine destinations remain reachable
+- **Navigation on narrow screens**: all ten destinations remain reachable
   through horizontal scrolling contained inside the tab list; the document
   itself stays viewport-width at 390px.
-- **Timeline**: unchanged since last audit — still bucket-based, still not
-  aware of a linked source's `occurred_at` (named out of scope in
-  [ADR-0042](adr.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md),
-  still true).
-- **Inbox / Meetings / Obligations / Search / Graph / Activity**: all
-  present and functional per prior verification; not re-clicked through
-  this pass (no changes landed there since the last audit that I'm aware
-  of).
+- **Timeline**: now surfaces a linked source's own `occurred_at` as
+  display-only detail ("Source occurred ...") on expanded items
+  ([ADR-0079](adr.d/0079-timeline-surfaces-source-occurred-at.md)) — the
+  second audit's "still not aware of occurred_at" finding is no longer
+  current. Bucket placement itself is still due-date-only, unchanged by
+  design.
+- **Graph**: now primary nav, not secondary (ADR-0080). An Actions lens
+  filters the radial neighbourhood to Obligations/risk nodes only,
+  stating the shown/filtered count honestly (ADR-0081). Create-node →
+  select flow is now measurably more reliable under concurrent load
+  (ADR-0087).
+- **Workbench** (new, ADR-0086): a three-pane layout — Attention (reuses
+  `DailyBrief`), Current focus (reuses `ObligationDetail`), Relationship
+  context (new `PersonBriefPanel`, composing ADR-0083's person-brief
+  read). Confirmed live: selecting an item fills the centre and right
+  panes; an honest empty state renders when nothing is selected or no
+  person is linked.
+- **Inbox / Meetings / Obligations / Search / Activity**: all present and
+  functional per prior verification; not re-clicked through this pass (no
+  changes landed there since the last audit that I'm aware of).
 
 ## The database, right now (a snapshot that's already changing)
 
