@@ -102,3 +102,4 @@ accepted and implemented.
 | [ADR-0087: Graph explorer create-node reliability under concurrent Playwright load](0087-graph-explorer-reliability-under-concurrent-load.md) | Accepted | [EV-0087](../evidence.d/0087-graph-explorer-reliability-under-concurrent-load.md) |
 | [ADR-0088: Career/Connect export — a person's completed obligation history, with evidence](0088-career-connect-export.md) | Accepted | [EV-0088](../evidence.d/0088-career-connect-export.md) |
 | [ADR-0089: Patch high-severity Vite/nanoid advisories](0089-patch-vite-nanoid-security-advisories.md) | Accepted | [EV-0089](../evidence.d/0089-patch-vite-nanoid-security-advisories.md) |
+| [ADR-0090: CI enforces npm audit and cargo audit \u2014 catch known-vulnerable dependencies before merge](0090-ci-enforced-dependency-vulnerability-scanning.md) | Accepted | [EV-0090](../evidence.d/0090-ci-enforced-dependency-vulnerability-scanning.md) |

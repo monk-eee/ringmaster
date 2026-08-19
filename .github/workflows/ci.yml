@@ -46,6 +46,15 @@ jobs:
         # RowNotFound failures. Serial execution is the reliability fix,
         # not a new decision -- ADR-0017 already decided "run cargo test."
         run: cargo test --manifest-path backend/Cargo.toml -- --test-threads=1
+      # ADR-0090: catches a known-vulnerable dependency before merge, using
+      # the maintained Action's pre-built binary (a from-source `cargo
+      # install cargo-audit` was tried locally and abandoned -- its
+      # reqwest/rustls/gix dependency chain is too slow to compile ad hoc).
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: backend
 
   frontend:
     runs-on: ubuntu-latest
@@ -60,6 +69,14 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # ADR-0090: catches a known-vulnerable dependency before merge --
+      # this exact check, run manually, is how ADR-0089's Vite/nanoid
+      # advisories were found; CI enforcement stops a future dependency
+      # bump from silently reintroducing one. --omit=dev scopes the audit
+      # to the production dependency surface, matching ADR-0089's own
+      # high-severity-only posture via --audit-level=high.
+      - name: npm audit
+        run: npm audit --omit=dev --audit-level=high
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Build
