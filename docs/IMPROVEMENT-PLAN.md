@@ -178,13 +178,29 @@ Lower priority: these map to real Learn.ADOA workflows but have no
 confirmed usage pressure on Ringmaster yet, and the underlying domain types
 already exist.
 
-- **Career/Connect evidence export.** The People obligation type covers
-  onboarding, career follow-up, and recognition (`PRODUCT-SPEC.md` §5.1),
-  but there is no dedicated report/export view — the artifact a manager
-  would actually paste into a Connect self-assessment.
-- **BCDR/compliance dedicated view.** The Operational obligation type
-  covers compliance actions and service-ownership transitions, but has no
-  dedicated surface distinct from the generic Obligation list.
+- **Career/Connect evidence export. Done** ([ADR-0088](adr.d/0088-career-connect-export.md),
+  2026-08-19): a new `GET /api/people/:id/career-export` read plus a
+  Person-detail section render every closed Obligation linked to a person
+  as plain, copy-to-clipboard text with evidence citations. Honestly
+  unfiltered by People/Delivery/Leadership/Operational category, since no
+  such classification is stored anywhere in this schema.
+- **BCDR/compliance dedicated view.** The "Operational" obligation type
+  named in `PRODUCT-SPEC.md` §5.1 (compliance actions, service-ownership
+  transitions) is, like "People"/"Delivery"/"Leadership", not a stored
+  classification — [ADR-0082](adr.d/0082-repeated-concern-risk-signal.md)/[ADR-0085](adr.d/0085-focus-blocks-people-filter.md)
+  already confirmed `obligation_projection` has no `kind`/type column, and
+  a follow-up audit (2026-08-19) confirmed no node type resembling
+  "service"/"compliance" is actually created anywhere in this codebase
+  outside `PRODUCT-SPEC.md`'s own aspirational node-type table (only
+  `person`/`meeting`/`risk` are real in practice). Unlike Career/Connect
+  export above — which had a genuine technical gap (closed Obligations
+  simply weren't queryable per-person) independent of any category — a
+  BCDR/compliance *view* has no honest signal to filter on at all today.
+  Building it now would mean inventing a classification with no real
+  basis, exactly the fabrication this repo's conventions refuse. Blocked
+  on the same real decision [ADR-0085](adr.d/0085-focus-blocks-people-filter.md)
+  already deferred: a real obligation-category concept, set at
+  extraction/promotion time, does not exist yet.
 
 ---
 
@@ -195,7 +211,11 @@ already exist.
 3. **1.1** — done.
 4. **1.2** — done.
 5. **2.1–2.3** — done.
-6. **3, 4** — remaining. Largest and most speculative; needs its own
+6. **3, 4** — 4's Career/Connect export is done ([ADR-0088](adr.d/0088-career-connect-export.md));
+   its BCDR/compliance item is honestly blocked (no stored obligation
+   category exists to build a dedicated view on, same gap as 2.2's full
+   attention-type taxonomy). All of 3 remains. Largest and most
+   speculative; needs its own
    access-control ADR and real usage pressure before committing effort.
    This is a genuine policy decision (what data-classification/access model
    governs a future connector), not a bounded implementation choice, and
