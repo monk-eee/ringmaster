@@ -50,8 +50,8 @@ flowchart LR
   (`present`/`absent` regex over files, `parity` = every accepted ADR has
   evidence, `manual` = human-asserted, decays to `Stale` after a threshold).
   Never executes shell code from evidence data.
-- All 88 ADRs that exist are **Accepted**; `node scripts/check-evidence.mjs`
-  currently reports all 88 **Proven** (`ADR-0004`'s manual, policy-only check --
+- All 92 ADRs that exist are **Accepted**; `node scripts/check-evidence.mjs`
+  currently reports all 92 **Proven** (`ADR-0004`'s manual, policy-only check --
   no sync/export implementation exists to check against -- re-affirmed and
   confirmed clean as of ADR-0086) — zero `Broken`/`Stale`/`Deadheaded`.
   Re-run the checker for the current count.
@@ -214,7 +214,7 @@ flowchart TB
 |---|---|
 | `main.rs` | Connects to Postgres, runs `sqlx::migrate!`, rebuilds the Obligation projection once at boot, serves the HTTP API on `:8080`. |
 | `api/` | Split by responsibility (ADR-0072): `mod.rs` (`app()` router wiring, shared `ListQuery`/`clamp_list_params`, `/health`), `obligations.rs` (Daily Brief, Time Horizon, Focus Blocks, obligation detail/list routes, `risk_signals`/`daily_brief_reason` shared functions), `ingestion.rs` (meeting/source ingestion + detail routes), `candidates.rs` (candidate list/accept/reject/correct/promote + extraction trigger + `repeated_concern_matches`), `search.rs` (semantic search route), `audit_events.rs` (audit feed route), `nodes.rs` (node/edge CRUD + traversal routes, `person_brief`, `person_career_history`). Every route path and handler is unchanged; only file layout moved. |
-| `obligation.rs` | Obligation event vocabulary (`created`/`status_changed`/`closed`), append + projection rebuild, due-date and source-fragment carry-forward. |
+| `obligation.rs` | Obligation event vocabulary (`created`/`status_changed`/`closed`), append + projection rebuild, due-date and source-fragment carry-forward, `update_status` (ADR-0093 — the shared edit function the API/CLI/MCP surfaces all call). |
 | `extraction.rs` | Candidate event vocabulary, deterministic validation, `extract_candidate_via_model` (calls `model_adapter`), `transition_candidate` (accept/reject). |
 | `graph/` | Split by responsibility (ADR-0072): `node.rs` (`nodes` CRUD, `list_nodes`/`update_node`/`upsert_nodes`), `edge.rs` (`edges` CRUD, including temporal-validity supersede), `source_fragment.rs` (`source_fragments` CRUD, `embed_source_fragment`, `search_source_fragments`). `mod.rs` re-exports every item under `crate::graph::*` unchanged. |
 | `transcript.rs` | `ingest_transcript`: parses `Speaker: text` turns (explicitly provisional placeholder format), creates a meeting node + hashed fragments. |
@@ -228,6 +228,7 @@ flowchart TB
 |---|---|---|
 | `/health` | GET | `200 OK` |
 | `/api/obligations` | GET | Read-only `obligation_projection` rows, `LEFT JOIN`ed with `source_fragments` for evidence (`source_fragment_id`, `source_text`) |
+| `/api/obligations/:id` | GET, PATCH | Read one Obligation with risk signals/linked nodes ([ADR-0047](adr.d/0047-obligation-detail-page.md)) / edit its status and/or due dates, the first edit surface an Obligation has ever had ([ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md)) |
 | `/api/daily-brief` | GET | Non-closed obligations ranked by urgency (at-risk first, then soonest due date), each with a deterministic `reason` string that now cites linked evidence or states plainly that none is recorded |
 | `/api/time-horizon` | GET | Non-closed obligations bucketed by effective due date into Overdue/Next 7/30/90 days/Beyond, an at-risk Obligation with no date landing in Overdue; reuses the Daily Brief's own `reason` function |
 | `/api/focus-blocks` | GET | Non-closed Obligations sharing a linked graph node (person, meeting, …) grouped into a Suggested Focus Block; a node linked to fewer than two counts forms no block |
@@ -251,13 +252,21 @@ flowchart TB
 | `/api/edges` | POST | Create an edge between two existing nodes/obligations. Optional `valid_from` + `supersede: true` closes out any prior current edge sharing the same `(from_id, edge_type)` in one transaction; omitted/false leaves every prior caller unchanged |
 
 **MCP server** (`ringmaster-ingest mcp-serve`, stdio, [ADR-0042](adr.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md)/[ADR-0066](adr.d/0066-non-destructive-graph-management-over-mcp.md)):
-11 tools calling the identical Rust functions the HTTP routes use, never
+12 tools calling the identical Rust functions the HTTP routes use, never
 duplicating logic — `ingest_source`, `recall_sources`, `search`,
 `list_entities`, `get_entity`, `prepare_meeting_brief`
 ([ADR-0083](adr.d/0083-meeting-brief-generation.md)), `create_entity`,
 `update_entity`, `upsert_entities` (atomic, exact-match, 1-100 entities),
+`update_obligation` (status/due dates, [ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md)),
 `list_relationships`, `create_relationship`. Deliberately non-destructive:
 no delete tool exists for any entity/relationship type.
+
+**CLI** (`ringmaster-ingest`, no running server required, connects directly
+to `DATABASE_URL`): the default ingest command, `reindex-embeddings`
+([ADR-0063](adr.d/0063-reindex-backfill-embeddings.md)), `mcp-serve`, and
+`update-obligation` ([ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md))
+— the same `obligation::update_status` function the HTTP route and MCP
+tool call.
 
 Common posture across every write/optional-model route: **never automatic**
 (extraction and embedding are always explicit calls, never triggered by
@@ -296,9 +305,12 @@ from the browser's perspective, no CORS needed).
     now also surfacing a linked source's own `occurred_at`
     ([ADR-0079](adr.d/0079-timeline-surfaces-source-occurred-at.md)).
   - **People**: defaults to who-needs-attention, an explicit toggle shows
-    everyone ([ADR-0051](adr.d/0051-relationship-workspace.md)); person
-    detail shows `last_interaction_at`, a capped Recent Interactions list
-    with source citations ([ADR-0071](adr.d/0071-person-detail-recent-interactions.md)),
+    everyone ([ADR-0051](adr.d/0051-relationship-workspace.md)); cards and
+    the detail header show a deterministic colored-initials avatar and
+    pill-shaped at-risk/open badges, not plain text
+    ([ADR-0091](adr.d/0091-people-view-avatar-and-badge-redesign.md));
+    person detail shows `last_interaction_at`, a capped Recent Interactions
+    list with source citations ([ADR-0071](adr.d/0071-person-detail-recent-interactions.md)),
     an `at_risk`/`open` Relationship grouping, and a **Career export**
     section \u2014 every closed Obligation linked to the person as
     copy-to-clipboard plain text, the artifact for a Connect
@@ -314,8 +326,8 @@ from the browser's perspective, no CORS needed).
     **Actions lens** filtering the neighbourhood down to Obligation/risk
     neighbours ([ADR-0081](adr.d/0081-graph-explorer-actions-lens.md)).
   - **Workbench**: three panes \u2014 Attention (`DailyBrief`, unchanged),
-    Current focus (`ObligationDetail`, unchanged), Relationship context (a
-    new `PersonBriefPanel` calling `GET /api/people/:id/brief`) \u2014
+    Current focus (`ObligationDetail`, now editable — see below), Relationship
+    context (a new `PersonBriefPanel` calling `GET /api/people/:id/brief`) —
     selecting a left-pane item fills the other two without page navigation,
     zero new backend routes ([ADR-0086](adr.d/0086-workbench-three-pane-view.md)).
   - **Meetings**: Meeting Review \u2014 transcript fragments with inline
@@ -323,7 +335,9 @@ from the browser's perspective, no CORS needed).
   - **Activity**: a flat, chronological feed over `audit_events`
     ([ADR-0049](adr.d/0049-audit-trail-read-api.md)).
 - **`components/`** — `DailyBrief.tsx`, `ForgettingSection.tsx`,
-  `FocusBlocks.tsx`, `ObligationDetail.tsx`, `ObligationsTable.tsx`,
+  `FocusBlocks.tsx`, `ObligationDetail.tsx` (now has an Edit form for
+  status/due dates, [ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md)),
+  `ObligationsTable.tsx`,
   `CandidatesTable.tsx`, `SearchResults.tsx`, `StatusBadge.tsx`,
   `GraphExplorer.tsx`, `TimeHorizon.tsx`, `TimeHorizonTimeline.tsx`,
   `People.tsx`, `PersonBriefPanel.tsx`, `Workbench.tsx`, `MeetingReview.tsx`,
@@ -332,9 +346,16 @@ from the browser's perspective, no CORS needed).
   surface via a shared `typeIcon()` vocabulary
   ([ADR-0030](adr.d/0030-human-readable-titles-and-type-iconography.md)).
   A visual design refresh ([ADR-0074](adr.d/0074-visual-design-system-refresh.md))
-  restyled every surface with zero behavior change.
+  restyled every surface with zero behavior change; a further People-view
+  pass added colored avatars/pill badges ([ADR-0091](adr.d/0091-people-view-avatar-and-badge-redesign.md)),
+  and a shared-row-typography declutter fixed a real CSS selector-leak bug
+  plus added a safe `renderBoldSegments()` helper (`markdown.ts`, never
+  `dangerouslySetInnerHTML`) so real `**bold**` markdown in evidence quotes
+  renders instead of showing literal asterisks
+  ([ADR-0095](adr.d/0095-daily-brief-row-decluttering.md)).
 - **`api.ts`** — typed `fetch` wrappers, including `searchSourceFragments`,
-  `fetchPersonBrief`, `fetchCareerHistory`.
+  `fetchPersonBrief`, `fetchCareerHistory`, `updateObligation` (PATCH,
+  [ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md)).
 - Playwright spec (`tests/obligations.spec.ts`) exercises real client-side
   interaction (tab switching, search, multi-step graph traversal,
   bulk-select, Workbench pane-filling), not just static DOM structure.
@@ -404,7 +425,7 @@ chosen yet), branch protection rules.
   ingested only via MindLeak's own MCP tools, translated into Ringmaster's
   own graph at the boundary — no shared schema, no live query federation,
   no direct SQLite access.
-- **Dependency vulnerability scanning** ([ADR-0089](adr.d/0089-patch-vite-nanoid-security-advisories.md)/[ADR-0090](adr.d/0090-ci-enforced-dependency-vulnerability-scanning.md)):
+- **Dependency vulnerability scanning** ([ADR-0089](adr.d/0089-patch-vite-nanoid-security-advisories.md)/[ADR-0090](adr.d/0090-ci-enforced-dependency-vulnerability-scanning.md)/[ADR-0092](adr.d/0092-fix-ci-cargo-audit-permissions-and-document-rsa-advisory.md)):
   two high-severity Vite/nanoid advisories were found and patched via a
   minimal-version bump (not the major-version jump `npm audit fix --force`
   would have applied); CI now runs `npm audit`/`cargo audit` on every
@@ -412,7 +433,11 @@ chosen yet), branch protection rules.
   vulnerability. `frontend/Dockerfile`'s `CMD ["npx", "vite"]` means the
   actual running frontend container is Vite's dev server, not a static
   build — these are live vulnerabilities in the running app, not deferred
-  dev-tooling concerns.
+  dev-tooling concerns. ADR-0092 fixed a real gap the other two didn't
+  catch locally: `rustsec/audit-check` needs `checks: write`, which the
+  default `GITHUB_TOKEN` permissions don't grant, so the job failed in
+  live CI even though `cargo audit` itself ran clean — confirmed fixed in
+  a real CI run (`32223737027`).
 
 ---
 
@@ -508,12 +533,18 @@ chosen yet), branch protection rules.
 | 0088 | Career/Connect export: a person's completed obligation history | Accepted |
 | 0089 | Patch high-severity Vite/nanoid security advisories | Accepted |
 | 0090 | CI enforces `npm audit` and `cargo audit` | Accepted |
+| 0091 | People view redesign: avatars, status badges, elevated card layout | Accepted |
+| 0092 | Fix CI cargo-audit job: grant checks:write, document the one unfixable advisory | Accepted |
+| 0093 | Obligation editing: status and due dates, across API/CLI/MCP/UI | Accepted |
+| 0095 | Declutter shared row typography: bold rendering, risk-signal pills, quote treatment | Accepted |
 
 See [`docs/adr.d/README.md`](adr.d/README.md) for the live index — this
-table is a snapshot and will drift. 88 ADRs exist, numbered through
-`ADR-0090` (`0048` and `0055` were never used — a numbering gap, not a
-missing/broken decision). All 88 are Accepted and Proven as of this
-snapshot (`node scripts/check-evidence.mjs`).
+table is a snapshot and will drift. 92 ADRs are committed, numbered
+through `ADR-0095` (`0048` and `0055` were never used — a numbering gap,
+not a missing/broken decision; `0094` exists on disk as a concurrent
+session's in-progress, uncommitted candidate-synthesis-pass ADR, not yet
+part of the committed count). All 92 committed ADRs are Accepted and
+Proven as of this snapshot (`node scripts/check-evidence.mjs`).
 
 ## 10. Known gaps / deferred work (named explicitly by their own ADRs)
 

@@ -1,13 +1,18 @@
 # Ringmaster — Current status (a real audit, not a decision log)
 
-Updated 2026-08-19 (fourth pass — supersedes the third version of this
+Updated 2026-08-19 (fifth pass — supersedes the fourth version of this
 file, which is quoted below where useful) by clicking through the running
 app again, querying the live dev database again, and reading the code
 behind what's there — not by summarizing ADR titles.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) is the formal, decision-level
 snapshot; this is "what's really there right now, warts included." As of
-this pass: **89 ADRs, all 89 `PROVEN`, 0 `ASSERTED`/`BROKEN`/`STALE`/
-`DEADHEADED`**, CI green at `87e75ab`.
+this pass: **93 ADR records exist on disk, 91 `PROVEN`, 2 `DEADHEADED`** —
+both deadheads are one concurrent, uncommitted, in-progress ADR
+([0094](adr.d/0094-candidate-synthesis-pass.md), a candidate-synthesis
+pass — real, decided, and actively being built by a different session
+right now, but not yet committed and missing its evidence companion) and
+the resulting `every-live-adr-has-evidence` parity check on ADR-0002 that
+it trips. Not a regression on anything this session touched.
 
 **A honest caveat before anything else**: this repo is being built by two
 concurrent AI sessions against the same working directory, right now,
@@ -15,6 +20,57 @@ continuously. HEAD moved twice *while this exact audit was being written*
 in the second pass; the same is likely true here. Any specific row count
 below is already stale by the time you read it — the structural findings
 (what works, what doesn't, what's missing) are the durable part.
+
+## What changed since the fourth audit
+
+Five more ADRs landed (0090–0093, 0095 — 0092 and 0094 in the sequence
+belong to a concurrent session's own work, not this one):
+
+- **CI enforces `npm audit`/`cargo audit`** ([ADR-0090](adr.d/0090-ci-enforced-dependency-vulnerability-scanning.md))
+  — closes the loop ADR-0089's Vite/nanoid patch opened: a future
+  dependency bump can no longer silently reintroduce a known-vulnerable
+  package without CI catching it. Verified locally (`npm audit`: 0
+  vulnerabilities) before landing, then a concurrent session found and
+  fixed a real CI-only gap this pass ([ADR-0092](adr.d/0092-fix-ci-cargo-audit-permissions-and-document-rsa-advisory.md)):
+  `rustsec/audit-check` needs `checks: write`, which the default
+  `GITHUB_TOKEN` permissions didn't grant, so the job failed in live CI
+  even though `cargo audit` itself ran clean locally — confirmed fixed in
+  a real CI run (`32223737027`).
+- **People view redesign** ([ADR-0091](adr.d/0091-people-view-avatar-and-badge-redesign.md))
+  — direct response to "i fucking hate the ui... especially the people
+  view" plus a reference screenshot. Colored initials avatars and
+  pill-shaped status badges, reusing the existing status color tokens
+  (ADR-0074), scoped to the People tab only.
+- **Obligation editing, closing a real 100%-read-only gap**
+  ([ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md)) — an
+  audit prompted directly by "we should be able to edit via the api the
+  cli or the mcp and the ui" found Obligations had literally no edit
+  surface anywhere (status could only ever be set at creation). One
+  shared `obligation::update_status` function now backs a `PATCH
+  /api/obligations/:id` route, a new `update-obligation` CLI subcommand,
+  a new `update_obligation` MCP tool, and an Edit form on
+  `ObligationDetail.tsx` — verified with new Rust unit tests, a live
+  PATCH call against the running app, and a UI edit/revert cycle.
+- **Shared row typography decluttered** ([ADR-0095](adr.d/0095-daily-brief-row-decluttering.md),
+  renumbered from a colliding 0092 — see below) — a real CSS bug
+  (`.daily-brief-list li`, no child combinator, was leaking the outer
+  row's padding/border onto its own nested risk-signal `<li>`s) plus
+  un-rendered literal `**bold**` markdown in real evidence quotes were
+  the two concrete, evidenced causes of "everything feels crowded."
+  Fixed across every component sharing this one pattern (Today, Timeline,
+  Focus Blocks, "What am I forgetting?", Workbench, Graph's person view,
+  People's relationship groups) via a new `renderBoldSegments` helper
+  (never `dangerouslySetInnerHTML`) and reusing ADR-0091's pill-badge
+  visual language for risk signals.
+- **A real ADR numbering collision, caught and fixed**: two sessions
+  independently checked "highest ADR is 0091" within minutes of each
+  other and both claimed 0092 for genuinely different topics. Caught via
+  a post-push `git log --oneline` sanity check surfacing an unfamiliar
+  commit message; fixed with a `git mv` renumber to the next free number
+  (0095 — 0094 was *also* already claimed by the same concurrent session's
+  candidate-synthesis-pass ADR) and every internal cross-reference
+  updated, landed as its own follow-up commit rather than an amend+force-push
+  of the already-pushed commit.
 
 ## What changed since the second audit
 
