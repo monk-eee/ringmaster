@@ -6,6 +6,7 @@ pub mod extraction;
 pub mod graph;
 pub mod model_adapter;
 pub mod obligation;
+pub mod synthesis;
 pub mod transcript;
 
 const ISOLATED_TEST_DATABASE: &str = "ringmaster_test";
