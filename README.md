@@ -66,7 +66,8 @@ BACKEND_URL=http://localhost:8080 npx playwright test
 Read [AGENTS.md](AGENTS.md) and the [contributor guide](docs/CONTRIBUTING.md)
 before changing the repository. Engineering decisions are indexed in
 [`docs/adr.d/`](docs/adr.d/README.md), with current proof in
-[`docs/evidence.d/`](docs/evidence.d/).
+[`docs/evidence.d/`](docs/evidence.d/). See [`docs/SECURITY.md`](docs/SECURITY.md)
+to report a vulnerability.
 
 Validate decision evidence with:
 
