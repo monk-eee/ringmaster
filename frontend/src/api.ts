@@ -373,6 +373,25 @@ export function fetchPersonBrief(personId: string): Promise<PersonBrief> {
   return getJson<PersonBrief>(`/api/people/${encodeURIComponent(personId)}/brief`);
 }
 
+// ADR-0088: a Career/Connect export -- every closed Obligation linked to a
+// person, with an evidence citation. The exact opposite filter of
+// PersonBrief's open_commitments; no People/Delivery/Leadership/Operational
+// category exists to filter this further.
+export type CareerHistoryItem = {
+  obligation_id: string;
+  updated_at: string;
+  reason: string;
+};
+
+export type CareerHistory = {
+  person: { id: string; canonical_text: string };
+  completed: CareerHistoryItem[];
+};
+
+export function fetchCareerHistory(personId: string): Promise<CareerHistory> {
+  return getJson<CareerHistory>(`/api/people/${encodeURIComponent(personId)}/career-export`);
+}
+
 export type ObligationDetail = {
   obligation_id: string;
   status: string;

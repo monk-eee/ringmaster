@@ -1668,6 +1668,41 @@ td.evidence-cell .no-evidence {
   padding: 0 1.25rem 1.1rem;
 }
 
+/* ADR-0088: matches .relationship-obligations's own padding convention. */
+.career-export {
+  padding: 0 1.25rem 1.1rem;
+}
+
+.career-export-text {
+  width: 100%;
+  min-height: 6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.career-export-copy {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.career-export-copy:hover {
+  background: var(--surface-alt);
+}
+
 /* ADR-0043: Meeting Review page */
 .meeting-review-layout {
   display: grid;

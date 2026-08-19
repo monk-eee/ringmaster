@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchNodeDetail, fetchNodes, type NodeDetail, type PersonListNode } from "../api";
+import { fetchCareerHistory, fetchNodeDetail, fetchNodes, type CareerHistory, type NodeDetail, type PersonListNode } from "../api";
 import { renderRelationshipGroup } from "./GraphExplorer";
 
 // ADR-0059: same default page size as Obligations/Candidates.
@@ -11,6 +11,15 @@ function relativeInteraction(lastInteractionAt: string | null): string {
   if (days <= 0) return "Last heard from today";
   if (days === 1) return "Last heard from yesterday";
   return `Last heard from ${days} days ago`;
+}
+
+// ADR-0088: renders a Career/Connect export as plain, copyable text -- the
+// literal artifact a manager pastes into a self-assessment, never a
+// generated narrative summary of it.
+function careerExportText(history: CareerHistory): string {
+  return history.completed
+    .map((item) => `- ${new Date(item.updated_at).toLocaleDateString()}: ${item.reason}`)
+    .join("\n");
 }
 
 // ADR-0039: People is a first-class primary destination over data that
@@ -27,6 +36,8 @@ export default function People() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<NodeDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [careerHistory, setCareerHistory] = useState<CareerHistory | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -62,11 +73,18 @@ export default function People() {
     setSelectedId(id);
     setDetail(null);
     setDetailError(null);
+    setCareerHistory(null);
+    setCopied(false);
     try {
       setDetail(await fetchNodeDetail(id));
     } catch (cause) {
       setDetailError((cause as Error).message);
     }
+    // Independent of the relationship detail above -- an honest empty
+    // Career export (no closed obligations yet) is not an error.
+    fetchCareerHistory(id)
+      .then(setCareerHistory)
+      .catch(() => setCareerHistory(null));
   }
 
   if (selectedId) {
@@ -128,6 +146,26 @@ export default function People() {
                 </>
               )}
             </div>
+            <section className="career-export" aria-labelledby="career-export-heading">
+              <h4 id="career-export-heading">Career export</h4>
+              {!careerHistory || careerHistory.completed.length === 0 ? (
+                <p className="empty-state">Nothing completed recorded yet.</p>
+              ) : (
+                <>
+                  <textarea className="career-export-text" readOnly value={careerExportText(careerHistory)} />
+                  <button
+                    type="button"
+                    className="career-export-copy"
+                    onClick={() => {
+                      navigator.clipboard.writeText(careerExportText(careerHistory));
+                      setCopied(true);
+                    }}
+                  >
+                    {copied ? "Copied" : "Copy for Connect"}
+                  </button>
+                </>
+              )}
+            </section>
           </div>
         )}
       </div>

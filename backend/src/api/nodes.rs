@@ -608,6 +608,78 @@ pub async fn person_brief(
     })))
 }
 
+#[derive(Debug, FromRow)]
+struct CareerHistoryRow {
+    obligation_id: Uuid,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    source_text: Option<String>,
+}
+
+/// A closed-obligation-only reason (ADR-0088): `daily_brief_reason`'s
+/// due-date clause ("Due in N days.") reads nonsensically for an
+/// already-closed item, so this reuses only its evidence-clause wording.
+fn career_history_reason(source_text: Option<&str>) -> String {
+    match source_text {
+        Some(text) => {
+            let truncated: String = text.chars().take(80).collect();
+            format!("Last evidence: \"{truncated}\".")
+        }
+        None => "No evidence recorded.".to_string(),
+    }
+}
+
+/// ADR-0088: a person's completed obligation history, for a Career/Connect
+/// export -- the exact opposite filter of `person_brief`'s
+/// `open_commitments` and `get_node_detail`'s `relationship` grouping,
+/// both of which explicitly exclude `status = 'closed'` rows. No stored
+/// People/Delivery/Leadership/Operational category exists to filter this
+/// further (ADR-0082/ADR-0085), so every closed Obligation linked to the
+/// person is returned, honestly unfiltered by category.
+pub async fn person_career_history(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let node = graph::get_node(&pool, id).await.map_err(|error| match error {
+        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "person not found".to_string()),
+        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+    })?;
+    if node.node_type != "person" {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("node {id} is a {:?}, not a person", node.node_type),
+        ));
+    }
+
+    let rows: Vec<CareerHistoryRow> = sqlx::query_as(
+        "SELECT op.obligation_id, op.updated_at, sf.text AS source_text \
+         FROM edges e \
+         JOIN obligation_projection op ON op.obligation_id = (CASE WHEN e.from_id = $1 THEN e.to_id ELSE e.from_id END) \
+         LEFT JOIN source_fragments sf ON sf.id = op.source_fragment_id \
+         WHERE (e.from_id = $1 OR e.to_id = $1) AND op.status = 'closed' \
+         ORDER BY op.updated_at DESC",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    let completed: Vec<JsonValue> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "obligation_id": row.obligation_id,
+                "updated_at": row.updated_at.to_rfc3339(),
+                "reason": career_history_reason(row.source_text.as_deref()),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "person": { "id": node.id, "canonical_text": node.canonical_text },
+        "completed": completed,
+    })))
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateNodeRequest {
     canonical_text: Option<String>,
@@ -2135,6 +2207,137 @@ mod tests {
         assert_eq!(brief["open_commitments"].as_array().unwrap().len(), 0);
         assert_eq!(brief["recent_asks"].as_array().unwrap().len(), 0);
         assert_eq!(brief["recent_asks_total"], 0);
+    }
+
+    /// ADR-0088: the Career/Connect export -- the exact opposite filter of
+    /// `person_brief`/`get_node_detail`'s relationship grouping, both of
+    /// which explicitly exclude closed Obligations.
+    #[tokio::test]
+    async fn person_career_history_returns_closed_obligations_with_evidence() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Career History Person", json!({}))
+            .await
+            .expect("create person");
+        let meeting_id = graph::create_node(&pool, "meeting", "Career History Meeting", json!({}))
+            .await
+            .expect("create meeting");
+        let fragment_id = graph::create_source_fragment(
+            &pool,
+            meeting_id,
+            "Shipped the onboarding checklist for the new hire.",
+            "career-history-hash",
+        )
+        .await
+        .expect("create source fragment");
+
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open", "source_fragment_id": fragment_id.to_string()}),
+        )
+        .await
+        .expect("append an obligation to be closed");
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Closed,
+            json!({}),
+        )
+        .await
+        .expect("close it");
+        graph::create_edge(&pool, person_id, obligation_id, "owns", None)
+            .await
+            .expect("link person to the closed obligation");
+        crate::obligation::rebuild_projection(&pool)
+            .await
+            .expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{person_id}/career-export"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let export: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        let completed = export["completed"].as_array().expect("completed array");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0]["obligation_id"], obligation_id.to_string());
+        assert!(completed[0]["reason"]
+            .as_str()
+            .expect("reason is a string")
+            .contains("Shipped the onboarding checklist"));
+    }
+
+    #[tokio::test]
+    async fn career_history_excludes_an_open_obligation() {
+        let pool = test_pool().await;
+        let person_id = graph::create_node(&pool, "person", "Career History Open Test Person", json!({}))
+            .await
+            .expect("create person");
+
+        let obligation_id = uuid::Uuid::new_v4();
+        crate::obligation::append_event(
+            &pool,
+            obligation_id,
+            crate::obligation::ObligationEventType::Created,
+            json!({"status": "open"}),
+        )
+        .await
+        .expect("append an open obligation");
+        graph::create_edge(&pool, person_id, obligation_id, "owns", None)
+            .await
+            .expect("link person to the open obligation");
+        crate::obligation::rebuild_projection(&pool)
+            .await
+            .expect("rebuild projection");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{person_id}/career-export"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let export: JsonValue = serde_json::from_slice(&body).expect("valid json body");
+        assert_eq!(
+            export["completed"].as_array().expect("completed array").len(),
+            0,
+            "an open obligation must never appear in the career export"
+        );
+    }
+
+    #[tokio::test]
+    async fn person_career_history_rejects_a_non_person_node() {
+        let pool = test_pool().await;
+        let risk_id = graph::create_node(&pool, "risk", "Career Export Non-Person Test", json!({}))
+            .await
+            .expect("create risk node");
+
+        let response = app(pool)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/people/{risk_id}/career-export"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

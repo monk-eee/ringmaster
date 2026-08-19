@@ -22,6 +22,8 @@ use nodes::{create_edge_route, create_node_route, get_node_detail, list_nodes_ro
 // ADR-0083: re-exported (not just `use`d) so the ringmaster-ingest binary's
 // MCP tool can call the exact same function the HTTP route uses.
 pub use nodes::person_brief;
+// ADR-0088: a person's completed-obligation history, for a Career/Connect export.
+use nodes::person_career_history;
 use obligations::{
     daily_brief, focus_blocks, get_obligation_detail, list_obligations, time_horizon,
 };
@@ -96,6 +98,7 @@ pub fn app(pool: PgPool) -> Router {
             get(get_node_detail).patch(update_node_route),
         )
         .route("/api/people/:id/brief", get(person_brief))
+        .route("/api/people/:id/career-export", get(person_career_history))
         .route("/api/edges", post(create_edge_route))
         .with_state(pool)
 }

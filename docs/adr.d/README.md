@@ -100,3 +100,4 @@ accepted and implemented.
 | [ADR-0085: Focus Sessions filter to People-linked blocks — the one honestly-groundable attention-type slice](0085-focus-blocks-people-filter.md) | Accepted | [EV-0085](../evidence.d/0085-focus-blocks-people-filter.md) |
 | [ADR-0086: Workbench — a three-pane, no-navigation view over already-built data](0086-workbench-three-pane-view.md) | Accepted | [EV-0086](../evidence.d/0086-workbench-three-pane-view.md) |
 | [ADR-0087: Graph explorer create-node reliability under concurrent Playwright load](0087-graph-explorer-reliability-under-concurrent-load.md) | Accepted | [EV-0087](../evidence.d/0087-graph-explorer-reliability-under-concurrent-load.md) |
+| [ADR-0088: Career/Connect export — a person's completed obligation history, with evidence](0088-career-connect-export.md) | Accepted | [EV-0088](../evidence.d/0088-career-connect-export.md) |

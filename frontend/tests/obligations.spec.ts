@@ -795,6 +795,75 @@ test("people tab: Load more appends a further page (ADR-0059)", async ({ page, r
   await expect.poll(async () => cards.count()).toBeGreaterThan(countBeforeLoadMore);
 });
 
+// ADR-0088: a freshly-created person has no closed Obligations yet -- the
+// Career export section must show an honest empty state, never a
+// fabricated or blank-looking artifact.
+test("people tab: Career export shows an honest empty state for a person with nothing completed (ADR-0088)", async ({ page, request, baseURL }) => {
+  const unique = Date.now();
+  const personName = `Career Export Empty Person ${unique}`;
+  const personResponse = await request.post(`${baseURL}/api/nodes`, {
+    data: { node_type: "person", canonical_text: personName },
+  });
+  expect(personResponse.ok()).toBe(true);
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "People" }).click();
+  await page.getByRole("button", { name: "Show everyone" }).click();
+  const target = page.getByRole("button", { name: new RegExp(personName) });
+  await revealByClickingLoadMore(page, target);
+  await target.click();
+  await expect(page.locator(".people-detail h3")).toHaveText(personName);
+
+  const careerExport = page.getByRole("region", { name: "Career export" });
+  await expect(careerExport.getByText("Nothing completed recorded yet.")).toBeVisible();
+  await expect(careerExport.locator(".career-export-text")).toHaveCount(0);
+});
+
+// ADR-0088: proves the Career export renders completed obligations as
+// plain, copyable text -- the literal artifact for a Connect
+// self-assessment. Mocks GET /api/people/:id/career-export for a real
+// person so the exact rendered text is deterministic.
+test("people tab: Career export renders completed obligations as copyable text (ADR-0088)", async ({ page, request, baseURL }) => {
+  const unique = Date.now();
+  const personName = `Career Export Populated Person ${unique}`;
+  const personResponse = await request.post(`${baseURL}/api/nodes`, {
+    data: { node_type: "person", canonical_text: personName },
+  });
+  expect(personResponse.ok()).toBe(true);
+  const person = (await personResponse.json()) as { id: string };
+
+  await page.route(`**/api/people/${person.id}/career-export`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        person: { id: person.id, canonical_text: personName },
+        completed: [
+          {
+            obligation_id: "00000000-0000-4000-a000-000000000001",
+            updated_at: "2026-01-15T00:00:00Z",
+            reason: `Last evidence: "Career export test statement ${unique}".`,
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "People" }).click();
+  await page.getByRole("button", { name: "Show everyone" }).click();
+  const target = page.getByRole("button", { name: new RegExp(personName) });
+  await revealByClickingLoadMore(page, target);
+  await target.click();
+  await expect(page.locator(".people-detail h3")).toHaveText(personName);
+
+  const careerExport = page.getByRole("region", { name: "Career export" });
+  await expect(careerExport.locator(".career-export-text")).toHaveValue(
+    new RegExp(`Career export test statement ${unique}`),
+  );
+  await expect(careerExport.getByRole("button", { name: "Copy for Connect" })).toBeVisible();
+});
+
 }); // end test.describe.serial("People tab")
 
 // ADR-0041: proves Risk Engine v1's signals, when present, actually render
