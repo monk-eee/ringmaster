@@ -50,11 +50,15 @@ jobs:
       # the maintained Action's pre-built binary (a from-source `cargo
       # install cargo-audit` was tried locally and abandoned -- its
       # reqwest/rustls/gix dependency chain is too slow to compile ad hoc).
+      # working-directory is deliberately the repo root (the default),
+      # not backend/ -- Cargo.lock lives at the workspace root (Cargo.toml
+      # here has members = ["backend"]); backend/Cargo.lock does not
+      # exist, so pointing at it would fail with a missing-file error on
+      # every run, not a real advisory.
       - name: cargo audit
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: backend
 
   frontend:
     runs-on: ubuntu-latest
