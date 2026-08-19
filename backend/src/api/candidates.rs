@@ -202,81 +202,28 @@ pub(super) async fn list_candidates(
 /// transition with no field changes, differing only in the event type.
 /// `409` when the candidate isn't currently in the `candidate` state stops
 /// a stale UI from double-transitioning something already resolved.
+/// Delegates to `extraction::transition_candidate_state` (ADR-0097), the
+/// same function the `accept_candidate`/`reject_candidate` MCP tools call,
+/// so HTTP and MCP cannot drift.
 async fn transition_one(
     pool: &PgPool,
     id: Uuid,
     event_type: &'static str,
 ) -> Result<(), (axum::http::StatusCode, String)> {
-    let current: CandidateWithSource = sqlx::query_as(
-        "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \
-                cp.source_fragment_id, cp.promoted_obligation_id, sf.text AS source_text, sf.speaker \
-         FROM candidate_projection cp \
-         LEFT JOIN source_fragments sf ON sf.id = cp.source_fragment_id \
-         WHERE cp.candidate_id = $1",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .map_err(|error| match error {
-        sqlx::Error::RowNotFound => (axum::http::StatusCode::NOT_FOUND, "candidate not found".to_string()),
-        other => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
-    })?;
-
-    if current.validation_state != "candidate" {
-        return Err((
-            axum::http::StatusCode::CONFLICT,
-            format!(
-                "candidate is already \"{}\", not \"candidate\"",
-                current.validation_state
-            ),
-        ));
-    }
-
-    // ADR-0038: the state-change event and its audit row commit atomically --
-    // a failure between the two can never leave the action un-audited.
-    let action = if event_type == "accepted" {
-        "candidate_accepted"
-    } else {
-        "candidate_rejected"
-    };
-    let mut tx = pool.begin().await.map_err(|error| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error.to_string(),
-        )
-    })?;
-    extraction::transition_candidate(&mut *tx, id, event_type, json!({}))
+    extraction::transition_candidate_state(pool, id, event_type, "local-operator", "http_api")
         .await
-        .map_err(|error| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                error.to_string(),
-            )
-        })?;
-    audit::record(
-        &mut *tx,
-        "local-operator",
-        action,
-        Some(json!({"validation_state": current.validation_state})),
-        Some(json!({"validation_state": event_type})),
-        "http_api",
-        "allowed",
-    )
-    .await
-    .map_err(|error| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error.to_string(),
-        )
-    })?;
-    tx.commit().await.map_err(|error| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error.to_string(),
-        )
-    })?;
-
-    Ok(())
+        .map(|_| ())
+        .map_err(|error| match error {
+            extraction::TransitionCandidateError::NotFound => {
+                (axum::http::StatusCode::NOT_FOUND, "candidate not found".to_string())
+            }
+            extraction::TransitionCandidateError::WrongState(_) => {
+                (axum::http::StatusCode::CONFLICT, error.to_string())
+            }
+            extraction::TransitionCandidateError::Database(_) => {
+                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+            }
+        })
 }
 
 async fn transition_candidate_route(
@@ -284,16 +231,8 @@ async fn transition_candidate_route(
     id: Uuid,
     event_type: &'static str,
 ) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    // transition_one already rebuilds the projection (extraction::transition_candidate_state).
     transition_one(pool, id, event_type).await?;
-
-    extraction::rebuild_candidate_projection(pool)
-        .await
-        .map_err(|error| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                error.to_string(),
-            )
-        })?;
 
     let updated: CandidateWithSource = sqlx::query_as(
         "SELECT cp.candidate_id, cp.candidate_type, cp.statement, cp.validation_state, cp.confidence, \

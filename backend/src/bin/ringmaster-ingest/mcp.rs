@@ -1,5 +1,6 @@
 use ringmaster_backend::api;
 use ringmaster_backend::embedding_adapter::EmbeddingConfig;
+use ringmaster_backend::extraction::{self, TransitionCandidateError};
 use ringmaster_backend::graph;
 use ringmaster_backend::obligation::{self, ObligationStatus};
 use ringmaster_backend::transcript::{ingest_source, SourceMetadata};
@@ -179,6 +180,12 @@ pub struct UpdateObligationParams {
     pub soft_due_at: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TransitionCandidateParams {
+    /// Candidate UUID. Must still be in the "candidate" state.
+    pub id: String,
+}
+
 #[derive(Clone)]
 struct RingmasterIngestServer {
     pool: PgPool,
@@ -240,6 +247,31 @@ fn json_success(value: impl serde::Serialize) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(
         serde_json::json!(value).to_string(),
     )])
+}
+
+/// Shared by the `accept_candidate`/`reject_candidate` MCP tools (ADR-0097),
+/// mirroring `api::candidates::transition_one`'s error mapping but for a
+/// tool result instead of an HTTP status code.
+async fn transition_candidate_tool(
+    pool: &PgPool,
+    id_raw: &str,
+    new_state: &'static str,
+) -> Result<CallToolResult, rmcp::ErrorData> {
+    let id = match parse_uuid("id", id_raw) {
+        Ok(value) => value,
+        Err(message) => return Ok(tool_error(message)),
+    };
+    match extraction::transition_candidate_state(pool, id, new_state, "local-operator", "mcp").await {
+        Ok(updated) => Ok(json_success(serde_json::json!({
+            "candidate_id": updated.candidate_id,
+            "candidate_type": updated.candidate_type,
+            "statement": updated.statement,
+            "validation_state": updated.validation_state,
+            "confidence": updated.confidence,
+        }))),
+        Err(TransitionCandidateError::NotFound) => Ok(tool_error("candidate not found")),
+        Err(error) => Ok(tool_error(error.to_string())),
+    }
 }
 
 #[tool_router(server_handler)]
@@ -575,6 +607,26 @@ impl RingmasterIngestServer {
             }))),
             Err(error) => Ok(tool_error(error.to_string())),
         }
+    }
+
+    #[tool(
+        description = "Accept a candidate still in the \"candidate\" state (ADR-0097), the same transition the Inbox's Accept button performs. Errors if the candidate is unknown or already transitioned."
+    )]
+    async fn accept_candidate(
+        &self,
+        Parameters(params): Parameters<TransitionCandidateParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        transition_candidate_tool(&self.pool, &params.id, "accepted").await
+    }
+
+    #[tool(
+        description = "Reject a candidate still in the \"candidate\" state (ADR-0097), the same transition the Inbox's Reject button performs. Errors if the candidate is unknown or already transitioned."
+    )]
+    async fn reject_candidate(
+        &self,
+        Parameters(params): Parameters<TransitionCandidateParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        transition_candidate_tool(&self.pool, &params.id, "rejected").await
     }
 
     #[tool(

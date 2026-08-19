@@ -109,3 +109,4 @@ accepted and implemented.
 | [ADR-0094: Candidate synthesis pass — re-assemble same-source fragments before they reach review](0094-candidate-synthesis-pass.md) | Accepted | [EV-0094](../evidence.d/0094-candidate-synthesis-pass.md) |
 | [ADR-0095: Declutter shared row typography — real bold rendering, compact risk-signal pills, quiet quote treatment](0095-daily-brief-row-decluttering.md) | Accepted | [EV-0095](../evidence.d/0095-daily-brief-row-decluttering.md) |
 | [ADR-0096: Source review generalized beyond "meeting" — every ingested source type gets a browsable review UI](0096-generalize-source-review-beyond-meeting.md) | Accepted | [EV-0096](../evidence.d/0096-generalize-source-review-beyond-meeting.md) |
+| [ADR-0097: Candidate accept/reject via MCP, and a Node identity/lifecycle edit form in the UI](0097-candidate-mcp-and-node-edit-form.md) | Accepted | [EV-0097](../evidence.d/0097-candidate-mcp-and-node-edit-form.md) |

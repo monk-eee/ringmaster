@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createEdge, createNode, fetchNodeDetail, fetchNodes, updateNode, type GraphNode, type NodeDetail, type NodeNeighbor, type RelationshipObligation } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
+import { renderBoldSegments } from "../markdown";
 
 const RADIUS = 120;
 const CENTER = 160;
@@ -137,6 +138,8 @@ export default function GraphExplorer() {
   const [creating, setCreating] = useState(false);
 
   const [enrichAttributesText, setEnrichAttributesText] = useState("");
+  const [enrichCanonicalText, setEnrichCanonicalText] = useState("");
+  const [enrichLifecycleState, setEnrichLifecycleState] = useState("");
   const [enriching, setEnriching] = useState(false);
 
   const [edgeTargetId, setEdgeTargetId] = useState("");
@@ -156,7 +159,10 @@ export default function GraphExplorer() {
     setSelectedNodeId(id);
     setEnrichAttributesText("");
     try {
-      setDetail(await fetchNodeDetail(id));
+      const node = await fetchNodeDetail(id);
+      setDetail(node);
+      setEnrichCanonicalText(node.canonical_text);
+      setEnrichLifecycleState(node.lifecycle_state);
     } catch (cause) {
       setError((cause as Error).message);
       setDetail(null);
@@ -168,7 +174,10 @@ export default function GraphExplorer() {
   async function refreshDetail() {
     if (!selectedNodeId) return;
     try {
-      setDetail(await fetchNodeDetail(selectedNodeId));
+      const node = await fetchNodeDetail(selectedNodeId);
+      setDetail(node);
+      setEnrichCanonicalText(node.canonical_text);
+      setEnrichLifecycleState(node.lifecycle_state);
     } catch (cause) {
       setError((cause as Error).message);
     }
@@ -256,7 +265,7 @@ export default function GraphExplorer() {
 
   async function handleEnrich(event: React.FormEvent) {
     event.preventDefault();
-    if (!selectedNodeId) return;
+    if (!selectedNodeId || !detail) return;
     setError(null);
     let attributes: Record<string, unknown> | undefined;
     try {
@@ -265,10 +274,18 @@ export default function GraphExplorer() {
       setError("Attributes must be valid JSON (or left blank).");
       return;
     }
-    if (!attributes) return;
+    const patch: { canonical_text?: string; lifecycle_state?: string; attributes?: Record<string, unknown> } = {};
+    if (enrichCanonicalText.trim() && enrichCanonicalText !== detail.canonical_text) {
+      patch.canonical_text = enrichCanonicalText.trim();
+    }
+    if (enrichLifecycleState.trim() && enrichLifecycleState !== detail.lifecycle_state) {
+      patch.lifecycle_state = enrichLifecycleState.trim();
+    }
+    if (attributes) patch.attributes = attributes;
+    if (Object.keys(patch).length === 0) return;
     setEnriching(true);
     try {
-      await updateNode(selectedNodeId, { attributes });
+      await updateNode(selectedNodeId, patch);
       setEnrichAttributesText("");
       await loadNodes();
       await refreshDetail();
@@ -547,6 +564,22 @@ export default function GraphExplorer() {
 
               <form className="toolbar" onSubmit={handleEnrich}>
                 <div className="field">
+                  <span className="field-label">Name</span>
+                  <input
+                    className="field-input"
+                    value={enrichCanonicalText}
+                    onChange={(event) => setEnrichCanonicalText(event.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <span className="field-label">Lifecycle state</span>
+                  <input
+                    className="field-input"
+                    value={enrichLifecycleState}
+                    onChange={(event) => setEnrichLifecycleState(event.target.value)}
+                  />
+                </div>
+                <div className="field">
                   <span className="field-label">Enrich attributes (JSON)</span>
                   <textarea
                     className="field-textarea"
@@ -556,7 +589,15 @@ export default function GraphExplorer() {
                     rows={3}
                   />
                 </div>
-                <button type="submit" disabled={enriching || !enrichAttributesText.trim()}>
+                <button
+                  type="submit"
+                  disabled={
+                    enriching ||
+                    (!enrichAttributesText.trim() &&
+                      enrichCanonicalText === detail.canonical_text &&
+                      enrichLifecycleState === detail.lifecycle_state)
+                  }
+                >
                   {enriching ? "Enriching…" : "Enrich"}
                 </button>
               </form>
