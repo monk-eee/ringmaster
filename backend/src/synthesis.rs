@@ -268,7 +268,7 @@ mod tests {
         // graceful-skip posture for anything that *would* need a live
         // model beyond this point).
         let config = ModelConfig {
-            url: "http://127.0.0.1:0".to_string(),
+            url: "http://127.0.0.1:1".to_string(), // unroutable port: connection refused
             model: "unused".to_string(),
             api_key: None,
         };
@@ -323,7 +323,7 @@ mod tests {
             .expect("rebuild candidate projection");
 
         let config = ModelConfig {
-            url: "http://127.0.0.1:0".to_string(),
+            url: "http://127.0.0.1:1".to_string(), // unroutable port: connection refused
             model: "unused".to_string(),
             api_key: None,
         };

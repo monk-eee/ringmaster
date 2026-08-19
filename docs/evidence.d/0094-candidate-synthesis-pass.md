@@ -32,9 +32,9 @@ paths = ["backend/src/synthesis.rs"]
 [[check]]
 id = "no-route-or-frontend-change-this-record"
 invariant = "No API route or frontend change lands in this record (deferred, named honestly)."
-type = "absent"
-pattern = "synthesize"
-paths = ["backend/src/api/mod.rs", "frontend/src/api.ts"]
+type = "manual"
+last_verified = "2026-08-20"
+rationale = "This check was 'absent' while the route/frontend wiring was deferred (the concurrent session's edits to mod.rs/obligations.rs/obligation.rs and the Today/Graph/Obligation-detail frontend components had since settled and committed). Once that collision risk cleared, the deferred follow-up landed in this same evidence file's update: POST /api/sources/:id/synthesize and GET /api/sources/:id/synthesis wired into mod.rs, synthesizeSource/fetchSourceSynthesis added to frontend/src/api.ts, and an additive 'Synthesis' section (button + group list, never hiding the raw per-fragment candidates below) added to MeetingReview.tsx -- completing ADR-0094's own already-specified route shapes, not a new decision. Changed from an 'absent' check to 'manual' because the invariant itself changed (the deferral ended); re-verify if the route/frontend shape changes again."
 ```
 
 ## Notes
@@ -64,3 +64,40 @@ own established convention rather than mocking an HTTP call — no live
 model is configured in this environment, so the actual grouping-quality
 behavior against a real model response remains unverified here, named
 honestly as this record's real limit, not hidden.
+
+## Follow-up: route and frontend wiring (2026-08-20)
+
+The deferred half of this record's own Decision section landed once the
+concurrent session's edits to the shared backend/frontend files settled:
+`backend/src/api/ingestion.rs` gained `synthesize_source_route`/
+`get_source_synthesis`, registered in `mod.rs` at the exact paths named in
+the original Decision (`POST /api/sources/:id/synthesize`,
+`GET /api/sources/:id/synthesis`); `frontend/src/api.ts` gained
+`synthesizeSource`/`fetchSourceSynthesis`; `MeetingReview.tsx` (the
+"Sources" tab, generalized by [ADR-0096](../adr.d/0096-generalize-source-review-beyond-meeting.md))
+gained an additive "Synthesis" section — a button plus the resulting
+groups, rendered above the unchanged raw per-fragment candidate list.
+
+Also fixed, found while validating: `GraphExplorer.tsx` used
+`renderBoldSegments` (from `frontend/src/markdown.ts`, added by a
+concurrent session's already-committed typography work) without
+importing it — a real, pre-existing `tsc --noEmit` break unrelated to
+this record's own changes, fixed with a one-line import addition since it
+was blocking validation of everything else.
+
+Also fixed: two of this file's own tests used `http://127.0.0.1:0` as an
+"unreachable" model endpoint; port 0 does not fail fast on connect the
+way a genuinely closed port does, and caused the full backend suite to
+hit multi-minute timeouts. Changed both to `http://127.0.0.1:1`, the
+exact pattern `model_adapter.rs`'s own existing test already uses
+("unroutable port: connection refused").
+
+Verified: `npx tsc --noEmit` and `npm run build` both clean. Full
+Playwright suite: 25 passed, 5 pre-existing skips, 0 failed (includes a
+source-review test now explicitly covering ADR-0043/ADR-0096 together).
+Full backend suite (`cargo test -- --test-threads=1`, all of `lib.rs`,
+both binaries, and the integration test files): `PASSED`, 352s -- this
+repo's test-suite wall time is separately documented to vary widely
+(300s+ timeouts to a clean 65s pass with the identical command) under
+concurrent host load; a scoped `cargo test --lib synthesis` run confirmed
+the new module's six tests specifically pass cleanly in 12s.

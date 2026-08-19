@@ -17,7 +17,10 @@ use candidates::{
     accept_candidate, batch_promote_candidates, batch_transition_candidates, correct_candidate,
     extract_source_fragment, list_candidates, promote_candidate, reject_candidate,
 };
-use ingestion::{get_meeting_candidates, get_meeting_detail, ingest_meeting, ingest_source_route};
+use ingestion::{
+    get_meeting_candidates, get_meeting_detail, get_source_synthesis, ingest_meeting,
+    ingest_source_route, synthesize_source_route,
+};
 use nodes::{create_edge_route, create_node_route, get_node_detail, list_nodes_route, update_node_route};
 // ADR-0083: re-exported (not just `use`d) so the ringmaster-ingest binary's
 // MCP tool can call the exact same function the HTTP route uses.
@@ -77,6 +80,8 @@ pub fn app(pool: PgPool) -> Router {
         .route("/api/meetings/:id", get(get_meeting_detail))
         .route("/api/meetings/:id/candidates", get(get_meeting_candidates))
         .route("/api/sources/ingest", post(ingest_source_route))
+        .route("/api/sources/:id/synthesize", post(synthesize_source_route))
+        .route("/api/sources/:id/synthesis", get(get_source_synthesis))
         .route("/api/candidates", get(list_candidates))
         .route("/api/candidates/batch", post(batch_transition_candidates))
         .route("/api/candidates/:id/accept", post(accept_candidate))

@@ -332,6 +332,25 @@ export function fetchMeetingCandidates(id: string): Promise<MeetingCandidates> {
   return getJson<MeetingCandidates>(`/api/meetings/${encodeURIComponent(id)}/candidates`);
 }
 
+// ADR-0094: re-assembles one source's still-accepted candidates into a
+// smaller set of synthesized statements, each naming its member candidates.
+export type SynthesisGroup = {
+  id: string;
+  synthesized_statement: string;
+  candidate_type: string;
+  member_candidate_ids: string[];
+  synthesis_model: string | null;
+  created_at: string;
+};
+
+export function synthesizeSource(sourceId: string): Promise<{ group_ids: string[] }> {
+  return postJson<{ group_ids: string[] }>(`/api/sources/${encodeURIComponent(sourceId)}/synthesize`);
+}
+
+export function fetchSourceSynthesis(sourceId: string): Promise<SynthesisGroup[]> {
+  return getJson<SynthesisGroup[]>(`/api/sources/${encodeURIComponent(sourceId)}/synthesis`);
+}
+
 export type LinkedNode = {
   edge_id: string;
   edge_type: string;

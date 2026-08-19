@@ -1,6 +1,7 @@
 #[cfg(test)]
 use crate::extraction;
 use crate::graph;
+use crate::model_adapter::ModelConfig;
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
@@ -331,6 +332,70 @@ pub(super) async fn get_meeting_candidates(
             "by_validation_state": by_validation_state,
         },
     })))
+}
+
+/// Triggers a synthesis pass for one source's still-`accepted` candidates
+/// (ADR-0094): explicit and synchronous, matching `extract_source_fragment`'s
+/// own "never automatic" posture. Returns the created group ids; an empty
+/// array is an honest "nothing accepted to synthesize," not an error.
+pub(super) async fn synthesize_source_route(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let Some(config) = ModelConfig::from_env() else {
+        return Err((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "RINGMASTER_LLM_URL is not set; synthesis is disabled".to_string(),
+        ));
+    };
+    let group_ids = crate::synthesis::synthesize_candidates_for_source(&pool, &config, id)
+        .await
+        .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    Ok(Json(json!({ "group_ids": group_ids })))
+}
+
+/// Read model for `GET /api/sources/:id/synthesis` (ADR-0094): the most
+/// recent synthesis group per statement, read-only, triggers nothing.
+#[derive(Debug, Clone, FromRow)]
+struct SynthesisGroupRow {
+    id: Uuid,
+    synthesized_statement: String,
+    candidate_type: String,
+    member_candidate_ids: Vec<Uuid>,
+    synthesis_model: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Lists one source's synthesis groups, newest first (ADR-0094). An empty
+/// array is an honest "synthesis has not been run for this source yet,"
+/// not a 404 -- unlike the meeting/candidates reads above, a source with
+/// zero groups is not necessarily an unknown source.
+pub(super) async fn get_source_synthesis(
+    State(pool): State<PgPool>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (axum::http::StatusCode, String)> {
+    let rows: Vec<SynthesisGroupRow> = sqlx::query_as(
+        "SELECT id, synthesized_statement, candidate_type, member_candidate_ids, synthesis_model, created_at \
+         FROM candidate_synthesis_groups \
+         WHERE source_id = $1 \
+         ORDER BY created_at DESC, id",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    Ok(Json(json!(rows
+        .into_iter()
+        .map(|row| json!({
+            "id": row.id,
+            "synthesized_statement": row.synthesized_statement,
+            "candidate_type": row.candidate_type,
+            "member_candidate_ids": row.member_candidate_ids,
+            "synthesis_model": row.synthesis_model,
+            "created_at": row.created_at.to_rfc3339(),
+        }))
+        .collect::<Vec<_>>())))
 }
 
 #[cfg(test)]

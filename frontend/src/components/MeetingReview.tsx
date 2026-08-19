@@ -5,11 +5,14 @@ import {
   fetchMeetingCandidates,
   fetchMeetingDetail,
   fetchNodes,
+  fetchSourceSynthesis,
   promoteCandidate,
   rejectCandidate,
+  synthesizeSource,
   type GraphNode,
   type MeetingCandidates,
   type MeetingDetail,
+  type SynthesisGroup,
 } from "../api";
 import StatusBadge from "./StatusBadge";
 import { typeIcon } from "../icons";
@@ -22,6 +25,9 @@ export default function MeetingReview() {
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [extractMessage, setExtractMessage] = useState<string | null>(null);
+  const [synthesisGroups, setSynthesisGroups] = useState<SynthesisGroup[]>([]);
+  const [synthesizing, setSynthesizing] = useState(false);
+  const [synthesisMessage, setSynthesisMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // ADR-0096: hasSourceFragments=true, not node_type="meeting" -- any
@@ -35,14 +41,39 @@ export default function MeetingReview() {
     setSelectedId(id);
     setError(null);
     setExtractMessage(null);
+    setSynthesisMessage(null);
     try {
-      const [nextDetail, nextCandidates] = await Promise.all([fetchMeetingDetail(id), fetchMeetingCandidates(id)]);
+      const [nextDetail, nextCandidates, nextGroups] = await Promise.all([
+        fetchMeetingDetail(id),
+        fetchMeetingCandidates(id),
+        fetchSourceSynthesis(id),
+      ]);
       setDetail(nextDetail);
       setCandidates(nextCandidates);
+      setSynthesisGroups(nextGroups);
     } catch (cause) {
       setError((cause as Error).message);
       setDetail(null);
       setCandidates(null);
+      setSynthesisGroups([]);
+    }
+  }
+
+  // ADR-0094: re-assembles this source's still-accepted candidates into
+  // fewer, clearer synthesized statements -- additive, never hides the raw
+  // per-fragment list below.
+  async function handleSynthesize() {
+    if (!selectedId) return;
+    setSynthesizing(true);
+    setSynthesisMessage(null);
+    setError(null);
+    try {
+      await synthesizeSource(selectedId);
+      setSynthesisGroups(await fetchSourceSynthesis(selectedId));
+    } catch (cause) {
+      setSynthesisMessage((cause as Error).message);
+    } finally {
+      setSynthesizing(false);
     }
   }
 
@@ -134,6 +165,33 @@ export default function MeetingReview() {
                   {candidates.progress.extracted_fragment_count} of {candidates.progress.fragment_count} fragments extracted
                 </p>
                 {extractMessage && <p className="meeting-review-extract-message">{extractMessage}</p>}
+
+                <div className="meeting-synthesis">
+                  <div className="meeting-synthesis-header">
+                    <h4>Synthesis</h4>
+                    <button type="button" className="meeting-synthesis-button" disabled={synthesizing} onClick={handleSynthesize}>
+                      {synthesizing ? "Synthesizing…" : synthesisGroups.length > 0 ? "Re-synthesize" : "Synthesize"}
+                    </button>
+                  </div>
+                  {synthesisMessage && <p className="meeting-review-extract-message">{synthesisMessage}</p>}
+                  {synthesisGroups.length === 0 ? (
+                    <p className="empty-state">Not synthesized yet — the raw candidates below are unaffected.</p>
+                  ) : (
+                    <ul className="meeting-synthesis-groups">
+                      {synthesisGroups.map((group) => (
+                        <li key={group.id} className="meeting-synthesis-group">
+                          <span className="type-icon" aria-hidden="true">
+                            {typeIcon(group.candidate_type)}
+                          </span>
+                          <span className="meeting-synthesis-statement">{group.synthesized_statement}</span>
+                          <span className="meeting-synthesis-member-count">
+                            from {group.member_candidate_ids.length} candidate{group.member_candidate_ids.length === 1 ? "" : "s"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
 
                 <ol className="meeting-fragments">
                   {candidates.fragments.map((fragment) => (
