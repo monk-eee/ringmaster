@@ -1,4 +1,4 @@
-# ADR-0092: Declutter shared row typography — real bold rendering, compact risk-signal pills, quiet quote treatment
+# ADR-0095: Declutter shared row typography — real bold rendering, compact risk-signal pills, quiet quote treatment
 
 - **Status:** Accepted
 - **Date:** 2026-08-19
@@ -122,7 +122,7 @@ and `frontend/public/style.css`'s `.daily-brief-list li`/`.risk-signals`/
 
 ## Exit criteria and evidence
 
-Evidence: [EV-0092](../evidence.d/0092-daily-brief-row-decluttering.md)
+Evidence: [EV-0095](../evidence.d/0095-daily-brief-row-decluttering.md)
 
 | Exit criterion | Evidence |
 |---|---|

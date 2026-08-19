@@ -1,12 +1,12 @@
-# EV-0092: Declutter shared row typography — real bold rendering, compact risk-signal pills, quiet quote treatment
+# EV-0095: Declutter shared row typography — real bold rendering, compact risk-signal pills, quiet quote treatment
 
-Evidence for [ADR-0092](../adr.d/0092-daily-brief-row-decluttering.md).
+Evidence for [ADR-0095](../adr.d/0095-daily-brief-row-decluttering.md).
 
 State is derived by `node scripts/check-evidence.mjs` and is deliberately not
 written here.
 
 ```toml
-adr = "0092-daily-brief-row-decluttering"
+adr = "0095-daily-brief-row-decluttering"
 
 [[check]]
 id = "bold-segments-applied"

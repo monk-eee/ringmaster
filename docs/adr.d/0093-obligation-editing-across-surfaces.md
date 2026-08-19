@@ -5,7 +5,7 @@
 - **Decider:** monk-eee
 - **Approval:** "plus we should be able to edit via the api the cli or the mcp and the
   ui" — direct decider instruction, same standing pattern ADR-0074/ADR-0091/
-  ADR-0092 already treated as approval for this kind of change.
+  ADR-0095 already treated as approval for this kind of change.
 - **Depends on:** [ADR-0005](0005-adopt-rust-event-sourced-postgres-commitment-graph.md)/[ADR-0007](0007-generalize-obligation-and-require-pgvector.md)
   (the event-sourced Obligation this ADR's edit still respects — appends an
   event, never patches the projection directly), [ADR-0020](0020-obligation-due-date-fields.md)
