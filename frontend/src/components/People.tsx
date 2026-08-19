@@ -5,6 +5,23 @@ import { renderRelationshipGroup } from "./GraphExplorer";
 // ADR-0059: same default page size as Obligations/Candidates.
 const LIST_PAGE_SIZE = 50;
 
+// ADR-0091: six fixed tones drawn from the app's own palette (ADR-0074) --
+// no arbitrary new colors, just a deterministic pick per name.
+const AVATAR_TONES = ["a", "b", "c", "d", "e", "f"] as const;
+
+function avatarTone(name: string): (typeof AVATAR_TONES)[number] {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[hash % AVATAR_TONES.length];
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 function relativeInteraction(lastInteractionAt: string | null): string {
   if (!lastInteractionAt) return "No recorded interaction";
   const days = Math.floor((Date.now() - new Date(lastInteractionAt).getTime()) / 86_400_000);
@@ -97,7 +114,12 @@ export default function People() {
         {!detailError && !detail && <p className="empty-state">Loading…</p>}
         {detail && (
           <div className="card">
-            <h3>{detail.canonical_text}</h3>
+            <div className="people-detail-header">
+              <span className={`people-avatar people-avatar-lg people-avatar-${avatarTone(detail.canonical_text)}`}>
+                {initials(detail.canonical_text)}
+              </span>
+              <h3>{detail.canonical_text}</h3>
+            </div>
             <p className="people-card-interaction">{relativeInteraction(detail.last_interaction_at)}</p>
             <dl className="attributes-list">
               {Object.entries(detail.attributes).map(([key, value]) => (
@@ -190,16 +212,22 @@ export default function People() {
           {people.map((person) => (
             <li key={person.id}>
               <button type="button" className="people-card" onClick={() => openPerson(person.id)}>
-                <span className="people-card-name">{person.canonical_text}</span>
-                {typeof person.attributes.role === "string" && <span className="people-card-role">{person.attributes.role}</span>}
-                {(person.at_risk_count > 0 || person.open_count > 0) && (
-                  <span className="people-card-owed">
-                    {person.at_risk_count > 0 && `${person.at_risk_count} at risk`}
-                    {person.at_risk_count > 0 && person.open_count > 0 && ", "}
-                    {person.open_count > 0 && `${person.open_count} open`}
-                  </span>
-                )}
-                <span className="people-card-interaction">{relativeInteraction(person.last_interaction_at)}</span>
+                <span className={`people-avatar people-avatar-${avatarTone(person.canonical_text)}`}>
+                  {initials(person.canonical_text)}
+                </span>
+                <span className="people-card-body">
+                  <span className="people-card-name">{person.canonical_text}</span>
+                  {typeof person.attributes.role === "string" && <span className="people-card-role">{person.attributes.role}</span>}
+                  {(person.at_risk_count > 0 || person.open_count > 0) && (
+                    <span className="people-card-badges">
+                      {person.at_risk_count > 0 && (
+                        <span className="people-badge people-badge-at-risk">{person.at_risk_count} at risk</span>
+                      )}
+                      {person.open_count > 0 && <span className="people-badge people-badge-open">{person.open_count} open</span>}
+                    </span>
+                  )}
+                  <span className="people-card-interaction">{relativeInteraction(person.last_interaction_at)}</span>
+                </span>
               </button>
             </li>
           ))}
