@@ -104,3 +104,4 @@ accepted and implemented.
 | [ADR-0089: Patch high-severity Vite/nanoid advisories](0089-patch-vite-nanoid-security-advisories.md) | Accepted | [EV-0089](../evidence.d/0089-patch-vite-nanoid-security-advisories.md) |
 | [ADR-0090: CI enforces npm audit and cargo audit — catch known-vulnerable dependencies before merge](0090-ci-enforced-dependency-vulnerability-scanning.md) | Accepted | [EV-0090](../evidence.d/0090-ci-enforced-dependency-vulnerability-scanning.md) |
 | [ADR-0091: People view redesign — avatars, status badges, elevated card layout](0091-people-view-avatar-and-badge-redesign.md) | Accepted | [EV-0091](../evidence.d/0091-people-view-avatar-and-badge-redesign.md) |
+| [ADR-0092: Fix CI cargo-audit job — grant checks:write, document the one unfixable advisory it actually finds](0092-fix-ci-cargo-audit-permissions-and-document-rsa-advisory.md) | Accepted | [EV-0092](../evidence.d/0092-fix-ci-cargo-audit-permissions-and-document-rsa-advisory.md) |

@@ -1,0 +1,18 @@
+# ADR-0092: cargo-audit configuration (read from .cargo/audit.toml when run
+# from the repo root, matching CI's rustsec/audit-check working directory).
+[advisories]
+# RUSTSEC-2023-0071 ("Marvin Attack" timing side-channel in `rsa` 0.9.10,
+# https://rustsec.org/advisories/RUSTSEC-2023-0071) has "No fixed upgrade
+# available" upstream. It reaches this workspace only via sqlx 0.8's `sqlx`
+# facade crate, which unconditionally depends on sqlx-mysql/sqlx-sqlite
+# alongside sqlx-postgres regardless of which database feature is requested
+# (confirmed: backend/Cargo.toml requests only ["postgres", ...], and
+# `default-features = false` on sqlx does not remove sqlx-mysql/rsa from the
+# resolved graph -- verified directly by regenerating Cargo.lock from
+# scratch). This backend only ever opens a Postgres connection
+# (sqlx::PgPool, DATABASE_URL is always postgres://); MySQL's
+# sha256_password/caching_sha2_password RSA-encrypted auth handshake, the
+# code path this advisory concerns, is never invoked. Re-evaluate if sqlx
+# ever restructures this dependency, if backend/Cargo.toml ever requests a
+# "mysql" feature, or if rsa ships a fix.
+ignore = ["RUSTSEC-2023-0071"]
