@@ -252,12 +252,14 @@ flowchart TB
 | `/api/edges` | POST | Create an edge between two existing nodes/obligations. Optional `valid_from` + `supersede: true` closes out any prior current edge sharing the same `(from_id, edge_type)` in one transaction; omitted/false leaves every prior caller unchanged |
 
 **MCP server** (`ringmaster-ingest mcp-serve`, stdio, [ADR-0042](adr.d/0042-occurred-at-retrieval-and-recall-sources-mcp-tool.md)/[ADR-0066](adr.d/0066-non-destructive-graph-management-over-mcp.md)):
-12 tools calling the identical Rust functions the HTTP routes use, never
+14 tools calling the identical Rust functions the HTTP routes use, never
 duplicating logic — `ingest_source`, `recall_sources`, `search`,
 `list_entities`, `get_entity`, `prepare_meeting_brief`
 ([ADR-0083](adr.d/0083-meeting-brief-generation.md)), `create_entity`,
 `update_entity`, `upsert_entities` (atomic, exact-match, 1-100 entities),
 `update_obligation` (status/due dates, [ADR-0093](adr.d/0093-obligation-editing-across-surfaces.md)),
+`accept_candidate`, `reject_candidate` (the same transition functions the
+Inbox UI calls, [ADR-0097](adr.d/0097-candidate-mcp-and-node-edit-form.md)),
 `list_relationships`, `create_relationship`. Deliberately non-destructive:
 no delete tool exists for any entity/relationship type.
 
@@ -288,7 +290,7 @@ from the browser's perspective, no CORS needed).
 - **`App.tsx`** — ten tabs. **Primary** ([ADR-0039](adr.d/0039-product-re-steer-primary-navigation.md)/[ADR-0080](adr.d/0080-promote-graph-explorer-to-primary-navigation.md)):
   `Today` (default landing tab, [ADR-0022](adr.d/0022-daily-brief-endpoint.md)),
   `Timeline`, `People`, `Inbox`, `Graph`. **Secondary/"Developer"**:
-  `Obligations`, `Search`, `Meetings`, `Activity`, `Workbench`
+  `Obligations`, `Search`, `Sources`, `Activity`, `Workbench`
   ([ADR-0086](adr.d/0086-workbench-three-pane-view.md), shipped secondary-first
   matching Graph Explorer's own precedent).
   - **Today**: a narrative summary line (greeting + honest, zero-omitted
@@ -325,13 +327,21 @@ from the browser's perspective, no CORS needed).
     ([ADR-0033](adr.d/0033-progressive-graph-traversal-trail.md)) with an
     **Actions lens** filtering the neighbourhood down to Obligation/risk
     neighbours ([ADR-0081](adr.d/0081-graph-explorer-actions-lens.md)).
+    Node edit now has a dedicated identity/lifecycle form (rename, change
+    type, archive) alongside the existing "Enrich attributes (JSON)"
+    textarea, not just the raw JSON path
+    ([ADR-0097](adr.d/0097-candidate-mcp-and-node-edit-form.md)).
   - **Workbench**: three panes \u2014 Attention (`DailyBrief`, unchanged),
     Current focus (`ObligationDetail`, now editable — see below), Relationship
     context (a new `PersonBriefPanel` calling `GET /api/people/:id/brief`) —
     selecting a left-pane item fills the other two without page navigation,
     zero new backend routes ([ADR-0086](adr.d/0086-workbench-three-pane-view.md)).
-  - **Meetings**: Meeting Review \u2014 transcript fragments with inline
-    extracted candidates ([ADR-0043](adr.d/0043-meeting-review-page.md)).
+  - **Sources** (renamed from Meetings, [ADR-0096](adr.d/0096-generalize-source-review-beyond-meeting.md)):
+    transcript fragments with inline extracted candidates
+    ([ADR-0043](adr.d/0043-meeting-review-page.md)), now covering every
+    ingested source type (not just the never-populated `meeting` type),
+    plus a synthesis-groups view composing same-source candidates before
+    review ([ADR-0094](adr.d/0094-candidate-synthesis-pass.md)).
   - **Activity**: a flat, chronological feed over `audit_events`
     ([ADR-0049](adr.d/0049-audit-trail-read-api.md)).
 - **`components/`** — `DailyBrief.tsx`, `ForgettingSection.tsx`,
@@ -536,14 +546,15 @@ chosen yet), branch protection rules.
 | 0091 | People view redesign: avatars, status badges, elevated card layout | Accepted |
 | 0092 | Fix CI cargo-audit job: grant checks:write, document the one unfixable advisory | Accepted |
 | 0093 | Obligation editing: status and due dates, across API/CLI/MCP/UI | Accepted |
+| 0094 | Candidate synthesis pass: group same-source candidates before review | Accepted |
 | 0095 | Declutter shared row typography: bold rendering, risk-signal pills, quote treatment | Accepted |
+| 0096 | Generalize source review beyond `node_type='meeting'` | Accepted |
+| 0097 | Candidate accept/reject over MCP, and a Node identity/lifecycle edit form | Accepted |
 
 See [`docs/adr.d/README.md`](adr.d/README.md) for the live index — this
-table is a snapshot and will drift. 92 ADRs are committed, numbered
-through `ADR-0095` (`0048` and `0055` were never used — a numbering gap,
-not a missing/broken decision; `0094` exists on disk as a concurrent
-session's in-progress, uncommitted candidate-synthesis-pass ADR, not yet
-part of the committed count). All 92 committed ADRs are Accepted and
+table is a snapshot and will drift. 97 ADRs are committed, numbered
+through `ADR-0097` (`0048` and `0055` were never used — a numbering gap,
+not a missing/broken decision). All 97 committed ADRs are Accepted and
 Proven as of this snapshot (`node scripts/check-evidence.mjs`).
 
 ## 10. Known gaps / deferred work (named explicitly by their own ADRs)

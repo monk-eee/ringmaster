@@ -1,25 +1,54 @@
 # Ringmaster — Current status (a real audit, not a decision log)
 
-Updated 2026-08-19 (fifth pass — supersedes the fourth version of this
-file, which is quoted below where useful) by clicking through the running
-app again, querying the live dev database again, and reading the code
-behind what's there — not by summarizing ADR titles.
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is the formal, decision-level
-snapshot; this is "what's really there right now, warts included." As of
-this pass: **93 ADR records exist on disk, 91 `PROVEN`, 2 `DEADHEADED`** —
-both deadheads are one concurrent, uncommitted, in-progress ADR
-([0094](adr.d/0094-candidate-synthesis-pass.md), a candidate-synthesis
-pass — real, decided, and actively being built by a different session
-right now, but not yet committed and missing its evidence companion) and
-the resulting `every-live-adr-has-evidence` parity check on ADR-0002 that
-it trips. Not a regression on anything this session touched.
+Updated 2026-08-21 (sixth pass — supersedes the fifth version of this
+file, which is quoted below where useful) by re-running
+`node scripts/check-evidence.mjs` against a clean, fully-pushed working
+tree and reading the ADRs that landed since. [`ARCHITECTURE.md`](ARCHITECTURE.md)
+is the formal, decision-level snapshot; this is "what's really there right
+now, warts included." As of this pass: **97 ADR records exist on disk, all
+97 `PROVEN`, 0 broken/stale/deadheaded** — the fifth audit's two
+`DEADHEADED` records (ADR-0094 and the ADR-0002 parity check it tripped)
+are resolved: ADR-0094 landed, its evidence companion exists, and the
+checker now passes clean end to end.
 
-**A honest caveat before anything else**: this repo is being built by two
-concurrent AI sessions against the same working directory, right now,
-continuously. HEAD moved twice *while this exact audit was being written*
-in the second pass; the same is likely true here. Any specific row count
-below is already stale by the time you read it — the structural findings
-(what works, what doesn't, what's missing) are the durable part.
+**Update to the "two concurrent sessions" caveat below**: as of this pass
+there is again only **one** active session. The concurrent second session
+referenced throughout this document (and responsible for ADR-0094/0096
+and the ADR-0092 numbering collision) has ended. The structural findings
+below (what works, what doesn't, what's missing) remain the durable part;
+the specific "stale by the time you read it" risk from simultaneous edits
+no longer applies until a second session starts again.
+
+## What changed since the fifth audit
+
+Three more ADRs landed (0094, 0096, 0097) plus a follow-up commit wiring
+0094 into the UI:
+
+- **Candidate synthesis pass** ([ADR-0094](adr.d/0094-candidate-synthesis-pass.md))
+  — a live diagnosis against the real (non-test) database found the actual
+  cause of "extractions feel ungranular": per-fragment extraction with no
+  sibling awareness turned one coherent multi-goal Connect document into
+  ten disconnected candidates, and 175 of 227 real candidates sat
+  `accepted`-but-never-promoted. Shipped as an insert-only synthesis pass
+  that groups same-source candidates before they reach review, backend-only
+  in its initial slice, then wired into the Sources review UI in a same-day
+  follow-up commit (`db3b82b`).
+- **Source review generalized beyond `node_type='meeting'`**
+  ([ADR-0096](adr.d/0096-generalize-source-review-beyond-meeting.md)) —
+  a live audit found zero `meeting`-type nodes exist while 46 real dated
+  sources exist across five other ingested types (`1on1`/`note`/`comms`/
+  `perspective`/`connect`), all invisible to the one UI built to browse a
+  source's transcript alongside its candidates side by side. The Meetings
+  tab's routes and component now accept any source type with a
+  `has_source_fragments` filter, relabeled honestly as "Sources."
+- **Candidate accept/reject over MCP, and a Node identity/lifecycle edit
+  form** ([ADR-0097](adr.d/0097-candidate-mcp-and-node-edit-form.md)) —
+  closes two gaps ADR-0093 explicitly named out of scope: an MCP agent
+  could ingest and read candidates but not triage one, and Graph
+  Explorer's only edit affordance for a Node was a raw "Enrich attributes
+  (JSON)" textarea. Both now share the existing per-surface functions
+  (ADR-0024's accept/reject, ADR-0025/0066's `canonical_text`/
+  `lifecycle_state` PATCH fields) rather than adding new logic.
 
 ## What changed since the fourth audit
 
@@ -278,13 +307,15 @@ fixed and verified live:
   new since the last audit — clicking any Today row now opens a full
   detail view (confirmed: rows render as real `<button>` elements, not
   static text).
-- **Governance**: 85 ADRs, all 85 `PROVEN`, 0 broken. CI green.
+- **Governance**: 97 ADRs, all 97 `PROVEN`, 0 broken. CI green.
 
 ## The frontend, tab by tab (what I actually saw, this pass)
 
 Primary nav: `Today / Timeline / People / Inbox / Graph` (Graph promoted
 from secondary, ADR-0080), secondary/"Developer": `Obligations / Search /
-Meetings / Activity / Workbench` (Workbench is new, ADR-0086).
+Sources / Activity / Workbench` (Workbench is new, ADR-0086; the tab
+labeled "Meetings" is now labeled "Sources" and browses any ingested
+source type, not just `node_type='meeting'`, per ADR-0096).
 
 - **Today**: greeting → narrative summary (date_compression/stale counts,
   ADR-0084) → ranked list (capped 10, "31 more in Timeline →") →
@@ -322,9 +353,14 @@ Meetings / Activity / Workbench` (Workbench is new, ADR-0086).
   read). Confirmed live: selecting an item fills the centre and right
   panes; an honest empty state renders when nothing is selected or no
   person is linked.
-- **Inbox / Meetings / Obligations / Search / Activity**: all present and
-  functional per prior verification; not re-clicked through this pass (no
-  changes landed there since the last audit that I'm aware of).
+- **Sources** (renamed from Meetings, ADR-0096): now shows every ingested
+  source type (`1on1`/`note`/`comms`/`perspective`/`connect`, not just the
+  never-populated `meeting` type), each with its transcript, extracted
+  candidates, and — since the ADR-0094 follow-up commit (`db3b82b`) — a
+  synthesis-groups view composing same-source candidates before review.
+- **Inbox / Obligations / Search / Activity**: all present and functional
+  per prior verification; not re-clicked through this pass (no changes
+  landed there since the last audit that I'm aware of).
 
 ## The database, right now (a snapshot that's already changing)
 
